@@ -1,1 +1,1 @@
-采用deepagents/pi-agent core  + langfuse搭建
+采用deepagents + langfuse + sqlite搭建
