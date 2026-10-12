@@ -1,0 +1,5 @@
+langchain-openai==1.5.1
+python-dotenv==1.2.4
+deepagents==0.7.23
+claude-agent-sdk==0.2.165
+
