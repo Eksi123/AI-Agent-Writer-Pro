@@ -1,26 +1,12 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Writer Pro</title>
-    <!-- 无构建运行：importmap 将 bare import 映射到 vendor/ 下的官方 esm-browser 发行版 -->
-    <script type="importmap">
-      {
-        "imports": {
-          "vue": "./vendor/vue/vue.esm-browser.js",
-          "vue-router": "./vendor/vue-router/vue-router.esm-browser.js",
-          "pinia": "./vendor/pinia/pinia.esm-browser.js",
-          "@vue/devtools-api": "./vendor/vue-devtools-api/vue-devtools-api.esm-browser.js",
-          "nostics": "./vendor/nostics/index.mjs",
-          "perfect-debounce": "./vendor/perfect-debounce/index.mjs"
-        }
-      }
-    </script>
-    <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="./src/main.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

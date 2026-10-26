@@ -8,17 +8,74 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "claude-agent-sdk==0.2.165",
+    # ---- Web / API ----
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    # ---- DB / 迁移 ----
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "alembic>=1.13",
+    # ---- 文件 / 模板 / 日志 ----
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+    "jinja2>=3.1",
+    "structlog>=24.4",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "tenacity>=9.0",
+    "tiktoken>=0.7",
+    # ---- Agent（deepagents 及其生态）----
     "deepagents==0.7.23",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
     "langchain-openai==1.5.1",
-    "langfuse>=2.0.0",
+    "langchain-anthropic>=1.0",
+    "langchain-google-genai>=4.4",
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-mcp-adapters>=0.1",
+    "mcp>=2.0",
+    # ---- 可观测（v5，OTel 版）----
+    "langfuse>=5.0,<6.0",
+    # ---- 保留但不使用（见手册「八、⑤」）----
+    "claude-agent-sdk==0.2.165",
     "lmnr>=0.4.0",
-    "python-dotenv==1.2.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
-ai-agent-writer-pro = "ai_agent_writer_pro:main"
+writer = "app.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.16,<0.13.0"]
 build-backend = "uv_build"
+
+# `src/app` 中的 `app` 是合法包名，只需显式声明模块位置（见手册「八、③」）
+[tool.uv.build-backend]
+module-root = "src"
+module-name = "app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501", "B008"]

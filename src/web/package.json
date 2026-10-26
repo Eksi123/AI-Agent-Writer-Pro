@@ -1,0 +1,37 @@
+{
+  "name": "ai-writer-pro-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Writer Pro 前端（Vue 3 + Vite + TypeScript + Pinia + Element Plus）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:only": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@tiptap/extension-character-count": "^2.11.0",
+    "@tiptap/extension-placeholder": "^2.11.0",
+    "@tiptap/pm": "^2.11.0",
+    "@tiptap/starter-kit": "^2.11.0",
+    "@tiptap/vue-3": "^2.11.0",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.13",
+    "dompurify": "^3.2.3",
+    "element-plus": "^2.9.0",
+    "markdown-it": "^14.1.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.0",
+    "vue-tsc": "^2.2.0"
+  }
+}

@@ -1,0 +1,118 @@
+# ---- 本项目运行期数据与密钥（绝不入库）----
+data/
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# 依赖以 pyproject.toml + uv.lock 为唯一事实源（手册「十」已知缺陷④，M0 已决定去留）。
+# IDE/工具链自动导出的 requirements.txt 不入库：它是 UTF-16 带哈希的 368KB 产物，
+# git 无法作为文本 diff，且与 pyproject 形成双份清单。
+requirements.txt
+
+# ---- Python ----
+__pycache__/
+.python-version
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+sdist/
+wheels/
+share/python-wheels/
+.installed.cfg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 测试 / 类型检查 / lint 缓存
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# ---- Node / 前端 ----
+node_modules/
+.npm/
+.yarn/
+.pnp.*
+.pnpm-store/
+src/web/dist/
+src/web/dist-ssr/
+*.local
+
+# ---- 数据库 / 导出产物 ----
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ---- 日志 ----
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- 编辑器 / IDE ----
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.history/
+
+# ---- 操作系统 ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- 临时 / 备份 ----
+*.bak
+*.tmp
+*.temp
+*~
+.cache/
+temp/
+tmp/

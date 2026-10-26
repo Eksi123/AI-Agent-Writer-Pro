@@ -1,0 +1,202 @@
+/**
+ * 全局样式：CSS 变量驱动主题色 / 字号 / 字体（含暗色）。
+ * 变量由 stores/settings.ts 的 applyToDom() 运行时写入。
+ */
+:root {
+  color-scheme: light dark;
+  --el-color-primary: #409eff;
+  --novel-font-size: 18px;
+  --novel-font-family: 'Songti SC', 'SimSun', serif;
+  --novel-reading-width: 42em;
+
+  --bg: #f7f8fa;
+  --bg-panel: #ffffff;
+  --bg-hover: #f0f2f5;
+  --text: #1f2329;
+  --text-muted: #6b7785;
+  --border: #e4e7ed;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --sidebar-width: 280px;
+  --agent-width: 340px;
+}
+
+:root[data-theme='dark'] {
+  --bg: #141414;
+  --bg-panel: #1d1e1f;
+  --bg-hover: #262727;
+  --text: #e5eaf3;
+  --text-muted: #a3a6ad;
+  --border: #363637;
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, 'Microsoft YaHei', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 三栏布局：左（项目）/ 中（阅读编辑）/ 右（Agent） */
+.app-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.main-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agent-panel {
+  width: var(--agent-width);
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 正文排版：字号/字体/页宽由 CSS 变量驱动 */
+.novel-prose {
+  font-family: var(--novel-font-family);
+  font-size: var(--novel-font-size);
+  line-height: 1.9;
+  max-width: var(--novel-reading-width);
+  margin: 0 auto;
+  padding: 24px 32px 120px;
+}
+
+.novel-prose h1 {
+  font-size: 1.5em;
+  margin: 0.8em 0 0.6em;
+}
+
+.novel-prose h2 {
+  font-size: 1.25em;
+  margin: 0.8em 0 0.5em;
+}
+
+.novel-prose p {
+  margin: 0.6em 0;
+  text-indent: 2em;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.text-sm {
+  font-size: 13px;
+}
+
+.scroll-y {
+  overflow-y: auto;
+}
+
+.flex-fill {
+  flex: 1;
+  min-height: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 夜间模式（阅读专用，独立于全局暗色主题） */
+.night .novel-prose,
+.night .main-panel {
+  background: #1a1a1a;
+  color: #c8c8c8;
+}
+
+/* Tiptap 编辑区 */
+.tiptap-wrap {
+  outline: none;
+  min-height: 60vh;
+}
+
+.tiptap-wrap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted);
+  pointer-events: none;
+  height: 0;
+}
+
+/* 大纲源码编辑器：等宽，保证 # / ## 层级可读 */
+.outline-editor {
+  width: 100%;
+  min-height: 60vh;
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  resize: vertical;
+}
+
+/* 卷章树节点 */
+.vc-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.vc-node:hover {
+  background: var(--bg-hover);
+}
+
+.vc-node.active {
+  background: color-mix(in srgb, var(--el-color-primary) 12%, transparent);
+}
+
+.vc-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  line-height: 1.6;
+}
