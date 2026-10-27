@@ -1,4 +1,12 @@
-"""Alembic 迁移环境（async engine，URL 从 app.core.config 动态注入）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.db.migrations.env
+文件名: env.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: Alembic 迁移环境（async engine，URL 从 app.core.config 动态注入）。
+"""
 
 from __future__ import annotations
 

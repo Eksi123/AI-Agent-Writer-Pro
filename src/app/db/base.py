@@ -1,11 +1,18 @@
-"""SQLAlchemy 2.0 async 基础设施（手册「五、数据模型 → 全局约定」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.db.base
+文件名: base.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: SQLAlchemy 2.0 async 基础设施（手册「五、数据模型 → 全局约定」）。
 
-约定：
-- 所有 `id` 为 TEXT(uuid4)，应用层生成，不用自增整数；
-- 时间戳一律 UTC ISO-8601 文本，应用层写入，**不使用 SQLite 触发器 / CURRENT_TIMESTAMP**；
-- JSON 列命名统一 `*_json`，存 TEXT；
-- 枚举以 TEXT + 应用层校验实现；
-- 连接建立时 `PRAGMA foreign_keys=ON`。
+    约定：
+    - 所有 `id` 为 TEXT(uuid4)，应用层生成，不用自增整数；
+    - 时间戳一律 UTC ISO-8601 文本，应用层写入，**不使用 SQLite 触发器 / CURRENT_TIMESTAMP**；
+    - JSON 列命名统一 `*_json`，存 TEXT；
+    - 枚举以 TEXT + 应用层校验实现；
+    - 连接建立时 `PRAGMA foreign_keys=ON`。
 """
 
 from __future__ import annotations

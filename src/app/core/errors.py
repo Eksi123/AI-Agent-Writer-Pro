@@ -1,6 +1,13 @@
-"""统一异常与错误码常量（见手册「六、API 约定 → 通用约定」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.core.errors
+文件名: errors.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 统一异常与错误码常量（见手册「六、API 约定 → 通用约定」）。
 
-前端据 `code` 做差异化提示；HTTP 状态码与 code 对齐。
+    前端据 `code` 做差异化提示；HTTP 状态码与 code 对齐。
 """
 
 from __future__ import annotations

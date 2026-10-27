@@ -1,4 +1,12 @@
-"""依赖注入：DB session、服务实例（手册「三、(1) core/deps.py」）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.core.deps
+文件名: deps.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 依赖注入：DB session、服务实例（手册「三、(1) core/deps.py」）。
+"""
 
 from __future__ import annotations
 

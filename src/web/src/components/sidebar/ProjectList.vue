@@ -9,6 +9,7 @@ import { useProjectStore } from '@/stores/project'
 import { t } from '@/i18n'
 import { errorMessage } from '@/api/http'
 import type { Novel } from '@/types'
+import WeatherWidget from './WeatherWidget.vue'
 
 const emit = defineEmits<{
   (e: 'export', novel: Novel): void
@@ -115,6 +116,9 @@ function formatWords(n: number): string {
 
 <template>
   <div class="project-sidebar">
+    <!-- 左上角动态组件：宠物 + 城市 + 天气（M6） -->
+    <WeatherWidget />
+
     <div class="sidebar-head">
       <el-button type="primary" class="w100" @click="dialogVisible = true">
         {{ t('sidebar.newNovel') }}

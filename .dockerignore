@@ -1,0 +1,27 @@
+# 构建上下文排除（镜像层干净、构建快）
+.git
+.venv
+venv
+data
+.env
+.env.bak
+.env.example
+node_modules
+src/web/node_modules
+src/web/dist
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+.tmp-mig
+demo
+tests
+.vscode
+.idea
+*.log
+Dockerfile
+docker-compose.yml
+README.md.new

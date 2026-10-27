@@ -113,7 +113,14 @@ function back(): void {
         </el-form-item>
 
         <el-divider content-position="left">AI 工具</el-divider>
-        <el-alert type="info" :closable="false" :title="t('aiTools.comingM3')" />
+        <el-alert type="info" :closable="false">
+          <template #title>
+            大模型 Provider / 子代理 / 技能 / MCP 管理已迁移至独立页面。
+            <el-button text type="primary" size="small" @click="router.push('/ai-tools')">
+              前往「AI 工具」
+            </el-button>
+          </template>
+        </el-alert>
 
         <el-divider content-position="left">运行状态</el-divider>
         <el-descriptions v-if="store.health" :column="1" border size="small">

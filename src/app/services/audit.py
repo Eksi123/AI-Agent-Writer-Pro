@@ -1,4 +1,12 @@
-"""审计日志：SQLite `audit_logs` + JSONL 备份（手册「三、(2)」）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.audit
+文件名: audit.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 审计日志：SQLite `audit_logs` + JSONL 备份（手册「三、(2)」）。
+"""
 
 from __future__ import annotations
 

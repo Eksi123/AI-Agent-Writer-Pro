@@ -1,12 +1,19 @@
-"""`WorkspaceGuard`：服务层唯一文件写入口（手册「二、(5)」规范 1–6）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.workspace
+文件名: workspace.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: `WorkspaceGuard`：服务层唯一文件写入口（手册「二、(5)」规范 1–6）。
 
-规则：
-1. 入参接受「工作区相对路径」，内部换算为宿主路径；
-2. `resolve()` 归一化后必须严格落在白名单根内，否则 `PermissionError` → HTTP 403；
-3. 拒绝含 `..` 的路径、拒绝解析后越界的符号链接（逐段检查）；
-4. 跨项目写一律拒绝；
-5. `summaries/` 只允许 `summarize_chapter` 服务写；
-6. 写入成功后同步更新派生索引（M4 接入 FTS，此处更新 project_index）。
+    规则：
+    1. 入参接受「工作区相对路径」，内部换算为宿主路径；
+    2. `resolve()` 归一化后必须严格落在白名单根内，否则 `PermissionError` → HTTP 403；
+    3. 拒绝含 `..` 的路径、拒绝解析后越界的符号链接（逐段检查）；
+    4. 跨项目写一律拒绝；
+    5. `summaries/` 只允许 `summarize_chapter` 服务写；
+    6. 写入成功后同步更新派生索引（M4 接入 FTS，此处更新 project_index）。
 """
 
 from __future__ import annotations

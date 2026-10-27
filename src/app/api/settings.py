@@ -1,4 +1,12 @@
-"""通用设置（单行表，id 固定 'default'）。手册「三、(2) 设置范围」。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.settings
+文件名: settings.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 通用设置（单行表，id 固定 'default'）。手册「三、(2) 设置范围」。
+"""
 
 from __future__ import annotations
 

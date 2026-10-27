@@ -1,8 +1,15 @@
-"""命令行入口：`writer dev | migrate | rebuild-index | doctor`（手册「三、(1)」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.cli
+文件名: cli.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 命令行入口：`writer dev | migrate | rebuild-index | doctor`（手册「三、(1)」）。
 
-    uv run writer dev             # = uvicorn app.main:app --reload
-    uv run writer migrate         # = alembic upgrade head
-    uv run writer rebuild-index   # 全量重建 story_fts / project_index
+        uv run writer dev             # = uvicorn app.main:app --reload
+        uv run writer migrate         # = alembic upgrade head
+        uv run writer rebuild-index   # 全量重建 story_fts / project_index
 """
 
 from __future__ import annotations

@@ -1,4 +1,12 @@
-"""显式命名校验（手册「十一」必测清单 · 显式命名域，错误码 42201）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_naming.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 显式命名校验（手册「十一」必测清单 · 显式命名域，错误码 42201）。
+"""
 
 from __future__ import annotations
 

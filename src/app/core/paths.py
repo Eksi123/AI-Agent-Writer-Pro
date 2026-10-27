@@ -1,12 +1,19 @@
-"""路径解析：统一 pathlib，所有文件读写显式 `encoding="utf-8"`（手册铁律 11）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.core.paths
+文件名: paths.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 路径解析：统一 pathlib，所有文件读写显式 `encoding="utf-8"`（手册铁律 11）。
 
-数据根布局见手册「五 → 文件存储」：
-    data/
-    ├── workspaces/{project_id}/{novel.yaml,volumes.yaml,chapters/,outline/,summaries/}
-    ├── skills/{name}/SKILL.md
-    ├── exports/
-    ├── trash/{project_id}-{ts}/
-    └── logs/
+    数据根布局见手册「五 → 文件存储」：
+        data/
+        ├── workspaces/{project_id}/{novel.yaml,volumes.yaml,chapters/,outline/,summaries/}
+        ├── skills/{name}/SKILL.md
+        ├── exports/
+        ├── trash/{project_id}-{ts}/
+        └── logs/
 """
 
 from __future__ import annotations
@@ -81,6 +88,20 @@ def volumes_file(project_id: str) -> Path:
 
 def skills_root() -> Path:
     p = data_root() / "skills"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def session_skills_root() -> Path:
+    """会话级技能物化根：`data/session-skills/`。"""
+    p = data_root() / "session-skills"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def session_skills_dir(session_id: str) -> Path:
+    """某会话选中的技能物化目录：`data/session-skills/{session_id}/`。"""
+    p = session_skills_root() / session_id
     p.mkdir(parents=True, exist_ok=True)
     return p
 

@@ -1,7 +1,14 @@
-"""WorkspaceGuard 路径安全（手册「十一 · WorkspaceGuard」域）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_workspace_guard.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: WorkspaceGuard 路径安全（手册「十一 · WorkspaceGuard」域）。
 
-★必测：`..` 路径穿越、绝对路径逃逸、符号链接逃逸（Windows 用 junction 替代场景标注 skip）、
-跨项目写、非授权写 `summaries/`。
+    ★必测：`..` 路径穿越、绝对路径逃逸、符号链接逃逸（Windows 用 junction 替代场景标注 skip）、
+    跨项目写、非授权写 `summaries/`。
 """
 
 from __future__ import annotations

@@ -4,17 +4,26 @@
  */
 import { del, get, http, patch, post, put } from './http'
 import type {
+  AgentRunDto,
+  AgentSessionDto,
   Chapter,
   ChapterContent,
   ContentWriteResult,
   ExportFormat,
   ExportTask,
   Health,
+  LlmModelDto,
+  LlmOverview,
+  LlmProviderDto,
+  MessageTree,
   Novel,
   Outline,
   OutlineValidate,
+  ProviderTestResult,
+  ProviderType,
   ReadingProgress,
   Revision,
+  RewriteResult,
   SearchResult,
   UserSettings,
   Volume,
@@ -128,6 +137,22 @@ export const contentApi = {
     post<ChapterContent & { restored_from: string }>(
       `/chapters/${chapterId}/revisions/${revisionId}/restore`,
     ),
+
+  /**
+   * 选区 AI 改写（改写/扩写/缩写/润色）：只返回转换结果，**不写文件**。
+   * 用户「接受」后由调用方走 write() 落盘（保留乐观锁与修订快照）。
+   */
+  rewrite: (
+    chapterId: string,
+    payload: {
+      selected_text: string
+      mode: 'rewrite' | 'expand' | 'condense' | 'polish'
+      model_ref?: string
+      context_before?: string
+      context_after?: string
+      instruction?: string
+    },
+  ) => post<RewriteResult>(`/chapters/${chapterId}/rewrite`, payload),
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +190,291 @@ export const settingsApi = {
   get: () => get<UserSettings>('/settings'),
 
   save: (payload: Partial<UserSettings>) => put<UserSettings>('/settings', payload),
+}
+
+// ---------------------------------------------------------------------------
+// LLM Provider / Model（M3）
+// ---------------------------------------------------------------------------
+
+export const llmApi = {
+  overview: () => get<LlmOverview>('/llm/overview'),
+
+  listProviders: () => get<LlmProviderDto[]>('/llm/providers'),
+
+  createProvider: (payload: {
+    name: string
+    type: ProviderType
+    base_url?: string
+    api_key_env?: string
+    api_key_value?: string
+    extra?: Record<string, unknown>
+    enabled?: boolean
+    priority?: number
+  }) => post<LlmProviderDto>('/llm/providers', payload),
+
+  updateProvider: (
+    id: string,
+    payload: {
+      name?: string
+      type?: ProviderType
+      base_url?: string
+      api_key_env?: string
+      api_key_value?: string
+      clear_api_key?: boolean
+      extra?: Record<string, unknown>
+      enabled?: boolean
+      priority?: number
+    },
+  ) => patch<LlmProviderDto>(`/llm/providers/${id}`, payload),
+
+  deleteProvider: (id: string) => del<{ id: string; deleted: boolean }>(`/llm/providers/${id}`),
+
+  testProvider: (id: string, modelId?: string) =>
+    post<ProviderTestResult>(`/llm/providers/${id}/test`, { model_id: modelId ?? null }),
+
+  listModels: (providerId?: string) =>
+    get<LlmModelDto[]>('/llm/models', { params: providerId ? { provider_id: providerId } : undefined }),
+
+  createModel: (payload: {
+    provider_id: string
+    model_id: string
+    display_name?: string
+    max_context?: number
+    supports_tools?: boolean
+    default_params?: Record<string, unknown>
+    is_default?: boolean
+    enabled?: boolean
+    fallback_chain?: string[]
+  }) => post<LlmModelDto>('/llm/models', payload),
+
+  updateModel: (
+    id: string,
+    payload: {
+      model_id?: string
+      display_name?: string
+      max_context?: number
+      supports_tools?: boolean
+      default_params?: Record<string, unknown>
+      is_default?: boolean
+      enabled?: boolean
+      fallback_chain?: string[]
+    },
+  ) => patch<LlmModelDto>(`/llm/models/${id}`, payload),
+
+  deleteModel: (id: string) => del<{ id: string; deleted: boolean }>(`/llm/models/${id}`),
+
+  reloadConfig: () => post<{ config_version: number; langfuse_enabled: boolean }>('/config/reload'),
+}
+
+// ---------------------------------------------------------------------------
+// 子代理 / 技能（M5）
+// ---------------------------------------------------------------------------
+
+export interface SubagentDto {
+  id: string
+  name: string
+  description: string
+  system_prompt?: string | null
+  model_ref?: string | null
+  tools: string[]
+  skills: string[]
+  mode: 'isolated' | 'fork'
+  enabled: boolean
+  is_builtin: boolean
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface SkillDto {
+  id: string
+  name: string
+  description: string
+  content_md: string
+  allowed_tools: string[]
+  assets: unknown[]
+  enabled: boolean
+  is_builtin: boolean
+  materialized: boolean
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export const configApi = {
+  listSubagents: () => get<SubagentDto[]>('/subagents'),
+
+  createSubagent: (payload: {
+    name: string
+    description: string
+    system_prompt?: string
+    model_ref?: string
+    tools?: string[]
+    skills?: string[]
+    mode?: string
+    enabled?: boolean
+  }) => post<SubagentDto>('/subagents', payload),
+
+  updateSubagent: (id: string, payload: Partial<Omit<SubagentDto, 'id'>>) =>
+    patch<SubagentDto>(`/subagents/${id}`, payload),
+
+  deleteSubagent: (id: string) => del<{ id: string; deleted: boolean }>(`/subagents/${id}`),
+
+  resetSubagent: (id: string) => post<SubagentDto>(`/subagents/${id}/reset`),
+
+  listSkills: () => get<SkillDto[]>('/skills'),
+
+  createSkill: (payload: {
+    name: string
+    description: string
+    body?: string
+    allowed_tools?: string[]
+    enabled?: boolean
+  }) => post<SkillDto>('/skills', payload),
+
+  updateSkill: (id: string, payload: {
+    name?: string
+    description?: string
+    body?: string
+    allowed_tools?: string[]
+    enabled?: boolean
+  }) => patch<SkillDto>(`/skills/${id}`, payload),
+
+  deleteSkill: (id: string) => del<{ id: string; deleted: boolean }>(`/skills/${id}`),
+
+  resyncSkills: () => post<{ materialized: number; removed: number; total: number }>('/skills/resync'),
+}
+
+// ---------------------------------------------------------------------------
+// MCP 服务 + 动态组件（M6）
+// ---------------------------------------------------------------------------
+
+export interface McpServerDto {
+  id: string
+  name: string
+  transport: 'stdio' | 'http' | 'sse'
+  command?: { command: string; args: string[] } | null
+  url?: string | null
+  enabled: boolean
+  confirmed_at?: string | null
+  needs_confirm: boolean
+  tools: { name: string; description: string }[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface WeatherDto {
+  city: string
+  latitude: number
+  longitude: number
+  temperature: number | null
+  apparent_temperature: number | null
+  humidity: number | null
+  wind_speed: number | null
+  weather_code: number | null
+  description: string
+  icon: string
+  observed_at?: string | null
+}
+
+export interface PetStateDto {
+  state: 'writing' | 'idle'
+  idle_minutes_threshold: number
+  novel_id?: string | null
+  last_updated?: string | null
+}
+
+export const mcpApi = {
+  list: () => get<McpServerDto[]>('/mcp-servers'),
+
+  create: (payload: {
+    name: string
+    transport: 'stdio' | 'http' | 'sse'
+    command?: { command: string; args: string[] }
+    url?: string
+  }) => post<McpServerDto>('/mcp-servers', payload),
+
+  update: (id: string, payload: { command?: { command: string; args: string[] }; url?: string; enabled?: boolean }) =>
+    patch<McpServerDto>(`/mcp-servers/${id}`, payload),
+
+  remove: (id: string) => del<{ id: string; deleted: boolean }>(`/mcp-servers/${id}`),
+
+  probe: (id: string) => post<McpServerDto>(`/mcp-servers/${id}/probe`),
+
+  confirm: (id: string) => post<McpServerDto>(`/mcp-servers/${id}/confirm`),
+}
+
+export const widgetsApi = {
+  /** 坐标优先；无坐标传 city；都不传后端回落设置城市 */
+  weather: (params: { latitude?: number; longitude?: number; city?: string }) =>
+    get<WeatherDto>('/widgets/weather', { params }),
+
+  city: (latitude: number, longitude: number) =>
+    get<{ city: string; latitude: number; longitude: number; source: string }>('/widgets/city', {
+      params: { latitude, longitude },
+    }),
+
+  petState: (novelId?: string) =>
+    get<PetStateDto>('/widgets/pet-state', { params: novelId ? { novel_id: novelId } : undefined }),
+}
+
+// ---------------------------------------------------------------------------
+// Agent 会话 / 消息 / 运行（M3）
+// ---------------------------------------------------------------------------
+
+export const agentApi = {
+  listSessions: (novelId?: string) =>
+    get<AgentSessionDto[]>('/agent/sessions', { params: novelId ? { novel_id: novelId } : undefined }),
+
+  createSession: (payload: { novel_id: string; title?: string; model_ref?: string }) =>
+    post<AgentSessionDto>('/agent/sessions', payload),
+
+  renameSession: (id: string, title: string) => patch<AgentSessionDto>(`/agent/sessions/${id}`, { title }),
+
+  deleteSession: (id: string) => del<{ id: string; deleted: boolean }>(`/agent/sessions/${id}`),
+
+  updateContext: (
+    id: string,
+    payload: {
+      model_ref?: string | null
+      subagent_ids?: string[]
+      skill_ids?: string[]
+      context_chapter_ids?: string[]
+    },
+  ) => patch<AgentSessionDto>(`/agent/sessions/${id}/context`, payload),
+
+  getMessages: (id: string) => get<MessageTree>(`/agent/sessions/${id}/messages`),
+
+  /** 发消息 → 202 + {run_id}；事件走 streamUrl(run_id) */
+  postMessage: (
+    id: string,
+    payload: { content: string; model_ref?: string; parent_id?: string; target_chapter_id?: string },
+  ) => post<{ run_id: string; session_id: string }>(`/agent/sessions/${id}/messages`, payload),
+
+  switchBranch: (id: string, messageId: string) =>
+    post<{ session_id: string; active_leaf_id: string }>(`/agent/sessions/${id}/branch`, {
+      message_id: messageId,
+    }),
+
+  getRun: (runId: string) => get<AgentRunDto>(`/agent/runs/${runId}`),
+
+  cancelRun: (runId: string) => post<{ run_id: string; cancelled: boolean }>(`/agent/runs/${runId}/cancel`),
+
+  resolveInterrupt: (
+    interruptId: string,
+    payload: {
+      decision: 'approve' | 'edit' | 'reject' | 'respond' | 'option' | 'text'
+      edited_args?: Record<string, unknown>
+      message?: string
+      choice?: string
+      text?: string
+    },
+  ) => post<{ interrupt_id: string; run_id: string; resumed: boolean }>(
+    `/agent/interrupts/${interruptId}/resolve`,
+    payload,
+  ),
+
+  /** SSE 流地址（run 级）。EventSource 同源直连 /api/v1。 */
+  streamUrl: (runId: string, lastEventId?: number) =>
+    `/api/v1/agent/runs/${runId}/stream${lastEventId ? `?last_event_id=${lastEventId}` : ''}`,
 }
 
 // ---------------------------------------------------------------------------

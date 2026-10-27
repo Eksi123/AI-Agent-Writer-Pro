@@ -1,10 +1,17 @@
-"""卷/章 CRUD 与顺序契约（手册「一」铁律 10 / 「三、(3)【卷章】」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_volumes_chapters.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 卷/章 CRUD 与顺序契约（手册「一」铁律 10 / 「三、(3)【卷章】」）。
 
-★核心断言：
-- 新建一律追加到末尾（sort_order = max+1）；
-- **无任何重排接口**（reorder / move 路由不存在，返回 404/405）；
-- 章不可跨卷移动；
-- 删除卷级联删除章节文件。
+    ★核心断言：
+    - 新建一律追加到末尾（sort_order = max+1）；
+    - **无任何重排接口**（reorder / move 路由不存在，返回 404/405）；
+    - 章不可跨卷移动；
+    - 删除卷级联删除章节文件。
 """
 
 from __future__ import annotations

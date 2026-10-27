@@ -78,4 +78,6 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501", "B008"]
+# UP009 豁免：项目统一保留 `# -*- coding: utf-8 -*-` 文件头（作者规范），
+# 虽然 Python 3 默认 UTF-8 使该声明冗余，但为风格一致刻意保留。
+ignore = ["E501", "B008", "UP009"]

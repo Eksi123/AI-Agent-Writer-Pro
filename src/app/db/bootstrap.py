@@ -1,9 +1,16 @@
-"""数据库初始化：建表 + 打 alembic 版本戳 + FTS5 探测建表。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.db.bootstrap
+文件名: bootstrap.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 数据库初始化：建表 + 打 alembic 版本戳 + FTS5 探测建表。
 
-为什么建表后要 stamp：`create_all` 建的库若没有 `alembic_version` 行，后续
-`writer migrate`（alembic upgrade head）会因「表已存在」而失败。因此这里在
-`create_all` 之后把版本戳打到 head，使两条初始化路径（应用启动 / 手工 migrate）
-互相幂等——先 `writer dev` 再 `writer migrate` 不会报错，反之亦然。
+    为什么建表后要 stamp：`create_all` 建的库若没有 `alembic_version` 行，后续
+    `writer migrate`（alembic upgrade head）会因「表已存在」而失败。因此这里在
+    `create_all` 之后把版本戳打到 head，使两条初始化路径（应用启动 / 手工 migrate）
+    互相幂等——先 `writer dev` 再 `writer migrate` 不会报错，反之亦然。
 """
 
 from __future__ import annotations

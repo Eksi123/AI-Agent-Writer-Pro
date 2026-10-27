@@ -1,4 +1,12 @@
-"""项目 CRUD 与软删除（手册「十一」· 导出/软删除域 + M1 验收口径）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_novels_api.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 项目 CRUD 与软删除（手册「十一」· 导出/软删除域 + M1 验收口径）。
+"""
 
 from __future__ import annotations
 

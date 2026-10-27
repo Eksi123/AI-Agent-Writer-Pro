@@ -1,7 +1,14 @@
-"""大纲读写与校验（手册「六 → 路由树 · 大纲」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.outline
+文件名: outline.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 大纲读写与校验（手册「六 → 路由树 · 大纲」）。
 
-★`PUT /novels/{id}/outline` 成功后执行 `sync_order_from_outline` 回填卷章 `sort_order`。
-检索与摘要重建见 `api/story.py`。
+    ★`PUT /novels/{id}/outline` 成功后执行 `sync_order_from_outline` 回填卷章 `sort_order`。
+    检索与摘要重建见 `api/story.py`。
 """
 
 from __future__ import annotations

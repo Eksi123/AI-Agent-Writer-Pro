@@ -1,4 +1,12 @@
-"""应用装配：lifespan、路由挂载、CORS、统一异常处理、静态资源（手册「三、(1)」）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.main
+文件名: main.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 应用装配：lifespan、路由挂载、CORS、统一异常处理、静态资源（手册「三、(1)」）。
+"""
 
 from __future__ import annotations
 
@@ -35,6 +43,7 @@ async def lifespan(app: FastAPI):
 
     fts = probe_fts5()
     await init_database()
+    await _seed_agent_config()
 
     logger.info(
         "startup",
@@ -50,8 +59,25 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        from app.agent.loop.checkpointer import reset_checkpointer
+
+        await reset_checkpointer()
         await reset_engine()
         logger.info("shutdown")
+
+
+async def _seed_agent_config() -> None:
+    """播种内置子代理 + 按 DB 状态重新物化用户技能（幂等，失败不阻断启动）。"""
+    try:
+        from app.db.session import session_scope
+        from app.services import skills as skills_service
+        from app.services import subagents as subagents_service
+
+        async with session_scope() as session:
+            await subagents_service.seed_builtins(session)
+            await skills_service.resync_materialization(session)
+    except Exception as exc:  # pragma: no cover - 播种失败不影响写作业务
+        logger.warning("agent_config_seed_failed", error=str(exc))
 
 
 def create_app() -> FastAPI:
@@ -83,7 +109,6 @@ def create_app() -> FastAPI:
 
 def _register_exception_handlers(app: FastAPI) -> None:
     """统一响应包装 `{code, message, data}`，HTTP 状态码与 code 对齐。"""
-
     @app.exception_handler(ApiError)
     async def _api_error(_request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(

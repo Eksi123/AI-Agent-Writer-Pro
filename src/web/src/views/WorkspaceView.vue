@@ -7,7 +7,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import ProjectList from '@/components/sidebar/ProjectList.vue'
 import ReaderToolbar from '@/components/reader/ReaderToolbar.vue'
 import TocDrawer from '@/components/reader/TocDrawer.vue'
@@ -21,6 +21,7 @@ import OutlineEditor from '@/components/editor/OutlineEditor.vue'
 import AgentPanel from '@/components/agent/AgentPanel.vue'
 import ExportDialog from '@/components/common/ExportDialog.vue'
 import { errorMessage } from '@/api/http'
+import { useAgentStore } from '@/stores/agent'
 import { useEditorStore } from '@/stores/editor'
 import { useProjectStore } from '@/stores/project'
 import { useReaderStore } from '@/stores/reader'
@@ -33,6 +34,7 @@ const project = useProjectStore()
 const reader = useReaderStore()
 const editorStore = useEditorStore()
 const settingsStore = useSettingsStore()
+const agentStore = useAgentStore()
 
 const agentOpen = ref(false)
 const exportVisible = ref(false)
@@ -84,6 +86,36 @@ async function onOutlineSaved(): Promise<void> {
   await project.loadVolumes()
 }
 
+/** Agent file.changed 热更新（手册「三、(3) 右侧栏」）：
+ * - 目录树刷新（增删改章 / 大纲顺序回填后）；
+ * - 若改动的是正在编辑的章：无本地未保存修改 → 静默重载；有未保存修改 → 提示用户选择。 */
+watch(
+  () => agentStore.fileChanged,
+  async (evt) => {
+    if (!evt) return
+    agentStore.clearFileChanged()
+    await project.loadVolumes()
+
+    const openedId = editorStore.chapterId
+    if (evt.chapterId && evt.chapterId === openedId) {
+      if (!editorStore.dirty) {
+        await editorStore.openChapter(openedId)
+      } else {
+        try {
+          await ElMessageBox.confirm(
+            `AI 已修改本章正文（${evt.kind}）。你本地有未保存的修改，是否放弃本地修改并载入 AI 版本？`,
+            '正文已被 AI 更新',
+            { confirmButtonText: '载入 AI 版本', cancelButtonText: '保留本地修改', type: 'warning' },
+          )
+          await editorStore.openChapter(openedId)
+        } catch {
+          /* 用户选择保留本地修改；保存时会触发乐观锁 409 冲突流程 */
+        }
+      }
+    }
+  },
+)
+
 /** 离开页面前把未保存的正文存一次（避免丢稿） */
 window.addEventListener('beforeunload', (e) => {
   if (editorStore.dirty) {
@@ -100,7 +132,7 @@ window.addEventListener('beforeunload', (e) => {
       <ProjectList
         @export="onExport"
         @open-settings="router.push('/settings')"
-        @open-ai-tools="router.push('/settings')"
+        @open-ai-tools="router.push('/ai-tools')"
       />
     </aside>
 

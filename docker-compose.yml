@@ -1,0 +1,37 @@
+# AI Writer Pro —— 单体部署（手册 M7）
+#
+#   docker compose up -d          启动
+#   docker compose logs -f app    看日志
+#   docker compose down           停止（data 卷保留）
+#
+# 数据持久化在命名卷 writer-data（= 容器内 /data）：
+#   app.db / agent_state.db / workspaces/（小说内容，最重要）/ skills / exports / trash / logs
+# 备份 = 停服后复制该卷：
+#   docker run --rm -v writer-data:/data -v "${PWD}:/backup" alpine tar czf /backup/writer-data.tgz -C /data .
+
+services:
+  app:
+    build: .
+    container_name: ai-writer-pro
+    ports:
+      - "127.0.0.1:8000:8000"   # 单用户本地应用：默认只绑回环；局域网访问改为 "8000:8000"
+    volumes:
+      - writer-data:/data
+    environment:
+      - DATA_ROOT=/data
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - LOG_LEVEL=INFO
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  writer-data:

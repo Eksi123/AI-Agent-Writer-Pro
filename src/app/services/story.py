@@ -1,10 +1,17 @@
-"""大纲读写与校验服务。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.story
+文件名: story.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 大纲读写与校验服务。
 
-★`sync_order_from_outline` 是卷章 `sort_order` 的**唯一写入口**（手册「四」/ 铁律 10）：
-- 触发点：① `PUT /novels/{id}/outline` 保存成功后；② Agent 改大纲时经 FileChangeNotify（M3）；
-- 规则：按卷节 H1 先后写 volumes.yaml 的 sort_order（1..N）；按各卷节下章简介 H2 先后写
-  对应章 frontmatter 的 sort_order（卷内 1..N）；匹配以归一化「卷名+章名完全一致」为准；
-- 不做：不改 ID / 文件名、不移动章节文件、不支持跨卷移动、不产生修订快照、不递增 version。
+    ★`sync_order_from_outline` 是卷章 `sort_order` 的**唯一写入口**（手册「四」/ 铁律 10）：
+    - 触发点：① `PUT /novels/{id}/outline` 保存成功后；② Agent 改大纲时经 FileChangeNotify（M3）；
+    - 规则：按卷节 H1 先后写 volumes.yaml 的 sort_order（1..N）；按各卷节下章简介 H2 先后写
+      对应章 frontmatter 的 sort_order（卷内 1..N）；匹配以归一化「卷名+章名完全一致」为准；
+    - 不做：不改 ID / 文件名、不移动章节文件、不支持跨卷移动、不产生修订快照、不递增 version。
 """
 
 from __future__ import annotations

@@ -1,7 +1,14 @@
-"""卷 / 章 CRUD（手册「六 → 路由树 · 卷章」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.volumes
+文件名: volumes.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 卷 / 章 CRUD（手册「六 → 路由树 · 卷章」）。
 
-★**无 reorder / move 接口**：卷章顺序是大纲派生值（铁律 10 / 手册「四」）。
-前端卷章树只读渲染 `sort_order`，顺序调整一律回到大纲节点。
+    ★**无 reorder / move 接口**：卷章顺序是大纲派生值（铁律 10 / 手册「四」）。
+    前端卷章树只读渲染 `sort_order`，顺序调整一律回到大纲节点。
 """
 
 from __future__ import annotations

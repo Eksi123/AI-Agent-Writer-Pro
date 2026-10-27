@@ -1,8 +1,15 @@
-"""检索服务：FTS5（二元切分 + unicode61）主方案，`LIKE` 降级（手册「四、检索」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.search
+文件名: search.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 检索服务：FTS5（二元切分 + unicode61）主方案，`LIKE` 降级（手册「四、检索」）。
 
-★索引侧与查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
-★`project_id` 必须参与过滤，否则跨项目串数据。
-数据源：大纲单文件（kind=outline）+ `summaries/`（kind=summary）。
+    ★索引侧与查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
+    ★`project_id` 必须参与过滤，否则跨项目串数据。
+    数据源：大纲单文件（kind=outline）+ `summaries/`（kind=summary）。
 """
 
 from __future__ import annotations
@@ -247,12 +254,28 @@ def _like_hits(doc_ref: str, kind: str, content: str, q: str, limit: int) -> lis
 
 
 async def rebuild_summaries(session: AsyncSession, project_id: str) -> dict[str, Any]:
-    """重建章节摘要索引。
+    """重建章节摘要与派生索引（手册「六 → 路由树 · 摘要」）。
 
-    M1：摘要文件由服务层 `summarize_chapter`（M4）生成，此处只做索引重建与统计。
+    - LLM 摘要：为已定稿（status=finalized）且尚无摘要的章节生成 `summaries/ch-{id}.md`
+      （未配置模型时自动跳过，不阻断索引重建）；
+    - 派生索引：全量重建 `story_fts` 并刷新统计。
     """
+    # ① 摘要生成（尽力而为：无模型/失败只记录，不抛）
+    summarize_note = "未生成（未定稿章节或缺少可用模型时跳过）"
+    try:
+        from app.agent.knowledge import summarize_finalized_chapters
+
+        result_summary = await summarize_finalized_chapters(session, project_id)
+        await session.commit()
+        if result_summary["summarized"]:
+            summarize_note = f"新生成 {result_summary['summarized']} 篇"
+    except Exception as exc:
+        logger.warning("rebuild_summaries_llm_skipped", project_id=project_id, error=str(exc))
+        summarize_note = f"LLM 摘要跳过：{exc}"
+
+    # ② 派生索引重建
     result = await reindex_project(session, project_id)
     sdir = summaries_dir(project_id)
     result["summary_files"] = len(list(sdir.glob("ch-*.md"))) if sdir.exists() else 0
-    result["note"] = "LLM 摘要生成（summarize_chapter）在 M4 接入"
+    result["summarize"] = summarize_note
     return result

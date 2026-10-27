@@ -1,11 +1,18 @@
-"""导出：zip 产物 = 正文（markdown/epub/mobi/txt 单选）+ `{小说名称}-大纲.md` 原件。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.exporters
+文件名: exporters.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 导出：zip 产物 = 正文（markdown/epub/mobi/txt 单选）+ `{小说名称}-大纲.md` 原件。
 
-手册「三、(3) 导出」与「十一 · EPUB」要点：
-- EPUB 3 自研 `zipfile` 生成器：`mimetype` 必须为**首个条目且 STORE 不压缩**，
-  含 `META-INF/container.xml` / `OEBPS/content.opf` / `OEBPS/nav.xhtml` / 各章 xhtml；
-- mobi 由 EPUB 产物经**可选外部工具** calibre `ebook-convert` 转换，未安装则 503 / `50301`；
-- txt 自研纯文本拼接（卷章标题 + 正文按顺序连接）；
-- 异步任务落 `data/exports/`，动作写审计。
+    手册「三、(3) 导出」与「十一 · EPUB」要点：
+    - EPUB 3 自研 `zipfile` 生成器：`mimetype` 必须为**首个条目且 STORE 不压缩**，
+      含 `META-INF/container.xml` / `OEBPS/content.opf` / `OEBPS/nav.xhtml` / 各章 xhtml；
+    - mobi 由 EPUB 产物经**可选外部工具** calibre `ebook-convert` 转换，未安装则 503 / `50301`；
+    - txt 自研纯文本拼接（卷章标题 + 正文按顺序连接）；
+    - 异步任务落 `data/exports/`，动作写审计。
 """
 
 from __future__ import annotations

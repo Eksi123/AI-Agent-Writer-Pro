@@ -1,7 +1,14 @@
-"""检索与摘要重建（手册「六 → 路由树 · 检索 / 摘要」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.story
+文件名: story.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 检索与摘要重建（手册「六 → 路由树 · 检索 / 摘要」）。
 
-检索源：大纲单文件 + `summaries/`，**限本项目**（`project_id` 过滤）。
-FTS5 不可用时降级 `LIKE`，返回结构不变并置 `data.degraded=true`。
+    检索源：大纲单文件 + `summaries/`，**限本项目**（`project_id` 过滤）。
+    FTS5 不可用时降级 `LIKE`，返回结构不变并置 `data.degraded=true`。
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ async def search(
 async def rebuild_summaries(novel_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """重建章节摘要与派生索引。
 
-    M1 只做索引重建与统计；LLM 摘要生成（`summarize_chapter`）在 M4 接入。
+    摘要由 LLM 为已定稿章节生成（未配置模型时自动跳过）；随后全量重建派生索引与统计。
     """
     result = await search_service.rebuild_summaries(session, novel_id)
     await session.commit()

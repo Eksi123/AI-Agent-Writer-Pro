@@ -1,7 +1,14 @@
-"""FTS5 二元切分与降级（手册「十一 · FTS5」域）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_fts_search.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: FTS5 二元切分与降级（手册「十一 · FTS5」域）。
 
-★必测：二元切分往返（索引侧与查询侧同一函数）；2 字词命中（trigram 做不到的场景）；
-`bm25` 排序；FTS5 不可用时 `LIKE` 降级且 `data.degraded=true`；`project_id` 过滤（跨项目不串数据）。
+    ★必测：二元切分往返（索引侧与查询侧同一函数）；2 字词命中（trigram 做不到的场景）；
+    `bm25` 排序；FTS5 不可用时 `LIKE` 降级且 `data.degraded=true`；`project_id` 过滤（跨项目不串数据）。
 """
 
 from __future__ import annotations

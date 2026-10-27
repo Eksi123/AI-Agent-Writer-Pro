@@ -1,4 +1,12 @@
-"""健康检查与运行期自检（FTS5 探测、calibre 探测）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.health
+文件名: health.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 健康检查与运行期自检（FTS5 探测、calibre 探测）。
+"""
 
 from __future__ import annotations
 

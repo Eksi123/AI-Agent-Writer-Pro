@@ -1,7 +1,14 @@
-"""统一响应包装 `{code, message, data}`（见手册「六、通用约定」）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.core.response
+文件名: response.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 统一响应包装 `{code, message, data}`（见手册「六、通用约定」）。
 
-路由直接返回 `ok(...)` / `err(...)` 构造的 dict，由 FastAPI 序列化为
-`{code, message, data}`；异常经 `main._register_exception_handlers` 转成同构信封。
+    路由直接返回 `ok(...)` / `err(...)` 构造的 dict，由 FastAPI 序列化为
+    `{code, message, data}`；异常经 `main._register_exception_handlers` 转成同构信封。
 """
 
 from __future__ import annotations

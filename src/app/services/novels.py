@@ -1,11 +1,18 @@
-"""小说项目服务：CRUD、软删除、重命名（同步重命名大纲文件）、统计缓存。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.novels
+文件名: novels.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 小说项目服务：CRUD、软删除、重命名（同步重命名大纲文件）、统计缓存。
 
-手册要点：
-- 创建时：① 写 `novels` 登记行（生成 `project_id`=uuid）② 初始化工作区 ③ 写入大纲模板文件；
-- **显式命名**（铁律 6，违规 42201）；
-- 删除为**软删除**：工作区移入 `data/trash/{id}-{ts}/` + `status="deleted"`；
-- `outline_file` 是大纲唯一寻址依据（重命名事务内同步改文件名 + novel.yaml + DB）；
-- DB 是文件值的缓存，不一致时以文件为准（铁律 3）。
+    手册要点：
+    - 创建时：① 写 `novels` 登记行（生成 `project_id`=uuid）② 初始化工作区 ③ 写入大纲模板文件；
+    - **显式命名**（铁律 6，违规 42201）；
+    - 删除为**软删除**：工作区移入 `data/trash/{id}-{ts}/` + `status="deleted"`；
+    - `outline_file` 是大纲唯一寻址依据（重命名事务内同步改文件名 + novel.yaml + DB）；
+    - DB 是文件值的缓存，不一致时以文件为准（铁律 3）。
 """
 
 from __future__ import annotations

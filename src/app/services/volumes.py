@@ -1,13 +1,20 @@
-"""卷 / 章服务：CRUD、正文读写（乐观锁）、修订快照与回滚。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.volumes
+文件名: volumes.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 卷 / 章服务：CRUD、正文读写（乐观锁）、修订快照与回滚。
 
-手册约束：
-- **短 ID 永不变**（`v{vol_id}` / `c{chapter_id}`），文件名与目录名含 ID；
-- **顺序只按创建先后追加**（`sort_order = max+1`），★无重排接口、无跨卷移动；
-  顺序的唯一派生写入口是 `sync_order_from_outline`（M4）；
-- 显式命名（42201）；
-- 正文写入乐观锁：`base_version` 不符 → 409 / `40901` 并回传最新内容；
-- 修订快照触发：手动保存 / Agent 写章前 / 章节定稿；**自动保存不快照**；
-- 删除卷级联删除其下章节文件。
+    手册约束：
+    - **短 ID 永不变**（`v{vol_id}` / `c{chapter_id}`），文件名与目录名含 ID；
+    - **顺序只按创建先后追加**（`sort_order = max+1`），★无重排接口、无跨卷移动；
+      顺序的唯一派生写入口是 `sync_order_from_outline`（M4）；
+    - 显式命名（42201）；
+    - 正文写入乐观锁：`base_version` 不符 → 409 / `40901` 并回传最新内容；
+    - 修订快照触发：手动保存 / Agent 写章前 / 章节定稿；**自动保存不快照**；
+    - 删除卷级联删除其下章节文件。
 """
 
 from __future__ import annotations

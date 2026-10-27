@@ -1,6 +1,13 @@
-"""async engine / sessionmaker（aiosqlite）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.db.session
+文件名: session.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: async engine / sessionmaker（aiosqlite）。
 
-业务库 `data/app.db`；LangGraph checkpoint 另用 `data/agent_state.db`（M3），跨库不建外键。
+    业务库 `data/app.db`；LangGraph checkpoint 另用 `data/agent_state.db`（M3），跨库不建外键。
 """
 
 from __future__ import annotations

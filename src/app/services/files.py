@@ -1,6 +1,13 @@
-"""工作区 YAML 读写：novel.yaml / volumes.yaml / 章节 frontmatter（python-frontmatter）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.services.files
+文件名: files.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 工作区 YAML 读写：novel.yaml / volumes.yaml / 章节 frontmatter（python-frontmatter）。
 
-文件为内容事实源（铁律 3）；DB 的 `novels` 行只是缓存，可随时从文件重建。
+    文件为内容事实源（铁律 3）；DB 的 `novels` 行只是缓存，可随时从文件重建。
 """
 
 from __future__ import annotations

@@ -1,7 +1,14 @@
-"""pytest 公共 fixture：临时数据根 + 内存隔离的 ASGI 客户端。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: conftest.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: pytest 公共 fixture：临时数据根 + 内存隔离的 ASGI 客户端。
 
-手册「十一、测试与验收策略」：API 层用 `httpx.ASGITransport` 直连 FastAPI app（不起真实端口），
-文件类测试用 `tmp_path` 构造临时工作区。
+    手册「十一、测试与验收策略」：API 层用 `httpx.ASGITransport` 直连 FastAPI app（不起真实端口），
+    文件类测试用 `tmp_path` 构造临时工作区。
 """
 
 from __future__ import annotations
@@ -18,7 +25,14 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     """每个测试用独立的 data 根，避免互相污染。
 
     必须在 `app.core.config` 首次导入前生效，故同时重置 lru_cache 与 FTS 探测缓存。
+    Agent 侧全局单例（checkpointer / SSE 总线 / 模型缓存）也一并重置。
+    ★同时快照并还原 `os.environ`：`set_env_key` 会直接写进程环境（密钥类测试会污染）。
     """
+    import copy
+    import os
+
+    env_snapshot = copy.deepcopy(os.environ)
+
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("DATA_ROOT", str(data_dir))
@@ -26,6 +40,8 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     # 关闭 Langfuse，避免测试触网
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    # 测试默认关闭子代理（聚焦主循环；子代理装配有专项测试）
+    monkeypatch.setenv("AGENT_SUBAGENTS_ENABLED", "false")
 
     from app.core.config import get_settings
     from app.db.fts import probe_fts5
@@ -33,7 +49,21 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     get_settings.cache_clear()
     probe_fts5.cache_clear()
     yield
+    from app.agent.llm.factory import clear_model_overrides
+    from app.agent.loop import checkpointer as cp
+    from app.agent.loop.events import sse_bus
+
+    # 同步 teardown：直接释放全局态（连接对象交由 GC；测试用临时目录）
+    clear_model_overrides()
+    cp._saver = None
+    cp._conn = None
+    cp._saver_path = None
+    sse_bus._streams.clear()
     get_settings.cache_clear()
+
+    # 还原进程环境（清除 set_env_key 写入的密钥等）
+    os.environ.clear()
+    os.environ.update(env_snapshot)
 
 
 @pytest.fixture

@@ -1,4 +1,12 @@
-"""结构化日志：structlog 输出 JSONL 到 `data/logs/`，含敏感字段脱敏（手册「三、(1)」、铁律 11）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.core.logging
+文件名: logging.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 结构化日志：structlog 输出 JSONL 到 `data/logs/`，含敏感字段脱敏（手册「三、(1)」、铁律 11）。
+"""
 
 from __future__ import annotations
 

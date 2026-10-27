@@ -1,11 +1,18 @@
-"""导出 zip 与 EPUB 结构（手册「十一 · EPUB / 导出」域）。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: tests
+文件名: test_export.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 导出 zip 与 EPUB 结构（手册「十一 · EPUB / 导出」域）。
 
-★必测：
-- `mimetype` 为 zip **首条目且 STORE 不压缩**；
-- `META-INF/container.xml`、`OEBPS/content.opf`、`nav.xhtml` 存在且 XML 合法；
-- 章节顺序与卷章树（按 `sort_order`）一致；txt 拼接顺序正确；
-- zip 内含正文（按 format）+ 大纲原 md；
-- calibre 未安装时 mobi 返回 503 / `50301`。
+    ★必测：
+    - `mimetype` 为 zip **首条目且 STORE 不压缩**；
+    - `META-INF/container.xml`、`OEBPS/content.opf`、`nav.xhtml` 存在且 XML 合法；
+    - 章节顺序与卷章树（按 `sort_order`）一致；txt 拼接顺序正确；
+    - zip 内含正文（按 format）+ 大纲原 md；
+    - calibre 未安装时 mobi 返回 503 / `50301`。
 """
 
 from __future__ import annotations

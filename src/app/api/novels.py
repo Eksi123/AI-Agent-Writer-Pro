@@ -1,4 +1,12 @@
-"""项目 CRUD、导出、阅读进度（手册「六 → 路由树 · 项目」）。"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+模块: app.api.novels
+文件名: novels.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: 项目 CRUD、导出、阅读进度（手册「六 → 路由树 · 项目」）。
+"""
 
 from __future__ import annotations
 

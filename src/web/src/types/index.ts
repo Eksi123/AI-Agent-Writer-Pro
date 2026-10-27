@@ -206,3 +206,185 @@ export interface Health {
   langfuse_enabled: boolean
   data_root: string
 }
+
+// ---------------------------------------------------------------------------
+// LLM（M3）
+// ---------------------------------------------------------------------------
+
+export type ProviderType =
+  | 'openai'
+  | 'openai_compatible'
+  | 'anthropic'
+  | 'google'
+  | 'azure_openai'
+  | 'openrouter'
+
+export interface LlmModelDto {
+  id: string
+  provider_id: string
+  model_ref: string
+  model_id: string
+  display_name?: string | null
+  max_context: number
+  supports_tools: boolean
+  default_params: Record<string, unknown>
+  is_default: boolean
+  enabled: boolean
+  fallback_chain: string[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface LlmProviderDto {
+  id: string
+  name: string
+  type: ProviderType
+  base_url?: string | null
+  api_key_env?: string | null
+  api_key_configured: boolean
+  api_key_masked: string
+  extra?: Record<string, unknown> | null
+  enabled: boolean
+  priority: number
+  models: LlmModelDto[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface LlmOverview {
+  settings: {
+    config_version: number
+    sse_buffer_size: number
+    langfuse_enabled: boolean
+    provider_keys: Record<string, boolean>
+    suggested_key_envs: string[]
+    provider_types: ProviderType[]
+  }
+  default_model_ref: string | null
+  models: {
+    model_ref: string
+    display_name: string
+    provider_name: string
+    provider_type: ProviderType
+    is_default: boolean
+    max_context: number
+    supports_tools: boolean
+  }[]
+}
+
+export interface ProviderTestResult {
+  ok: boolean
+  provider: string
+  model?: string
+  latency_ms?: number
+  reply_excerpt?: string
+  message: string
+}
+
+// ---------------------------------------------------------------------------
+// Agent（M3）
+// ---------------------------------------------------------------------------
+
+export type AgentSessionStatus =
+  | 'idle'
+  | 'running'
+  | 'awaiting_approval'
+  | 'awaiting_consult'
+  | 'error'
+
+export interface AgentSessionDto {
+  id: string
+  project_id: string
+  project_title?: string
+  title: string
+  model_ref?: string | null
+  status: AgentSessionStatus
+  active_leaf_id?: string | null
+  subagent_ids: string[]
+  skill_ids: string[]
+  context_chapter_ids: string[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AgentMessageDto {
+  id: string
+  parent_id?: string | null
+  branch_index: number
+  branch_count: number
+  role: 'user' | 'assistant' | 'tool' | 'system'
+  content: string
+  tool_calls?: { name: string; args?: Record<string, unknown>; id?: string }[] | null
+  status: string
+  tokens_in: number
+  tokens_out: number
+  model?: string | null
+  run_id?: string | null
+  created_at?: string | null
+  in_active_path: boolean
+}
+
+export interface MessageTree {
+  session_id: string
+  title?: string
+  status?: AgentSessionStatus
+  project_id?: string
+  active_leaf_id?: string | null
+  total: number
+  items: AgentMessageDto[]
+}
+
+export type AgentRunStatus =
+  | 'pending'
+  | 'running'
+  | 'awaiting_approval'
+  | 'awaiting_consult'
+  | 'cancelling'
+  | 'cancelled'
+  | 'completed'
+  | 'failed'
+
+export interface AgentInterruptDto {
+  id: string
+  run_id: string
+  session_id: string
+  type: 'approval' | 'consult'
+  tool_name?: string | null
+  payload?: Record<string, unknown> | string | null
+  decision?: string | null
+  response?: Record<string, unknown> | null
+  decided_by?: string | null
+  decided_at?: string | null
+  created_at?: string | null
+}
+
+export interface AgentRunDto {
+  id: string
+  session_id: string
+  project_id: string
+  status: AgentRunStatus
+  model_ref?: string | null
+  recursion_used: number
+  tokens_in: number
+  tokens_out: number
+  fallback_count: number
+  langfuse_trace_id?: string | null
+  error?: string | null
+  started_at?: string | null
+  ended_at?: string | null
+  gate_stage?: string | null
+  gate_retry_count: number
+  gate_result?: Record<string, unknown> | string | null
+  target_chapter_id?: string | null
+  interrupts: AgentInterruptDto[]
+}
+
+/** 选区 AI 改写结果（手册「三、(3)【正文】」选中浮层） */
+export interface RewriteResult {
+  mode: 'rewrite' | 'expand' | 'condense' | 'polish'
+  original: string
+  rewritten: string
+  model_ref: string
+  word_counts: { original: number; rewritten: number }
+  prompt_version: string
+}
