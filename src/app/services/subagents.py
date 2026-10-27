@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.services.subagents
 文件名: subagents.py
@@ -25,7 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.subagents import BUILTIN_SUBAGENTS
+from app.core.catalog import builtin_subagents
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
@@ -87,7 +86,7 @@ async def seed_builtins(session: AsyncSession) -> int:
     """播种内置子代理（幂等：已存在的按 name 跳过，不覆盖用户改动）。"""
     existing = set((await session.execute(select(SubagentConfig.name))).scalars().all())
     created = 0
-    for name, spec in BUILTIN_SUBAGENTS.items():
+    for name, spec in builtin_subagents().items():
         if name in existing:
             continue
         session.add(
@@ -240,9 +239,10 @@ async def reset_builtin(session: AsyncSession, pk: str) -> dict[str, Any]:
     row = await session.get(SubagentConfig, pk)
     if row is None:
         raise NotFoundError(f"子代理不存在：{pk}")
-    if not row.is_builtin or row.name not in BUILTIN_SUBAGENTS:
+    catalog = builtin_subagents()
+    if not row.is_builtin or row.name not in catalog:
         raise BadRequestError("只有内置子代理支持恢复出厂配置")
-    spec = BUILTIN_SUBAGENTS[row.name]
+    spec = catalog[row.name]
     row.description = spec["description"]
     row.system_prompt = spec["system_prompt"]
     row.mode = spec.get("mode", "isolated")

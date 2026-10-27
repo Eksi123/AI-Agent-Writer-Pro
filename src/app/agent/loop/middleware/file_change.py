@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.middleware.file_change
 文件名: file_change.py

@@ -5,11 +5,6 @@ data/
 .env.*.local
 !.env.example
 
-# 依赖以 pyproject.toml + uv.lock 为唯一事实源（手册「十」已知缺陷④，M0 已决定去留）。
-# IDE/工具链自动导出的 requirements.txt 不入库：它是 UTF-16 带哈希的 368KB 产物，
-# git 无法作为文本 diff，且与 pyproject 形成双份清单。
-requirements.txt
-
 # ---- Python ----
 __pycache__/
 .python-version

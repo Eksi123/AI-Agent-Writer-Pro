@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.services.agent
 文件名: agent.py
@@ -21,13 +20,19 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.memory import load_tree, set_active_leaf
 from app.core.errors import ApiError, ErrorCode, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel, ProjectIndex, ToolCallLog
+from app.db.session import session_scope
 from app.services import audit
 
 logger = get_logger(__name__)
+
+#: services → agent 的**能力型依赖入口**（消息树读写）。
+#: 消息树是 Agent 的记忆载体，读写实现留在 agent/memory；agent/memory 不 import services，
+#: 故此顶层导入无环。这是刻意保留的少数反向依赖之一（详见 Writer-Develop.md「2.3 依赖方向与边界」）。
 
 #: run 终态（不可再 resolve / cancel）
 _TERMINAL_RUN_STATUS = ("completed", "failed", "cancelled")
@@ -80,7 +85,7 @@ async def create_session(
 
 
 async def rename_session(session: AsyncSession, session_id: str, *, title: str) -> dict[str, Any]:
-    row = await _require_session(session, session_id)
+    row = await require_session(session, session_id)
     new_title = (title or "").strip()
     if not new_title:
         from app.core.errors import BadRequestError
@@ -93,7 +98,7 @@ async def rename_session(session: AsyncSession, session_id: str, *, title: str) 
 
 
 async def delete_session(session: AsyncSession, session_id: str) -> dict[str, Any]:
-    row = await _require_session(session, session_id)
+    row = await require_session(session, session_id)
     if row.status == "running":
         raise ApiError("会话正在运行中，请先取消运行再删除", code=ErrorCode.RUN_STATE_CONFLICT)
     project_id = row.project_id
@@ -115,7 +120,7 @@ async def update_context(
     skill_ids: list[str] | None = None,
     context_chapter_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    row = await _require_session(session, session_id)
+    row = await require_session(session, session_id)
     changes: dict[str, Any] = {}
 
     if model_ref is not None and model_ref != row.model_ref:
@@ -171,6 +176,33 @@ def _loads_list(raw: str | None) -> list[str]:
     except ValueError:
         return []
     return [str(x) for x in value] if isinstance(value, list) else []
+
+
+async def load_message_tree(session: AsyncSession, session_id: str) -> dict[str, Any]:
+    """消息树 DTO + 会话头信息（`GET /agent/sessions/{sid}/messages`）。
+
+    树结构由 `agent/memory` 读写（消息树是 Agent 的记忆载体），本函数只负责
+    把会话标题/状态/项目一并拼进响应，使 API 层不必直连 agent 内部。
+    """
+    row = await require_session(session, session_id)
+    tree = await load_tree(session, session_id)
+    tree["title"] = row.title
+    tree["status"] = row.status
+    tree["project_id"] = row.project_id
+    return tree
+
+
+async def switch_branch(session: AsyncSession, session_id: str, message_id: str) -> dict[str, Any]:
+    """切换 active_leaf_id（分支查看 / 重新生成前的回退）。"""
+    await require_session(session, session_id)
+    try:
+        await set_active_leaf(session, session_id, message_id)
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
+    await session.flush()
+
+    row = await session.get(AgentSession, session_id)
+    return {"session_id": session_id, "active_leaf_id": row.active_leaf_id if row else None}
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +459,11 @@ def _approval_resume(
 # ---------------------------------------------------------------------------
 
 
-async def _require_session(session: AsyncSession, session_id: str) -> AgentSession:
+async def require_session(session: AsyncSession, session_id: str) -> AgentSession:
+    """取会话行，不存在则 404。
+
+    会话取数的唯一入口：API 层、本模块其余函数与 agent 运行层（loop/runner）共用。
+    """
     row = await session.get(AgentSession, session_id)
     if row is None:
         raise NotFoundError(f"会话不存在：{session_id}")
@@ -438,9 +474,74 @@ async def require_session_of_project(
     session: AsyncSession, session_id: str, project_id: str
 ) -> AgentSession:
     """校验会话归属项目（防跨项目访问）。"""
-    row = await _require_session(session, session_id)
+    row = await require_session(session, session_id)
     if row.project_id != project_id:
         from app.core.errors import ForbiddenError
 
         raise ForbiddenError(f"会话 {session_id} 不属于项目 {project_id}")
     return row
+
+
+# ---------------------------------------------------------------------------
+# 数据访问（会话列表 / 工具调用日志 / 项目字数）
+# ---------------------------------------------------------------------------
+#
+# 这一组是纯取数逻辑，住在服务层，使 14 个 API 模块取数路径一致（都经 services）；
+# agent 运行层（loop/runner、gates/runner）也复用这里的 `project_word_count`。
+
+
+async def list_sessions(db: AsyncSession, project_id: str | None = None) -> list[dict[str, Any]]:
+    """会话列表（按项目隔离）。
+
+    DTO 复用 `_session_dto`，确保与单会话读写返回同构
+    （含 subagent_ids / skill_ids / context_chapter_ids 上下文 Chips）。
+    """
+    stmt = select(AgentSession).order_by(AgentSession.updated_at.desc())
+    if project_id:
+        stmt = stmt.where(AgentSession.project_id == project_id)
+    rows = (await db.execute(stmt)).scalars().all()
+
+    novel_titles: dict[str, str] = {}
+    result = []
+    for s in rows:
+        if s.project_id not in novel_titles:
+            novel = await db.get(Novel, s.project_id)
+            novel_titles[s.project_id] = novel.title if novel else ""
+        result.append(_session_dto(s, project_title=novel_titles[s.project_id]))
+    return result
+
+
+async def list_tool_calls(db: AsyncSession, session_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    """工具调用日志（运行日志面板）。"""
+    rows = (
+        (
+            await db.execute(
+                select(ToolCallLog)
+                .where(ToolCallLog.session_id == session_id)
+                .order_by(ToolCallLog.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "run_id": r.run_id,
+            "tool_name": r.tool_name,
+            "status": r.status,
+            "duration_ms": r.duration_ms,
+            "error": r.error,
+            "result_excerpt": (r.result_excerpt or "")[:200],
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+
+
+async def project_word_count(project_id: str) -> int:
+    """项目派生索引里的总字数（Langfuse score 用）。"""
+    async with session_scope() as db:
+        row = await db.get(ProjectIndex, project_id)
+        return int(row.total_words) if row is not None else 0

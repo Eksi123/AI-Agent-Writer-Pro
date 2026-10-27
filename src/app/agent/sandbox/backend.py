@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.agent.sandbox.backend
 文件名: backend.py
@@ -17,15 +16,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 
-from app.core.paths import data_root
+from app.core.paths import BUILTIN_SKILLS_DIR, data_root
 
-#: 内置技能目录（随包只读）
-BUILTIN_SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+__all__ = ["BUILTIN_SKILLS_DIR", "build_backend"]
 
 
 def build_backend(session_id: str = "") -> CompositeBackend:

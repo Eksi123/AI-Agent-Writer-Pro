@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.api.chapters
 文件名: chapters.py
@@ -15,6 +14,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.llm.rewrite import rewrite_selection as do_rewrite
 from app.core.deps import get_session
 from app.core.response import ok
 from app.schemas import ContentIn, RewriteIn
@@ -59,8 +59,6 @@ async def rewrite_selection(
     返回原文与改写结果，由前端做 diff 预览；用户「接受」后再走
     `PUT /chapters/{cid}/content`（乐观锁 + 修订快照）落盘，「放弃」则不产生任何改动。
     """
-    from app.agent.llm.rewrite import rewrite_selection as do_rewrite
-
     # 校验章节存在并取章标题（改写风格参考）
     content_dto = await volumes.read_content(session, chapter_id)
 

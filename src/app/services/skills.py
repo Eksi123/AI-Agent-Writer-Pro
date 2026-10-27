@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.services.skills
 文件名: skills.py
@@ -30,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
-from app.core.paths import skills_root
+from app.core.paths import BUILTIN_SKILLS_DIR, skills_root
 from app.db.base import new_id, utcnow
 from app.db.models import SkillConfig
 from app.services import audit
@@ -141,8 +140,6 @@ async def list_skills(session: AsyncSession, *, include_builtin: bool = True) ->
 
 
 def _builtin_skill_dtos() -> list[dict[str, Any]]:
-    from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
-
     out: list[dict[str, Any]] = []
     if not BUILTIN_SKILLS_DIR.is_dir():
         return out
@@ -230,8 +227,6 @@ async def create_skill(
 
 
 def _builtin_dirs() -> list[Any]:
-    from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
-
     if not BUILTIN_SKILLS_DIR.is_dir():
         return []
     return [d for d in BUILTIN_SKILLS_DIR.iterdir() if d.is_dir()]
@@ -347,7 +342,6 @@ async def materialize_session_skills(
     内置技能从包内复制，用户技能从 `data/skills/`（或 DB content_md）复制。
     返回实际物化的技能数。
     """
-    from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
     from app.core.paths import session_skills_dir
 
     target_root = session_skills_dir(session_id)

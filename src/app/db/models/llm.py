@@ -1,0 +1,49 @@
+﻿# -*- coding: utf-8 -*-
+"""
+模块: app.db.models.llm
+文件名: llm.py
+作者: xionggaoqing
+时间: 2026-10-27
+说明: LLM 域 ORM：llm_providers / llm_models（手册「五、数据模型」M3）。
+
+    ★密钥**不入 DB**：只存 `api_key_env`（环境变量名），读取经 `core.security`。
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base, TimestampMixin, new_id
+
+
+class LlmProvider(Base, TimestampMixin):
+    """LLM Provider。`api_key_env` 仅存环境变量名，密钥本身只在 `.env`。"""
+
+    __tablename__ = "llm_providers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: openai | openai_compatible | anthropic | google | azure_openai | openrouter
+    type: Mapped[str] = mapped_column(String(30), nullable=False)
+    base_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    api_key_env: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class LlmModel(Base, TimestampMixin):
+    __tablename__ = "llm_models"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    max_context: Mapped[int] = mapped_column(Integer, nullable=False, default=32768)
+    supports_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    default_params_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: 有序 model_ref 列表，供 ModelFallbackMiddleware 使用（M3）
+    fallback_chain_json: Mapped[str | None] = mapped_column(Text, nullable=True)

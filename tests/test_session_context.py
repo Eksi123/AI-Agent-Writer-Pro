@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_session_context.py
@@ -46,7 +45,7 @@ class TestPinnedChapters:
 
     async def test_recap_includes_pinned_via_session_context(self, client, novel_id, volume_id):
         """会话设置了 context_chapter_ids 后，recap provider 输出包含该章。"""
-        from app.agent.loop.runner import _make_recap_provider
+        from app.agent.loop.resolve import make_recap_provider
 
         resp = await client.post(
             f"/api/v1/volumes/{volume_id}/chapters",
@@ -63,13 +62,13 @@ class TestPinnedChapters:
         assert resp.json()["code"] == 0
         assert resp.json()["data"]["context_chapter_ids"] == [ch_id]
 
-        provider = _make_recap_provider(novel_id, sid)
+        provider = make_recap_provider(novel_id, sid)
         recap = await provider(None)
         assert "上下文章" in recap
 
     async def test_session_context_of_resolves_ids_to_names(self, client, novel_id):
         """subagent/skill 的 DB id 被解析为 name（builtin: 前缀也支持）。"""
-        from app.agent.loop.runner import _session_context_of
+        from app.agent.loop.resolve import session_context_of
         from app.db.session import session_scope
 
         subs = (await client.get("/api/v1/subagents")).json()["data"]
@@ -84,7 +83,7 @@ class TestPinnedChapters:
         )
 
         async with session_scope() as db:
-            sub_names, skill_names = await _session_context_of(db, sid)
+            sub_names, skill_names = await session_context_of(db, sid)
         assert sub_names == {"writer"}
         assert skill_names == {"naming"}
 

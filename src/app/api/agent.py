@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.api.agent
 文件名: agent.py
@@ -30,8 +29,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+# ★agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
+# 这两个是「运行 Agent」的驱动面，不是取数——数据访问（会话列表/消息树/工具日志/分支切换）
+# 已全部下沉到 `services.agent`，故本模块不再直连 agent 的取数函数，
+# 与其它 13 个 api 模块的取数路径保持一致（都经 services）。
 from app.agent.loop.events import buffer_lost_event, sse_bus
-from app.agent.loop.runner import list_sessions, list_tool_calls, run_manager
+from app.agent.loop.runner import run_manager
 from app.core.deps import get_session
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
@@ -62,7 +65,7 @@ async def get_sessions(
     novel_id: str | None = Query(default=None), session: AsyncSession = Depends(get_session)
 ) -> dict:
     """会话列表（按项目隔离：带 novel_id 只返回该项目会话）。"""
-    return ok(await list_sessions(session, novel_id))
+    return ok(await agent_service.list_sessions(session, novel_id))
 
 
 @router.post("/sessions")
@@ -115,19 +118,7 @@ async def update_context(
 @router.get("/sessions/{session_id}/messages")
 async def get_messages(session_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """消息树（含分支与 active 路径标记）。"""
-    tree = await agent_service_load_tree(session, session_id)
-    return ok(tree)
-
-
-async def agent_service_load_tree(db: AsyncSession, session_id: str) -> dict[str, Any]:
-    from app.agent.memory import load_tree
-
-    row = await _require_session_row(db, session_id)
-    tree = await load_tree(db, session_id)
-    tree["title"] = row.title
-    tree["status"] = row.status
-    tree["project_id"] = row.project_id
-    return tree
+    return ok(await agent_service.load_message_tree(session, session_id))
 
 
 @router.post("/sessions/{session_id}/messages", status_code=202)
@@ -138,7 +129,7 @@ async def post_message(
 
     先建流再发消息、或先发消息再建流都支持（环形缓冲补齐）。
     """
-    row = await _require_session_row(session, session_id)
+    row = await agent_service.require_session(session, session_id)
     if row.status == "running" and _has_live_run(row.id):
         return JSONResponse(
             status_code=409,
@@ -176,19 +167,9 @@ async def switch_branch(
     session_id: str, body: AgentBranchIn, session: AsyncSession = Depends(get_session)
 ) -> dict:
     """切换 active_leaf_id（分支查看 / 重新生成前的回退）。"""
-    from app.agent.memory import set_active_leaf
-
-    await agent_service._require_session(session, session_id)
-    try:
-        await set_active_leaf(session, session_id, body.message_id)
-    except ValueError as exc:
-        raise NotFoundError(str(exc)) from exc
+    dto = await agent_service.switch_branch(session, session_id, body.message_id)
     await session.commit()
-
-    from app.db.models import AgentSession
-
-    row = await session.get(AgentSession, session_id)
-    return ok({"session_id": session_id, "active_leaf_id": row.active_leaf_id if row else None})
+    return ok(dto)
 
 
 @router.get("/sessions/{session_id}/tool-calls")
@@ -196,7 +177,7 @@ async def get_tool_calls(
     session_id: str, limit: int = Query(default=100, ge=1, le=500), session: AsyncSession = Depends(get_session)
 ) -> dict:
     """工具调用日志（运行日志面板）。"""
-    return ok(await list_tool_calls(session, session_id, limit=limit))
+    return ok(await agent_service.list_tool_calls(session, session_id, limit=limit))
 
 
 # ---------------------------------------------------------------------------
@@ -329,15 +310,6 @@ async def resolve_interrupt(
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
-
-
-async def _require_session_row(db: AsyncSession, session_id: str) -> Any:
-    from app.db.models import AgentSession
-
-    row = await db.get(AgentSession, session_id)
-    if row is None:
-        raise NotFoundError(f"会话不存在：{session_id}")
-    return row
 
 
 def _db():
