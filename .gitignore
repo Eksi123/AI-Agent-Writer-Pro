@@ -105,9 +105,9 @@ desktop.ini
 
 # ---- 临时 / 备份 ----
 *.bak
-*.tmp
-*.temp
+# *.tmp
+# *.temp
 *~
 .cache/
-temp/
-tmp/
+# temp/
+# tmp/
