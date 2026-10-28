@@ -8,12 +8,12 @@
 >
 > ★**关于代码里的「手册」引用**：`src/app/` 的模块 docstring 中大量出现
 > `手册「二、(2) 流式」` 这类章节引用，指的是项目早期的设计手册（已随开发完成而移除）。
-> 这些引用仍可按编号对应到本文：手册「二、(1)~(6)」= 本文 [4.6 agent/](#46-agent--ai-agent12-子包)
-> 与 [七、开发重难点](#七开发重难点)；手册「三、(1) 工程结构 / 目录边界」= 本文
+> 这些引用仍可按编号对应到本文：手册「二、(1)~(6)」= 本文 [5.6 agent/](#56-agent--ai-agent12-子包)
+> 与 [八、开发重难点](#八开发重难点)；手册「三、(1) 工程结构 / 目录边界」= 本文
 > [三、项目架构](#三项目架构)；手册「三、(3) 页面功能」= 本文 [3.2 前端结构](#32-前端结构)
-> 与 [3.5 前端页面与应用功能设计](#35-前端页面与应用功能设计)；
-> 手册「四、知识库」= 本文 [7.5 中文全文检索](#75-难点五中文全文检索) 与
-> [4.4 services/](#44-services--业务编排16-模块)；手册「五、数据模型」= 本文
+> 与 [4.1 前端功能设计](#41-前端功能设计)；
+> 手册「四、知识库」= 本文 [8.5 中文全文检索](#85-难点五中文全文检索) 与
+> [5.4 services/](#54-services--业务编排16-模块)；手册「五、数据模型」= 本文
 > [3.3 数据架构](#33-数据架构)；手册「六、API 约定」= 本文 [3.4 API 架构](#34-api-架构)。
 
 ---
@@ -23,12 +23,13 @@
 - [一、项目定位](#一项目定位)
 - [二、项目大纲层次](#二项目大纲层次)
 - [三、项目架构](#三项目架构)
-- [四、模块实现逻辑](#四模块实现逻辑)
-- [五、运行逻辑](#五运行逻辑)
-- [六、技术体系](#六技术体系)
-- [七、开发重难点](#七开发重难点)
-- [八、测试与质量保障](#八测试与质量保障)
-- [九、已知边界与可演进方向](#九已知边界与可演进方向)
+- [四、应用层设计](#四应用层设计)
+- [五、模块实现逻辑](#五模块实现逻辑)
+- [六、运行逻辑](#六运行逻辑)
+- [七、技术体系](#七技术体系)
+- [八、开发重难点](#八开发重难点)
+- [九、测试与质量保障](#九测试与质量保障)
+- [十、已知边界与可演进方向](#十已知边界与可演进方向)
 
 ---
 
@@ -64,7 +65,7 @@
 11. 文件读写一律 `pathlib` + 显式 `encoding="utf-8"`（Windows 兼容）。
 
 其中 8、9、6、11 四条都被**编码成常量 + 配套回归测试**，而非只写在文档里靠人工自觉
-（见 [八、测试与质量保障](#八测试与质量保障)）。
+（见 [九、测试与质量保障](#九测试与质量保障)）。
 
 ---
 
@@ -287,12 +288,31 @@ src/web/src/
 
 - SSE 信封 `{event, run_id, session_id, seq, ts, data}`，`seq` 每 run 内单调递增。
 
-### 3.5 前端页面与应用功能设计
+---
+
+## 四、应用层设计
+
+前三章讲的是「项目是什么」（定位）与「骨架怎么搭」（大纲、架构）。本章换一个视角：
+**作为一个应用，它是如何被设计出来的**——用户在界面上看到的功能从哪来、后端凭什么支撑、
+AI 又是怎样被「驯化」成一个可靠写手的。
+
+三节分别对应应用的三层：
+
+| 节 | 视角 | 回答的问题 |
+| --- | --- | --- |
+| [4.1 前端功能设计](#41-前端功能设计) | 用户看得见的 | 界面为什么是三栏？每个功能解决了什么写作痛点？ |
+| [4.2 后端服务设计](#42-后端服务设计) | 支撑功能的 | 凭什么保证「不丢稿、不错乱、可回滚」？ |
+| [4.3 Agent + Harness 设计](#43-agent--harness-设计) | AI 的能力边界 | 怎么让一个通用大模型变成守规矩的小说写手？ |
+
+本章偏**设计哲学与功能意图**，讲「为什么这么做」；具体的模块清单、函数职责、踩坑对策
+分别在 [五、模块实现逻辑](#五模块实现逻辑) 与 [八、开发重难点](#八开发重难点)，不在此重复。
+
+### 4.1 前端功能设计
 
 本节从**页面设计**与**应用功能**视角描述前端：页面导航、每个页面/区块的布局与交互设计、
-关键用户流程，以及支撑这些设计的前端状态与通信约定。代码层面的组件实现要点见 [4.7 前端模块要点](#47-前端模块要点)。
+关键用户流程，以及支撑这些设计的前端状态与通信约定。代码层面的组件实现要点见 [5.7 前端模块要点](#57-前端模块要点)。
 
-#### 3.5.1 页面导航结构
+#### 4.1.1 页面导航结构
 
 SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），共 3 个页面：
 
@@ -305,7 +325,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 入口关系：工作台左栏底部「设置」「AI 工具」按钮 → 对应页面；两个配置页均有「‹ 返回」回工作台。
 未匹配路由一律重定向 `/`。
 
-#### 3.5.2 工作台（三栏主界面）
+#### 4.1.2 工作台（三栏主界面）
 
 三栏从左到右：
 
@@ -341,7 +361,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 
 | 区块 | 功能设计 |
 | --- | --- |
-| 【正文】页签 | ConflictBanner（版本冲突横幅，见 3.5.4）+ TiptapEditor（富文本：Markdown 快捷输入、工具栏、**选区 AI 改写**四按钮）+ WordCountBar（实时字数）；自动保存按 `autosave_interval_sec`（自动保存不产生修订快照）；关闭页面有未保存修改时浏览器拦截提醒 |
+| 【正文】页签 | ConflictBanner（版本冲突横幅，见 4.1.4）+ TiptapEditor（富文本：Markdown 快捷输入、工具栏、**选区 AI 改写**四按钮）+ WordCountBar（实时字数）；自动保存按 `autosave_interval_sec`（自动保存不产生修订快照）；关闭页面有未保存修改时浏览器拦截提醒 |
 | 【卷章】页签 | VolumeChapterTree：卷/章增删改（新建一律追加末尾）；删除卷级联删章，确认框列出将删除的章名与字数；★**只读顺序**——顶部提示「顺序由大纲决定」+「去大纲调整」按钮直达大纲编辑 |
 | 大纲节点 | OutlineEditor：Markdown **源码**编辑（保证 `# 卷 / ## 章` 层级不被富文本破坏）+ 编辑/预览切换；保存后显示校验结果（错误/警告分行号列出，不阻断保存）与顺序回填统计（「已同步 x 卷 / y 章顺序」） |
 
@@ -360,7 +380,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 | 用量行 | 最近一次运行的 token 输入/输出 |
 | 输入区 | **上下文 Chips**：「＋上下文」popover 三类可选（子代理/技能/已读章节，含「＋当前章」快捷），增删即 `PATCH /context` 持久化、会话切换回填；模型下拉（单条消息级覆盖，不回写会话）；**「生成本章」**按钮（选中章时出现，确认框说明四阶段门禁与快照可回滚）；发送框（Enter 发送） |
 
-#### 3.5.3 通用设置页（SettingsView）
+#### 4.1.3 通用设置页（SettingsView）
 
 单列表单 + 右上「保存」，全部持久化到 `user_settings` 单行表，保存即全局生效（CSS 变量驱动主题）：
 
@@ -372,7 +392,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 | AI 工具 | 提示条 +「前往 AI 工具」按钮 | 配置项已迁出本页，只留导航 |
 | 运行状态 | 后端版本 / SQLite / FTS5（可用性+降级原因）/ calibre（mobi 导出）/ Langfuse / 数据目录 | 只读自检面板（`GET /health`） |
 
-#### 3.5.4 AI 工具页（AiToolsView）
+#### 4.1.4 AI 工具页（AiToolsView）
 
 四页签：**大模型 API / 子代理 / 技能 / MCP**；页头「重载配置」按钮（使后端模型工厂缓存失效）。
 
@@ -383,7 +403,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 | 技能 | 内置 8 项**只读**（可预览全文 SKILL.md）+ 用户自建 CRUD（name==目录名、小写连字符 ≤64，description ≤1024）；编辑对话框：name/description/正文（frontmatter 自动生成）/allowed_tools/启停；「重新同步」按钮对齐 DB 与包内文件 |
 | MCP | 内置 Open-Meteo 天气（只读展示，免配置）；第三方添加：stdio（命令**白名单** npx/uvx/python，保存前弹窗展示完整命令**二次显式确认**）/ http / sse（URL 必填）；每服务可**探测**（列出 tools）、启停、删除 |
 
-#### 3.5.5 关键功能流程设计
+#### 4.1.5 关键功能流程设计
 
 **① 正文保存与版本冲突（乐观锁 UX）**
 
@@ -414,7 +434,7 @@ run.end 后重拉落库消息合并；「重新生成」/「编辑重发」= 以
 **⑥ 导出成书**：项目右键「导出」→ ExportDialog 选格式（markdown/epub/mobi/txt，mobi 在
 calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后「下载」zip（含大纲原件）。
 
-#### 3.5.6 前端状态与通信设计
+#### 4.1.6 前端状态与通信设计
 
 **Pinia 五 store 分工**（跨组件共享的最小状态集）：
 
@@ -436,11 +456,416 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 - `i18n/index.ts`：全部中文文案集中管理（组件内不写死文案，`t(key)` 取用）；
 - `styles/main.css` + CSS 变量：主题色/字号/字体/页宽由 settings 写入 `:root` 变量即时生效。
 
+### 4.2 后端服务设计
+
+前端每个功能背后，都需要后端给出一个**可信的承诺**：不丢稿、不错乱、可回滚、可追溯。
+本节讲这些承诺是怎么被设计出来的。
+
+#### 4.2.1 一个核心判断：谁是事实源
+
+写作工具最怕的是「我写的东西不见了」。要回答这个问题，先得决定**当数据打架时听谁的**。
+
+本项目的选择是：**文件是唯一事实源，数据库只是登记簿与索引**。
+
+```
+正文 / 大纲 / 摘要  →  Markdown 文件（事实源，人能直接打开看）
+项目登记 / 会话 / 审计 →  SQLite（结构化查询用）
+全文检索 / 字数统计  →  派生索引（可以随时从文件重建）
+```
+
+这个选择带来三个直接好处：
+
+| 好处 | 说明 |
+| --- | --- |
+| **可逃生** | 即使数据库全毁，`data/workspaces/` 下的 `.md` 文件仍是完整的书稿，用任何编辑器都能打开 |
+| **可重建** | 索引坏了不用慌，`writer rebuild-index` 扫一遍文件就回来了；派生索引写失败也**不阻断正文保存**，只标 `dirty=1` 待重建 |
+| **可审计** | 文件在 Git 里能 diff，AI 改了什么一目了然 |
+
+代价是必须维护两套存储的一致性，因此有了下一条设计。
+
+#### 4.2.2 不丢稿的三重保险
+
+「保存」这个动作，在本项目里不是简单的 `UPDATE ... SET content=?`，而是三层保护叠加：
+
+**① 乐观锁 —— 防止互相覆盖**
+
+场景：你在编辑器里改第三章，同时 AI 也在写第三章。谁后保存谁赢？都不对——**先保存的人的稿子会被冲掉**。
+
+做法是每章 frontmatter 里存一个 `version`：
+
+```
+打开章节 → 记住 version=5（base_version）
+   ↓ 编辑…
+保存时带上 base_version=5
+   ├─ 文件里还是 5 → 写入，version 变 6 ✓
+   └─ 文件里已是 7 → 拒绝（409/40901），并把「最新版本 + 是谁写的」回传
+```
+
+关键细节：回传的 `last_writer` 会告诉前端**是人改的还是 AI 改的**，前端据此弹冲突横幅让你选「看差异合并」还是「以我的为准」。**绝不静默覆盖**。
+
+**② 修订快照 —— 让「后悔」成为可能**
+
+每次有意义的写入前，先把旧内容存进 `chapter_revisions`。所以 AI 写完一章你不满意，可以一键回滚；定稿时也会留一份。
+
+这里有个刻意的取舍：**自动保存不产生快照**。否则一边打字一边存，几分钟就能刷出几百条无意义的版本，真正想回滚时反而找不到。快照只在「手动保存 / Agent 写入前 / 章节定稿」三个时刻产生，并只保留最近 20 条。
+
+**③ 单一写入口 —— 让规则无法被绕过**
+
+所有文件写入都收敛到 `WorkspaceGuard` 一处。它不只是校验路径，更是**唯一能碰磁盘的地方**，因此：
+
+- 越权路径（`..`、符号链接、跨项目）在这里被统一拦下；
+- 审计埋点在这里统一打上；
+- 派生索引同步在这里统一触发。
+
+「规则写在多个地方」是这类系统最常见的腐化路径——总有一处忘了加校验。收敛到一处，就没有「忘了」的可能。
+
+#### 4.2.3 顺序为什么不给用户改
+
+卷章的排列顺序，在很多编辑器里是可以拖拽的。本项目**故意不提供**：没有拖拽、没有「上移/下移」按钮、连 API 都没有 reorder 端点。
+
+理由是**顺序只能有一个事实源**。如果大纲里写着章的顺序，卷章树里又能拖出另一个顺序，两者迟早打架，而且没人说得清该信哪个。
+
+本项目的做法：**大纲是顺序的唯一来源**。你在大纲里调整 `# 卷` / `## 章` 的先后，保存后系统自动把顺序回填到卷章树（提示「已同步 x 卷 / y 章顺序」）。界面上那句「顺序由大纲决定」+「去大纲调整」按钮，就是把这个设计讲给用户听。
+
+而且回填**不产生修订快照、不递增 version**——顺序是元数据，不是正文变更，不该和乐观锁、自动保存互相干扰。
+
+这条约束还被写成了代码里的守卫函数 `assert_no_manual_reorder()`，配套测试断言「禁止出现的函数名」与模块实际导出**无交集**。谁想加个 reorder 接口，测试会先失败。
+
+#### 4.2.4 为什么写作业务不交给 Agent
+
+这是本项目最重要的一个职责划分：
+
+```
+写作业务（建项目、改标题、定稿、导出、检索）→ REST 接口，前端调用
+内容本身（读章节、写正文、改文字）        → Agent 用文件工具
+```
+
+也就是说，**Agent 手里没有「删除章节」这种业务工具**，它只有读写文件的能力。
+
+为什么这么设计？因为 Agent 的工具是模型自己决定调不调的，一旦把业务操作做成工具，就等于把「删库」的按钮交给了一个会犯错的概率系统。而收窄成文件读写之后：
+
+| 收益 | 说明 |
+| --- | --- |
+| **越权面变小** | 框架的 `permissions` 只管内置文件工具，自定义工具它管不着。既然自定义工具只有不碰路径的 `web_search`，这个盲区就不存在了 |
+| **可预测** | 业务操作走 REST，参数校验、事务、错误码都是确定性的，能单测 |
+| **可回滚** | Agent 只能改文件，而所有文件写入都留快照 |
+
+同理，**门禁的 G0/G1/G3 判定也不进 Agent 循环**，而是服务层直连模型要一个 JSON 结论。「检查大纲有没有写简介」这种事，需要的是稳定的是非题，不是自由发挥。
+
+#### 4.2.5 取数与推流的分离
+
+后端对前端提供两种通道，各管一件事：
+
+| 通道 | 用途 | 特点 |
+| --- | --- | --- |
+| **REST** | 取数、控制（发消息、保存、配置） | 请求-响应，有明确结果 |
+| **SSE** | 推送运行过程（AI 正在写什么） | 单向长连接，事件流 |
+
+发一条消息给 AI，走的是「REST 下单 + SSE 收货」：
+
+```
+POST /messages  →  立刻返回 202 + run_id（不等 AI 写完）
+GET  /runs/{id}/stream  →  订阅这个 run 的事件流
+```
+
+这样设计是因为 AI 生成可能持续几分钟，一个 HTTP 请求挂那么久既容易超时，也没法中途展示进度。
+
+SSE 还会断线（切后台、网络抖动），所以每个 run 在服务端留一份 500 条的环形缓冲 + 单调递增的 `seq`。重连时带上 `Last-Event-ID`，服务端把漏掉的补发；**万一缓冲已被淘汰或进程重启，就明确回一个 `41001` 让前端重新拉一遍完整消息**，而不是假装什么都没发生。宁可多拉一次，不可悄悄丢事件。
+
+#### 4.2.6 显式命名：一条产品级的硬约束
+
+创建小说时，书名不能叫「未命名小说」；建卷时不能叫「第 1 卷」。这不是前端提示一下就算，而是**服务端校验 + 专用错误码 42201**。
+
+理由很朴素：默认名会让工作区文件名、大纲标题、导出成品全都变成一堆无法区分的垃圾，而这些名字一旦生成就散落在文件系统各处，事后清理成本极高。与其事后治理，不如在入口拦住。
+
+同一思路下，项目里还有几条「宁可让用户多点一下，也不留隐患」的约束：MCP 的 stdio 命令保存前要**弹窗展示完整命令二次确认**；密钥只写 `.env` 不进数据库，界面只显示 `sk-****abcd`。
+
+### 4.3 Agent + Harness 设计
+
+#### 4.3.1 先说清楚：什么是 Agent Harness
+
+「Harness」原意是**马具**——套在马身上的那副挽具。马有力量，但往哪走、走多快、能不能踩进麦田，由挽具决定。
+
+放到 AI 里，这个比喻精确得惊人：
+
+```
+大模型（LLM）      = 马       有强大的语言能力，但没有边界感、没有记忆、不会自己干活
+Agent Harness      = 挽具     决定它能用哪些工具、看到哪些文件、什么时候必须停下来问人
+Agent 应用         = 马车     挽具 + 马 + 车身，才是能载客的完整交通工具
+```
+
+一个**裸模型**只会「输入文字 → 输出文字」。要让它变成一个能改你硬盘上文件、能连续工作几分钟、出错能停下问你的助手，中间缺一整层东西：
+
+| 缺什么 | Harness 提供什么 |
+| --- | --- |
+| 它不能动手 | **工具层**：读写文件、执行搜索，以及「哪些工具对模型可见」 |
+| 它不记得刚才干了什么 | **循环 + 状态**：多轮 tool call 的编排、断点续跑 |
+| 它的上下文会爆 | **上下文治理**：摘要压缩、按需加载、预算监控 |
+| 它会瞎搞 | **权限 + 沙箱**：路径白名单、危险操作拦截 |
+| 它是一次性的 | **人在环（HITL）**：中断、审批、恢复 |
+| 你不知道它干了啥 | **可观测**：trace、token 用量、评分 |
+
+**这一整层就叫 Agent Harness。** 本项目的第一个设计决策是：**这层不自研**。
+
+#### 4.3.2 为什么不自研 Harness
+
+自研一套 Agent 框架听起来很酷，实际是在和整个生态赛跑。本项目选择 **deepagents**（构建在 LangGraph 之上），理由：
+
+- 上面那张表里的能力，deepagents 全都给了，且经过大规模验证；
+- 自研的维护面会迅速超过业务本身——框架 bug 得自己修，新模型适配得自己跟；
+- 本项目真正的价值在**写作领域**，不在通用 Agent 基建。
+
+于是职责被清晰切成三层：
+
+```
+┌─────────────────────────────────────────────┐
+│  ③ 本项目：写作领域化封装                     │
+│     门禁 G0→G3 / 前情提要 / 章节摘要          │
+│     消息树分支 / 8 条权限规则 / 4 个中间件     │
+├─────────────────────────────────────────────┤
+│  ② deepagents：Agent Harness                 │
+│     create_deep_agent / 沙箱 backend          │
+│     permissions / subagents / skills          │
+│     HarnessProfile（模型适配）                 │
+├─────────────────────────────────────────────┤
+│  ① LangGraph + langchain：图执行与模型抽象     │
+│     astream / checkpointer / interrupt        │
+│     AgentMiddleware 钩子                      │
+└─────────────────────────────────────────────┘
+```
+
+**本项目只做 ③。** 判断某段代码该不该写，标准就一条：*它是在做「写作」的事，还是在做「通用 Agent」的事？* 后者一律交给框架。
+
+#### 4.3.3 Harness 是怎么「套」上去的
+
+装配一个 Agent，本质是给 `create_deep_agent()` 递一串参数。每个参数就是挽具上的一根缰绳：
+
+| 参数 | 通俗理解 | 本项目的值 |
+| --- | --- | --- |
+| `model` | 用哪匹马 | 用户配置的模型（可多级降级） |
+| `backend` | 它能看到哪片地 | `CompositeBackend`：4 条虚拟路径路由 |
+| `permissions` | 地里哪些能踩 | 8 条有序规则，兜底 `deny /**` |
+| `tools` | 手里能拿什么 | 只有 `web_search` + 天气 MCP |
+| `skills` | 随身的操作手册 | 8 个内置技能目录 |
+| `subagents` | 能叫来帮忙的人 | 5 个写作子代理 |
+| `middleware` | 每一步要过的关卡 | 9 层固定顺序 |
+| `interrupt_on` | 哪些动作要先问人 | `{"delete": True}` |
+| `checkpointer` | 记忆存哪 | `AsyncSqliteSaver`（独立库） |
+| `system_prompt` | 出发前的交代 | Jinja2 渲染的项目元信息 + 铁律 |
+
+这里最值得展开的是**沙箱**和**权限**，因为它们决定了 AI 的「手」能伸多远。
+
+#### 4.3.4 沙箱：让 AI 活在虚拟路径里
+
+Agent 看到的不是 `E:\git\...\data\workspaces\{uuid}\chapters\v1\c3.md`，而是 `/projects/{pid}/chapters/v1/c3.md`。这层映射由 `CompositeBackend` 完成：
+
+```
+/projects/          →  data/workspaces/     写作内容（可读可写，跨项目只读）
+/skills/builtin/    →  包内 skills/          出厂技能（只读）
+/skills/user/       →  data/skills/         用户自建技能
+/skills/session-{id}/ →  data/session-skills/{id}/   会话精选技能
+其余（如 /conversation_history/）→ StateBackend（内存状态）
+```
+
+虚拟路径带来两个好处：**提示词里不暴露宿主目录结构**（模型不会学到你机器的路径习惯），以及**越权判定可以在虚拟层做完**（不必处理 Windows 盘符、符号链接、大小写这些脏活）。
+
+还有一条硬约束：**绝不用 `LocalShellBackend`**。它会让 `execute`（执行任意命令）工具对模型可见——那是把 shell 交给概率系统。用 `FilesystemBackend` 时 `supports_execution()` 返回 False，deepagents 会**自动把 `execute` 从模型可见工具里摘掉**，连裁剪代码都不用写。
+
+#### 4.3.5 权限：顺序即语义的 8 条规则
+
+`permissions` 的判定机制有个反直觉的地方：**首条匹配生效，且无匹配时默认放行**。
+
+这意味着规则顺序不是风格问题，而是安全问题——兜底的 `deny /**` 必须排在最后，一旦它跑到前面，后面所有规则全部失效，等于全线封锁；反之如果漏了它，就是全线放行。
+
+本项目的 8 条规则表达的是一个很具体的产品意图：
+
+| # | 规则 | 意图 |
+| --- | --- | --- |
+| ① | 当前项目 `/projects/{pid}/**` 读写 | AI 能改自己的书 |
+| ② | 其它项目 `/projects/**` **禁写** | 但绝不能改别的书 |
+| ③ | 其它项目 `/projects/**` 可读 | 允许跨书参考（连贯性检查用） |
+| ④ | `/skills/**` 可读 | 技能靠模型自己 `read_file` 加载 |
+| ⑤ | `/skills/**` 禁写 | 技能由服务层维护，AI 不许自我改造 |
+| ⑥⑦ | 会话历史 / 大工具结果 可读写 | 上下文压缩的卸载区 |
+| ⑧ | `/**` **兜底 deny** | 其余一律不行 |
+
+②③ 组合起来就是设计铁律里的「**跨项目可读不可写**」；⑤ 则防住一个隐蔽风险：AI 若能改技能文件，就能给自己写新指令。
+
+因为「首条匹配 + 默认放行」这个陷阱太容易踩，本项目把它**编码成常量 `PERMISSION_RULES` + 逐行断言的回归测试**，而不是只写在文档里靠人自觉。
+
+#### 4.3.6 Harness Profile：框架层的模型适配
+
+deepagents 提供了一套 **HarnessProfile** 机制，用来解决一个真实问题：**不同模型需要不同的调教方式**。
+
+同样一句提示词，Claude 和 GPT 的反应可能完全不同；有的模型爱并行调工具，有的模型会过度思考；有的模型需要额外提醒「别滥用子代理」。这些差异不该由每个应用去适配，而应该由框架按模型统一给出。
+
+HarnessProfile 就是这份「按模型定制的调教方案」，注册在 `provider` 或 `provider:model` 键上，能改四件事：
+
+| 字段 | 作用 |
+| --- | --- |
+| `system_prompt_suffix` | 追加模型专属提示（组装顺序：用户提示 → 框架基座 → **此后缀**，落在最靠近对话历史的位置） |
+| `excluded_tools` | 对某个模型隐藏特定工具 |
+| `extra_middleware` / `excluded_middleware` | 增删中间件（★`FilesystemMiddleware`、`SubAgentMiddleware` 是**脚手架，禁止摘除**，硬摘会抛 `ValueError`） |
+| `general_purpose_subagent` | 调整自动追加的 `general-purpose` 子代理（关掉它，`task` 工具也随之消失） |
+
+deepagents 内置了几份 profile（Anthropic 三档、OpenAI Codex 系列、NVIDIA Nemotron 等），比如 Sonnet 4.6 那份会追加「独立工具调用请并行发起」「没打开过的文件不要猜」这类指导。
+
+**本项目刻意不注册任何 HarnessProfile**，两个原因：
+
+1. **匹配不上**。profile 按 `provider:model` 精确匹配，而本项目传给 `create_deep_agent` 的是**已构建好的 ChatModel 实例**（不是 spec 字符串），框架只能从实例上反推 provider 与 identifier。本项目用户常配的 Qwen / DashScope / OpenRouter 自定义端点，内置 profile 里没有对应项，注册了也不生效；
+2. **不该在应用层替模型做主**。本项目已经用 9 层中间件精确控制了运行行为（重试、降级、调用上限、上下文压缩、路径守卫、写入审批），再叠一层 profile 只会让「某个行为到底是谁加的」变得难查。
+
+这是一个**有意的留白**：如果将来发现某个模型确实需要特殊调教，正确的做法是在 `builder.py` 的中间件栈里加一层，而不是注册 profile——这样行为归属清晰，也能被现有测试覆盖。
+
+（想关掉自动追加的 `general-purpose` 子代理时，唯一途径就是 `GeneralPurposeSubagentProfile(enabled=False)`，它**不是 `create_deep_agent` 的普通参数**。本项目选择保持默认追加。）
+
+#### 4.3.7 中间件：9 层关卡的固定顺序
+
+langchain 的 `AgentMiddleware` 只给了少数几个钩子（`before/after_agent`、`before/after_model`、`wrap_model_call`、`wrap_tool_call`），**没有** `before_tool` / `on_run_end`。这个限制直接决定了两个设计：所有工具级逻辑只能挂在 `awrap_tool_call`；运行收尾不能在中间件里做，只能等 `astream` 结束后统一 `finalize()`。
+
+9 层中间件的顺序不是随便排的，前一层是后一层的前提：
+
+```
+① ModelRetry      模型抽风了？退避重试 2 次
+② ModelFallback   这家挂了？换降级链上的下一家
+③ ModelCallLimit  调太多次了？到 40 次强制收尾
+④ TodoList        给模型 write_todos 工具（计划可见）
+⑤ Summarization   上下文太长？摘要压缩 + 驱逐卸载
+⑥ RecapInjection  注入前情提要 + 预算检查
+⑦ WorkspaceGuard  ★路径校验 / 审计 / tool 事件 / 错误指纹阻断
+⑧ FileChangeNotify 文件变了 → 通知前端热更新 + 同步索引
+⑨ WriteApproval   ★高危写入 → 中断转人工审批
+```
+
+①②③ 是**韧性层**（模型与成本），④⑤⑥ 是**上下文层**，⑦⑧⑨ 是**安全与协作层**。
+
+其中 ⑦⑨ 是本项目自研的，因为框架给不了：
+
+- **⑦ WorkspaceGuard** 是权限的**第二道防线**。`permissions` 只作用于内置文件工具，自定义工具和 MCP 工具它管不着——这个盲区必须自己补。它还做了件框架没有的事：**错误指纹记忆**。同一个 `(工具, 参数哈希, 错误指纹)` 失败 2 次就注入告警提醒模型，3 次直接阻断该调用路径，防止模型在同一个坑里反复撞墙烧 token。
+- **⑨ WriteApproval** 解决的是**参数级**审批。框架的 `interrupt_on` 只能做「这个工具要不要问人」的开关，但真正的危险不在于调了什么工具，而在于**用什么参数调**：`write_file` 覆盖一个空文件没事，覆盖一个 3000 字的定稿章节就是灾难。所以要自己判断——整章覆盖 / 超 800 字符的大范围改写 / 任何删除，才升级为人工审批。
+
+#### 4.3.8 子代理与技能：分工与按需披露
+
+**5 个子代理**对应写作流程里的 5 种工种：
+
+| 子代理 | 工种 | 技能 |
+| --- | --- | --- |
+| `planner` | 策划大纲 | novel-planning |
+| `writer` | 撰写正文 | prose-writing |
+| `editor` | 润色校对 | line-editing |
+| `continuity-checker` | 连贯性审查 | continuity-check |
+| `researcher` | 资料检索 | —（用 web_search） |
+
+子代理的核心价值不只是「专业分工」，更是**上下文隔离**。默认 `mode=isolated` 意味着每个子代理在**自己的干净上下文**里干活，只把结论带回来。让 `continuity-checker` 去通读全书查伏笔，它消耗的巨量 token 不会污染主对话——这对动辄百万字的长篇是决定性的。
+
+**技能（Skills）** 则是另一种思路：**渐进式披露**。8 个内置技能各是一个 `SKILL.md`，挂载在虚拟路径 `/skills/builtin/` 下，但**不会一次性塞进提示词**。模型只在需要时自己 `read_file` 去读——这也解释了为什么权限规则 ④ 必须给 `/skills/**` 开读：关掉它，所有技能都变成不可见。
+
+技能与子代理的组合关系：**子代理是「谁来干」，技能是「按什么章法干」**。两者都支持用户在「AI 工具」页自定义，也支持在会话级用上下文 Chips 精选（只带这次需要的）。
+
+#### 4.3.9 门禁：把「自觉」变成「必须」
+
+这是本项目最具领域特色的设计。
+
+「AI 写正文必须以大纲章简介为前提」——这条要求如果只写在提示词里，靠模型自觉遵守，结果必然是**时灵时不灵**：模型可能跳过检查，也可能反复重试不收敛。
+
+所以本项目把它做成**服务层硬编排的四阶段状态机**，AI 没有选择权：
+
+```
+G0 大纲检查   →  这章在大纲里有小节和简介吗？
+G1 前置校验   →  简介与上一章结尾接得上吗？
+G2 生成正文   →  ★唯一进 Agent 循环的阶段
+G3 后置校验   →  写出来的东西符合简介吗？
+```
+
+关键在**执行主体的切分**：
+
+| 阶段 | 谁来执行 | 为什么 |
+| --- | --- | --- |
+| G0 / G1 / G3 | **服务层直连 ChatModel + JSON 结构化输出** | 这是是非题，要的是可预测、可单测、成本低。不需要工具，不需要多轮 |
+| G2 | **deep agent 循环** | 这才真需要读写文件、调 writer 子代理 |
+
+「能用确定性代码解决的事，绝不交给概率系统」——这条原则贯穿全项目。
+
+不过任何硬流程都会遇到「机器判断不了」的时刻，所以每道门禁都能**发咨询卡片让人拍板**：G0 缺简介可以选「让 AI 代写大纲」或「我去补」；G3 连续 2 次不通过（`G3_MAX_RETRY=2`）就交给人决定「认可现状 / 手动改 / 补充指示」。**上限 + 兜底咨询**，杜绝死循环。
+
+#### 4.3.10 人在环：中断是可以存盘的
+
+Agent 跑到一半需要问人，这在技术上是件麻烦事——进程不能一直挂着等。
+
+本项目借助 LangGraph 的 `interrupt()` + `AsyncSqliteSaver` 把中断**持久化**：
+
+```
+AI 要覆盖整章 → WriteApproval 触发 interrupt
+   ↓
+状态存进 agent_state.db，run 置 awaiting_approval，SSE 推 interrupt.request
+   ↓
+（用户可能 5 分钟后才回来，甚至重启过服务）
+   ↓
+用户点「批准」→ POST /interrupts/{id}/resolve
+   ↓
+从 checkpoint 恢复，从中断处继续跑
+```
+
+审批支持**四种决策**，而不只是「同意/拒绝」：
+
+| 决策 | 语义 |
+| --- | --- |
+| `approve` | 原样执行 |
+| `edit` | **改参数后执行**（比如把「覆盖全章」改成「只改这段」） |
+| `reject` | 不执行，告诉模型「用户拒绝了」 |
+| `respond` | 不执行，把用户的补充说明回给模型 |
+
+`edit` 和 `respond` 是体验上的关键——它们让「人和 AI 协作」而不是「人给 AI 当门卫」。
+
+配套的两条保障：**取消是协作式的**（给 3 秒优雅退出窗口，超时才硬 cancel，避免留下半截文件）；**AI 写入前必先快照**（所以哪怕批错了也能回滚）。
+
+#### 4.3.11 上下文治理：长篇才是真正的难题
+
+写 3 章的 demo 谁都会做，写 300 章才是这个项目要解决的问题。核心矛盾：**模型上下文有限，而书会越来越长**。
+
+本项目的答案是**分层替代**，而不是「把整本书塞进去」：
+
+| 手段 | 做法 |
+| --- | --- |
+| **前情提要替代原文** | 每章定稿后生成结构化摘要（关键事件 / 人物 / 伏笔 / 结尾状态），后续章节只带摘要，不带原文 |
+| **跨卷锚点** | 每卷第 1 章容易接不上，自动补一条「上一卷末章」锚点；第一卷则用大纲附录的人物/世界观设定 |
+| **按需精选** | 会话级「已读章节」Chips，用户指定这次要参考哪几章（上限 8 章防膨胀） |
+| **预算监控** | 可用量 = `max_context − reserve_for_output`(默认预留 4096 给输出)，超了发 `context.compact` 事件，前端能看到 |
+| **摘要压缩** | 触发时把驱逐的消息卸载到 `/conversation_history/`，而非直接丢弃 |
+| **增量化** | checkpoint 用 `DeltaChannel(snapshot_frequency=50)` 存增量，不存全量 |
+| **隔离** | 子代理独立上下文（见 4.3.8） |
+| **硬上限** | `ModelCallLimit(40)` 软上限 + `recursion_limit(60)` 硬上限 |
+
+设计哲学是：**上下文是最贵的资源，每一段进入提示词的文字都要有明确理由。**
+
+#### 4.3.12 可观测：看不见的东西没法改进
+
+AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **Langfuse**，三条链路：
+
+- **自动埋点为主**：挂 langchain `CallbackHandler`，自动产出 trace / span / generation（含 token 用量）；
+- **手动补充**：门禁判定这类「服务层直连模型、不经过 Agent 循环」的调用，用 `observation()` 上下文管理器包裹，否则在 trace 里是看不见的；
+- **评分回写**：run 结束写 `run_tokens` / `project_words` / `fallback_used` 三项 score。
+
+门禁的判定理由与分数也一并写入 observation——这意味着**「G1 为什么判不通过」是可回溯、可批量分析的**，为后续提示词调优提供真实数据，而不是靠感觉。
+
+★未配置 Langfuse Key 时全链路自动 no-op 降级为本地结构化日志，功能不受任何影响。可观测是加分项，不能变成依赖项。
+
+#### 4.3.13 一句话总结这套设计
+
+```
+把「通用能力」交给框架（deepagents Harness）
+把「领域规则」做成确定性代码（门禁、顺序、命名、乐观锁）
+把「模糊判断」留给模型（写正文、查连贯、拟大纲）
+把「不可逆动作」交给人（审批、咨询、快照回滚）
+```
+
+四条边界划清之后，一个会犯错的概率系统，就变成了一个可用的写作工具。
+
 ---
 
-## 四、模块实现逻辑
+## 五、模块实现逻辑
 
-### 4.1 `core/` —— 基础设施
+### 5.1 `core/` —— 基础设施
 
 | 模块 | 实现要点 |
 | --- | --- |
@@ -453,7 +878,7 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 | `deps.py` | FastAPI 依赖注入：`get_session()` 提供 AsyncSession |
 | `catalog.py` | Agent 内置目录数据的**惰性访问器**：`builtin_subagents()` / `builtin_subagent_names()`。core 在模块加载期不触碰 agent，只在运行期解析 → import 图保持无环 |
 
-### 4.2 `db/` —— 数据访问
+### 5.2 `db/` —— 数据访问
 
 | 模块 | 实现要点 |
 | --- | --- |
@@ -464,7 +889,7 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 | `models/` | 按域拆 `novel.py` / `agent.py` / `llm.py` / `config.py`，`__init__.py` 只做 re-export + `ALL_MODELS` 汇总（供 alembic env.py 与 `create_all` 发现全部表） |
 | `migrations/` | alembic：`env.py` 导入 `ALL_MODELS` 注册表；`versions/` 两个迁移（M1 初始 schema、M3 agent schema） |
 
-### 4.3 `schemas/` —— DTO
+### 5.3 `schemas/` —— DTO
 
 按域拆 `novel.py`（项目/卷章/大纲 21 个）/ `agent.py`（会话/消息/中断/SSE 7 个）/
 `llm.py`（Provider/Model 5 个）/ `config.py`（设置/导出/检索/健康 6 个），共 39 个 model。
@@ -475,7 +900,7 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 `min_length=1, max_length=8000`；`LlmProviderCreate.type` 是 `Literal[_PROVIDER_TYPES]`
 （6 种厂商类型）；★**没有任何 reorder / move 相关 DTO**（顺序是大纲派生值）。
 
-### 4.4 `services/` —— 业务编排（16 模块）
+### 5.4 `services/` —— 业务编排（16 模块）
 
 | 模块 | 实现要点 |
 | --- | --- |
@@ -496,7 +921,7 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 | `mcp.py` | `mcp_servers` CRUD + `probe`（探测工具列表）+ `confirm`（stdio 二次确认，写 `confirmed_at`）。约束：仅开源免费无认证（无认证头字段）；stdio 命令走 `validate_stdio_command` 白名单；**命令全文落审计** |
 | `weather.py` | Open-Meteo 封装（Geocoding 城市 → 坐标 → 当前天气/预报），同时服务动态组件 API 与内置天气 MCP，避免两份实现漂移 |
 
-### 4.5 `api/` —— 路由层
+### 5.5 `api/` —— 路由层
 
 14 个模块与 services **同名配对**（agent / audit / llm / mcp / novels / outline / skills / story /
 subagents / volumes + chapters / settings / widgets / health），分层命名一致、无缩写。
@@ -511,7 +936,7 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 `POST /sessions/{sid}/messages` 返回 **202 + `{run_id}`**（事件走独立 SSE 端点）；
 若该会话已有活跃 run（`run_manager.running_ids()` + `session_of()` 匹配）→ 409/40902。
 
-### 4.6 `agent/` —— AI Agent（12 子包）
+### 5.6 `agent/` —— AI Agent（12 子包）
 
 这是本项目的技术核心。子包划分与「Agent 能力维度」1:1 对应。
 
@@ -584,7 +1009,7 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 | `prompts/renderer.py` | Jinja2 `Environment`：`FileSystemLoader(TEMPLATES_DIR, encoding="utf-8")` + `StrictUndefined`（★漏传变量立即报错，便于回归）+ `trim_blocks`/`lstrip_blocks`/`keep_trailing_newline` + `autoescape` 对 `md.j2`/`j2`/`md`/`txt` **禁用**（提示词是纯文本不是 HTML）；`lru_cache(1)` 单例环境。5 个模板：`main_agent.md.j2` / `gate_g1_precheck.md.j2` / `gate_g2_generate.md.j2` / `gate_g3_postcheck.md.j2` / `rewrite_selection.md.j2` |
 | `tracing/langfuse.py` | **Langfuse v5（OTel 版）**。★v5 与 v2 API 完全不同：`Langfuse.trace()` / `trace.span()` **已不存在**（仓库 `demo-langfuse.py` 是 v2 写法，不可照抄）。三种用法：① **自动埋点为主**——`langfuse.langchain.CallbackHandler` 挂到 `config={"callbacks":[handler]}`，自动产出 trace/span/generation（含 token 用量）；② **手动补充**——`observation(name, metadata)` 上下文管理器包裹门禁 G0/G1/G3 与 `summarize_chapter` 等服务层 LLM 调用；③ `create_score(name, value, trace_id=...)` 写分数（字数/工具成功率/是否降级/门禁判定）。`get_client()` **惰性初始化 + 未配 Key 自动降级**（返回 None，所有函数变 no-op，功能不受影响）；`current_trace_id()` 取当前 trace id 落 `agent_runs.langfuse_trace_id`，★含 v5 API 差异容错（先试 `get_current_observation().trace_id`，回落 `get_current_trace().id`）；`reset_client()` 供 `/config/reload` 后调用 |
 
-### 4.7 前端模块要点
+### 5.7 前端模块要点
 
 | 模块 | 实现 |
 | --- | --- |
@@ -603,9 +1028,9 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 
 ---
 
-## 五、运行逻辑
+## 六、运行逻辑
 
-### 5.1 应用启动（lifespan）
+### 6.1 应用启动（lifespan）
 
 ```
 uvicorn 启动 → app/main.py lifespan
@@ -617,7 +1042,7 @@ uvicorn 启动 → app/main.py lifespan
   └─ 统一异常处理 / CORS / 结构化日志（key|token|secret 字段自动掩码）
 ```
 
-### 5.2 普通对话运行（发消息 → 流式回复）
+### 6.2 普通对话运行（发消息 → 流式回复）
 
 ```
 前端 POST /agent/sessions/{sid}/messages
@@ -671,7 +1096,7 @@ loop/lifecycle.py：finalize 收尾（agent_runs 汇总 + 会话状态 + 刷新�
 `file.changed` / `context.compact` / `gate.update` / `consult.request` / `interrupt.request` /
 `usage` / `error` / `run.end`。
 
-### 5.3 门禁生成运行（「生成本章」→ G0→G3）
+### 6.3 门禁生成运行（「生成本章」→ G0→G3）
 
 ```
 用户请求生成第 N 章（POST messages 带 target_chapter_id）
@@ -723,7 +1148,7 @@ G3 匹配后检（orchestrator 服务层直连 LLM）
 
 **适用范围**：门禁仅约束 **AI 生成正文**路径；用户手工编辑不受限。
 
-### 5.4 中断与恢复（HITL）
+### 6.4 中断与恢复（HITL）
 
 ```
 Agent 触发中断（三类来源）
@@ -760,7 +1185,7 @@ sse_bus.reopen()（finished=False，seq 续增，缓冲保留 → 客户端无�
       否则（approval）→ 包成 langgraph Command 给 G2 流内处理
 ```
 
-### 5.5 取消
+### 6.5 取消
 
 ```
 POST /agent/runs/{id}/cancel
@@ -778,7 +1203,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 
 `stream_graph` 每处理一个 chunk 都检查 `cancel_flag`，命中即置 `result.cancelled` 并 break。
 
-### 5.6 文件写入的两条路径（收敛到同一处）
+### 6.6 文件写入的两条路径（收敛到同一处）
 
 ```
 路径 A：前端编辑 → PUT /chapters/{cid}/content（乐观锁 base_version）
@@ -800,7 +1225,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
         （变更目标是大纲文件 → 额外触发 sync_order_from_outline 回填卷章顺序）
 ```
 
-### 5.7 消息树双轨持久化
+### 6.7 消息树双轨持久化
 
 ```
 ① 业务库（app.db）：messages / tool_call_logs / agent_runs
@@ -819,9 +1244,9 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 
 ---
 
-## 六、技术体系
+## 七、技术体系
 
-### 6.1 技术栈与实测版本
+### 7.1 技术栈与实测版本
 
 | 层 | 技术 | 版本（`.venv` 实测） |
 | --- | --- | --- |
@@ -850,7 +1275,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 
 `requirements.txt` 为兼容保留，**不作为事实源**。
 
-### 6.2 deepagents 能力与本项目诉求的映射
+### 7.2 deepagents 能力与本项目诉求的映射
 
 | 诉求 | deepagents 0.7.23 实测能力 | 本项目用法 |
 | --- | --- | --- |
@@ -870,7 +1295,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 `RubricMiddleware`、`AsyncSubAgentMiddleware`（LangSmith 部署专用）、`ContextHubBackend`、
 `LangSmithSandbox`、`LocalShellBackend`、harness/provider profile 注册机制。
 
-### 6.3 langchain 1.4.7 中间件钩子的真实边界
+### 7.3 langchain 1.4.7 中间件钩子的真实边界
 
 `AgentMiddleware` **只有**：`before_agent` / `after_agent`、`before_model` / `after_model`、
 `wrap_model_call`、`wrap_tool_call`（各带 `a*` 异步版）+ `name` / `state_schema` /
@@ -881,7 +1306,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 1. 工具级校验/审计/通知全部落在 `awrap_tool_call`（4 个自定义中间件都挂这里）；
 2. **运行收尾不在中间件里做**，由 `loop/lifecycle.py:finalize()` 在 `astream` 结束后统一执行。
 
-### 6.4 关键算法与数据结构
+### 7.4 关键算法与数据结构
 
 | 主题 | 方案 |
 | --- | --- |
@@ -895,7 +1320,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 | **EPUB 生成** | 自研（不依赖外部库）：`mimetype`（**必须第一个且不压缩**）+ `META-INF/container.xml` + `content.opf` + `nav.xhtml` + 各章 xhtml；markdown 段落转 xhtml；mobi 经 calibre `ebook-convert` 二次转换 |
 | **上下文治理** | token 预算（`max_context × 0.5`）+ 前情提要替代逐章原文 + `DeltaChannel` 增量 checkpoint + summarization 驱逐卸载 + 子代理上下文隔离（`mode=isolated`）+ `ModelCallLimit(40)` 软上限 + `recursion_limit(60)` 硬上限 |
 
-### 6.5 安全模型
+### 7.5 安全模型
 
 | 面 | 措施 |
 | --- | --- |
@@ -909,9 +1334,9 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 
 ---
 
-## 七、开发重难点
+## 八、开发重难点
 
-### 7.1 ★难点一：门禁编排与 Agent 循环的职责切分
+### 8.1 ★难点一：门禁编排与 Agent 循环的职责切分
 
 **问题**：AI 生成正文必须以大纲章简介为前提，但「让 Agent 自觉检查大纲」不可靠——
 模型可能跳过检查、也可能反复重试不收敛。
@@ -933,7 +1358,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 | G0 缺失有两种语义（无小节 vs 小节存在但简介为空），咨询文案应不同 | `parse_outline` 区分两类，咨询卡片分别引导「按模板补小节」与「填写简介」；★两类均**不自动插入占位小节**（避免污染用户大纲） |
 | G1 校验每卷第 1 章时无上文可比 | 带**上一卷末章简介作锚点**；第一卷改用大纲附录的人物/世界观设定作锚点 |
 
-### 7.2 ★难点二：流式事件的完整映射与断线续传
+### 8.2 ★难点二：流式事件的完整映射与断线续传
 
 **问题**：LangGraph 的 `astream` 输出是 `(namespace, mode, payload)` 三元组流，与前端需要的
 语义事件（消息增量、工具调用、子代理泳道、待办计划、门禁流转、审批卡片）之间没有现成映射；
@@ -956,7 +1381,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
   （★SSE 注释行，不占 seq，不影响续传位点）；
 - **`reopen()` 无缝续跑**：中断恢复时 `finished=False`、`seq` 续增、**缓冲保留**，客户端无需重连。
 
-### 7.3 ★难点三：消息树的双轨一致性与增量同步
+### 8.3 ★难点三：消息树的双轨一致性与增量同步
 
 **问题**：消息既要给前端渲染/审计/导出（业务库），又要给 LangGraph 恢复运行（checkpoint）；
 而 graph state 里的消息 id 由 LangGraph 生成，与业务库 uuid **无对应关系**。
@@ -977,7 +1402,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 - **checkpointer 必须进程内单例**：aiosqlite 连接须长生命周期持有（每个 run 重开会丢中断态）；
   `asyncio.Lock` + 双检；`DATA_ROOT` 变化时自动重开（★否则测试会串库）。
 
-### 7.4 ★难点四：权限「首条匹配 + 默认放行」的顺序陷阱
+### 8.4 ★难点四：权限「首条匹配 + 默认放行」的顺序陷阱
 
 **问题**：deepagents `FilesystemPermission` 的判定机制是**首条匹配生效、无匹配默认 `allow`**
 （`_check_fs_permission` 返回 allow）。这意味着规则顺序写错就会**全线放行**，且不会报错。
@@ -996,7 +1421,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 - ★`/skills/**` 必须开 `read allow`：技能靠模型 `read_file` 读 `SKILL.md` 渐进式披露，
   漏开 read 会导致**技能全部静默不可用**（配套集成测试断言 Agent 能读到内置技能全文）。
 
-### 7.5 ★难点五：中文全文检索
+### 8.5 ★难点五：中文全文检索
 
 **问题**：SQLite FTS5 默认分词器对中文无效（整段当一个 token）；`trigram` 看似可行但实测
 **对 2 字词零命中**（`MATCH '少年'` 返回 0 行，3 字起才命中），而中文小说检索大量是 2 字词。
@@ -1009,11 +1434,11 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 - `project_id` **必须入表且 UNINDEXED**：查询时附加 `AND project_id = ?` 过滤，否则跨项目串数据；
 - **降级路径**：FTS5 不可用或查询异常时回落 `LIKE '%q%'`，★接口签名与返回结构不变
   （只多 `data.degraded=true`），前端无需分支处理；
-- **两步探测**（见 6.4）确保降级判定可靠且只探一次；
+- **两步探测**（见 7.4）确保降级判定可靠且只探一次；
 - 不使用向量库（零 Embedding 费用、零额外服务）；数据源为大纲单文件 + `summaries/`；
   ★检索**不作为 Agent 工具**（Agent 用内置 `grep` 搜文件），避免两套检索语义漂移。
 
-### 7.6 ★难点六：并发写入与内容一致性
+### 8.6 ★难点六：并发写入与内容一致性
 
 **问题**：自动保存（前端定时）、Agent 写章（后台任务）、门禁重生成可能同时改同一章；
 Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两个来源会漂移。
@@ -1029,7 +1454,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | 同一 run 被 resolve 与进行中的任务并发写同一 thread | `RunManager._spawn` 用 **per-run `asyncio.Lock`** 串行化 |
 | 小说重命名与大纲文件名耦合（`{title}-大纲.md`） | 重命名是**事务**：同步重命名 outline 文件 + 更新 `novel.yaml.title/outline_file` + `novels.title/outline_file`（DB 值是文件值的缓存），任一步失败整体回滚；`outline_file` 为唯一寻址依据 |
 
-### 7.7 ★难点七：第三方生态的版本兼容性
+### 8.7 ★难点七：第三方生态的版本兼容性
 
 **问题**：deepagents / langchain / mcp / langfuse 都是快速演进的库，文档与实装常有差异，
 且仓库里的 `demo/` 脚本用的是旧版 API。
@@ -1050,7 +1475,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | 内置中间件构造参数跨版本可能变化 | 每个 `stack.append(...)` 都包 try/except 做**版本兼容兜底**（失败则降级为无参构造或跳过并告警） |
 | `demo/` 脚本与实装版本漂移，误导后续开发 | 实现一律以实测结论为准，demo 仅作原理参考 |
 
-### 7.8 ★难点八：Windows 平台的编码与路径
+### 8.8 ★难点八：Windows 平台的编码与路径
 
 **问题**：项目在 Windows 上开发运行，路径分隔符、非法文件名字符、编码默认值都是坑。
 
@@ -1066,7 +1491,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 - ★虚拟路径 → 宿主路径转换时统一把反斜杠归一化为正斜杠；
 - `main.py` 启动器区分 `os.name == "nt"` 处理子进程信号与命令构造。
 
-### 7.9 ★难点九：长篇上下文治理与成本控制
+### 8.9 ★难点九：长篇上下文治理与成本控制
 
 **问题**：长篇小说逐章累积，若把历史章节全塞进上下文会爆窗口且成本失控。
 
@@ -1087,7 +1512,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
    `project_words` / `fallback_used`）供复盘调优；
 9. **裁剪优先级**：预算不足时按「当前章简介 + 卷节 > 最近 3 章摘要 > 附录补充设定 > 更早摘要」裁剪。
 
-### 7.10 ★难点十：架构自洽（依赖方向与文件粒度）
+### 8.10 ★难点十：架构自洽（依赖方向与文件粒度）
 
 **问题**：设计约定「Agent 逻辑不外溢到 api/services，非 Agent 业务代码也不进入 agent/」，
 但同时又约定 `agent/llm/` 存放 ChatModel 工厂——而 `services/llm.py`（Provider CRUD 业务服务）
@@ -1119,9 +1544,9 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 
 ---
 
-## 八、测试与质量保障
+## 九、测试与质量保障
 
-### 8.1 测试策略
+### 9.1 测试策略
 
 **18 个测试文件 / 399 用例 / 1 skipped**，`pytest-asyncio` `asyncio_mode=auto`。
 
@@ -1135,7 +1560,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
   `get_settings.cache_clear()` 做隔离（★否则 checkpointer 会跨 DATA_ROOT 串库）；
 - `conftest.py` 重定向 `env_file_path` 并还原 `os.environ`（★防测试污染真实 `.env`）。
 
-### 8.2 覆盖域
+### 9.2 覆盖域
 
 | 测试文件 | 覆盖 |
 | --- | --- |
@@ -1159,7 +1584,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | `test_export.py` | 4 种格式产物结构、EPUB 结构校验、calibre 缺失 → 50301 |
 | `test_naming.py` | 显式命名各违规形态 |
 
-### 8.3 静态质量
+### 9.3 静态质量
 
 ```powershell
 uv run python -m pytest -q     # 399 passed / 1 skipped
@@ -1168,7 +1593,7 @@ uv run ruff check src tests    # ruff：line-length 110，select = E,F,W,I,UP,B,
 cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 ```
 
-### 8.4 「把约束编码成常量 + 配回归测试」
+### 9.4 「把约束编码成常量 + 配回归测试」
 
 本项目最有价值的质量手法：设计约束不写在文档里靠人工自觉，而是**编码成常量并配回归测试**。
 
@@ -1182,9 +1607,9 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 
 ---
 
-## 九、已知边界与可演进方向
+## 十、已知边界与可演进方向
 
-### 9.1 有意的取舍（非缺陷）
+### 10.1 有意的取舍（非缺陷）
 
 | 取舍 | 理由 |
 | --- | --- |
@@ -1196,7 +1621,7 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 | **`services → agent` 保留 6 处依赖** | 彻底消环需把 LLM/MCP/可观测基础设施迁出 `agent/`，与「Agent 作为整体」定位冲突 |
 | **敏感内容检查仅预留挂载位** | MVP 不实现（`RecapInjectionMiddleware._check_sensitive` 是空挂载点） |
 
-### 9.2 外部依赖限制
+### 10.2 外部依赖限制
 
 - **mobi 导出**依赖本机安装 calibre（`ebook-convert`）；未装则该格式置灰并返回 `50301`
   （markdown / epub / txt 不受影响）；
@@ -1205,7 +1630,7 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 - **FTS5** 不可用则检索永久降级 `LIKE`（返回结构不变，`data.degraded=true`）；
 - **第三方 MCP** 仅支持开源免费、无需认证的服务（无认证头/Token 配置字段）。
 
-### 9.3 可演进方向
+### 10.3 可演进方向
 
 | 方向 | 说明 |
 | --- | --- |
@@ -1221,4 +1646,4 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 
 > **文档定位说明**：本文是项目技术全景（架构与实现逻辑），不含待办与实施步骤。
 > 启动方式与功能清单见同目录 [`README.md`](./README.md)。
-> 全部技术结论均以 `.venv` 实测版本为准（见 6.1），与仓库 `demo/` 脚本的旧版 API 写法不一致时以本文为准。
+> 全部技术结论均以 `.venv` 实测版本为准（见 7.1），与仓库 `demo/` 脚本的旧版 API 写法不一致时以本文为准。

@@ -82,8 +82,13 @@ def _spawn(cmd: list[str], cwd: Path, extra_env: dict[str, str] | None = None) -
     # 子进程继承当前控制台（日志混合输出，不弹新窗口）。
     # Windows 不加 CREATE_NEW_PROCESS_GROUP：该 flag 会使子进程收不到控制台 Ctrl+C；
     # Ctrl+C 由 main.py 捕获 KeyboardInterrupt 后统一走 _terminate 清理。
-    kwargs: dict = {"cwd": str(cwd), "env": env}
-    if not _is_windows():
+    if _is_windows():
+        # Windows 跨盘符时 cwd 参数对 .cmd 文件不生效，用 cmd /c cd /d 强制切换
+        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        cmd = ["cmd", "/c", f"cd /d {cwd} && {cmd_str}"]
+        kwargs: dict = {"env": env}
+    else:
+        kwargs: dict = {"cwd": str(cwd), "env": env}
         # POSIX：独立进程组，使 _terminate 的 killpg 只杀子进程树、不波及 main.py 自身
         kwargs["start_new_session"] = True
     return subprocess.Popen(cmd, **kwargs)  # noqa: S603
@@ -95,7 +100,12 @@ def _ensure_frontend_deps() -> bool:
         return True
     print("[main] 前端依赖缺失，正在安装（npm install）…")
     npm = "npm.cmd" if _is_windows() else "npm"
-    result = subprocess.run([npm, "install"], cwd=str(WEB_DIR), check=False)  # noqa: S603,S607
+    if _is_windows():
+        # Windows 跨盘符时 cwd 参数对 .cmd 文件不生效，用 cmd /c cd /d 强制切换
+        cmd = ["cmd", "/c", f"cd /d {WEB_DIR} && {npm} install"]
+    else:
+        cmd = [npm, "install"]
+    result = subprocess.run(cmd, cwd=str(WEB_DIR) if not _is_windows() else None, check=False)  # noqa: S603,S607
     return result.returncode == 0
 
 
@@ -181,7 +191,12 @@ def run_prod(backend_port: int) -> int:
         if not _ensure_frontend_deps():
             return 1
         npm = "npm.cmd" if _is_windows() else "npm"
-        result = subprocess.run([npm, "run", "build"], cwd=str(WEB_DIR), check=False)  # noqa: S603,S607
+        if _is_windows():
+            # Windows 跨盘符时 cwd 参数对 .cmd 文件不生效，用 cmd /c cd /d 强制切换
+            cmd = ["cmd", "/c", f"cd /d {WEB_DIR} && {npm} run build"]
+        else:
+            cmd = [npm, "run", "build"]
+        result = subprocess.run(cmd, cwd=str(WEB_DIR) if not _is_windows() else None, check=False)  # noqa: S603,S607
         if result.returncode != 0:
             print("[main] ✗ 前端构建失败")
             return 1

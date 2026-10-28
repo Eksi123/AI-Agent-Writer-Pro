@@ -5,7 +5,7 @@
 支持**手动撰写**与 **AI 生成**两种写作模式：先写大纲，再逐章成文。让 AI 写正文时，
 它会严格按照大纲的章简介来写，并在生成前后自动做衔接检查与要点核对，不会天马行空。
 
-> 架构与实现细节（面向开发 / 维护者）见 [`Writer-Develop.md`](./Writer-Develop.md)。
+> 架构与实现细节（面向开发 / 维护者）见 [`Project-Develop.md`](./Project-Develop.md)。
 
 ---
 
@@ -102,11 +102,11 @@ AI Agent Writer Pro 是一款**大纲驱动**的 AI 小说写作工作台。核�
 
 ### 2.1 环境要求
 
-| 项 | 要求 |
-| --- | --- |
-| Python | 3.12+ |
-| Node.js | 20+（仅前端开发 / 构建需要） |
-| uv | 推荐（`pyproject.toml` + `uv.lock` 是依赖唯一事实源） |
+| 项      | 要求                                                           |
+| ------- | -------------------------------------------------------------- |
+| Python  | 3.12+                                                          |
+| Node.js | 20+（仅前端开发 / 构建需要）                                   |
+| uv      | 推荐（`pyproject.toml` + `uv.lock` 是依赖唯一事实源）      |
 | calibre | 可选，未安装则 mobi 导出置灰（markdown / epub / txt 不受影响） |
 
 ### 2.2 一键启动（推荐，日常调试）
@@ -229,4 +229,4 @@ AI Agent Writer Pro
     └─ 数据本地化：正文为本地 Markdown 文件，整目录即备份
 ```
 
-> 架构设计、模块实现、运行流程等技术细节见 [`Writer-Develop.md`](./Writer-Develop.md)。
+> 架构设计、模块实现、运行流程等技术细节见 [`Project-Develop.md`](./Project-Develop.md)。
