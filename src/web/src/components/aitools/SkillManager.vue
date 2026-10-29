@@ -1,10 +1,15 @@
 <script setup lang="ts">
 /**
- * 写作技能管理（M5）：内置（只读，可查看）+ 用户自建（CRUD）。
- * 技能存 skill_configs 并物化到 data/skills/{name}/SKILL.md，经 /skills/user/ 供 Agent 只读加载。
- * frontmatter 约束：name == 目录名（小写连字符 ≤64），description ≤1024。
+ * 写作技能管理（v1028）：内置工具（只读）+ 用户自建（CRUD）。
+ *
+ * v1028 变更：
+ * - 删除顶部提示语与「重新物化」按钮；
+ * - 内置项改为展示 Agent 基础工具 read / edit / list / grep / glob / web_search（不展示描述）；
+ * - 每条技能右侧显示「查看」「编辑」，内置工具两项均置灰；
+ * - 新建弹窗：无顶部标题；「技能名」→「名称」；描述/正文删除输入框提示；
+ *   技能正文必填；删除 allowed-tools 与启用开关（自建技能只包含提示词）。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { configApi, type SkillDto } from '@/api'
 import { errorMessage } from '@/api/http'
@@ -12,6 +17,11 @@ import { t } from '@/i18n'
 
 const loading = ref(false)
 const skills = ref<SkillDto[]>([])
+
+/** 内置工具在前、自建技能在后 */
+const sortedSkills = computed(() =>
+  [...skills.value].sort((a, b) => Number(b.is_builtin) - Number(a.is_builtin)),
+)
 
 const dialogVisible = ref(false)
 const previewVisible = ref(false)
@@ -22,8 +32,16 @@ const form = reactive({
   name: '',
   description: '',
   body: '',
-  allowed_tools_text: '',
-  enabled: true,
+})
+
+const formError = computed(() => {
+  if (!form.name.trim()) return `${t('skills.nameLabel')}为必填`
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(form.name.trim())) {
+    return '名称须为小写字母开头，仅小写字母/数字/连字符（≤64 字符）'
+  }
+  if (!form.description.trim()) return `${t('skills.descLabel')}为必填`
+  if (!form.body.trim()) return `${t('skills.bodyLabel')}为必填`
+  return ''
 })
 
 async function load(): Promise<void> {
@@ -39,21 +57,19 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
-function openDialog(s?: SkillDto): void {
-  editing.value = s && !s.is_builtin ? s : null
-  form.name = s?.name ?? ''
-  form.description = s?.description ?? ''
-  form.body = s && !s.is_builtin ? extractBody(s.content_md) : ''
-  form.allowed_tools_text = (s?.allowed_tools ?? []).join('\n')
-  form.enabled = s?.enabled ?? true
-  dialogVisible.value = true
-}
-
 function extractBody(contentMd: string): string {
   return contentMd
     .replace(/^---\n[\s\S]*?\n---\n/, '')
     .replace(/^#\s+.*\n+/, '')
     .trim()
+}
+
+function openDialog(s?: SkillDto): void {
+  editing.value = s && !s.is_builtin ? s : null
+  form.name = s && !s.is_builtin ? s.name : ''
+  form.description = s && !s.is_builtin ? s.description : ''
+  form.body = s && !s.is_builtin ? extractBody(s.content_md) : ''
+  dialogVisible.value = true
 }
 
 function preview(s: SkillDto): void {
@@ -62,22 +78,16 @@ function preview(s: SkillDto): void {
 }
 
 async function save(): Promise<void> {
-  if (!form.name.trim() || !form.description.trim()) {
-    ElMessage.warning(t('common.required'))
+  if (formError.value) {
+    ElMessage.warning(formError.value)
     return
   }
-  const allowedTools = form.allowed_tools_text
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
   saving.value = true
   try {
     const payload = {
       name: form.name.trim(),
       description: form.description.trim(),
-      body: form.body,
-      allowed_tools: allowedTools,
-      enabled: form.enabled,
+      body: form.body.trim(),
     }
     if (editing.value) {
       await configApi.updateSkill(editing.value.id, payload)
@@ -94,23 +104,13 @@ async function save(): Promise<void> {
   }
 }
 
-async function toggleEnabled(s: SkillDto, enabled: boolean): Promise<void> {
-  try {
-    await configApi.updateSkill(s.id, { enabled })
-    await load()
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-    await load()
-  }
-}
-
 async function remove(s: SkillDto): Promise<void> {
   try {
-    await ElMessageBox.confirm(
-      `删除技能「${s.name}」会同时移除 data/skills/ 下的物化目录。确定吗？`,
-      t('common.delete'),
-      { type: 'warning', confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel') },
-    )
+    await ElMessageBox.confirm(t('skills.deleteConfirm', { name: s.name }), t('common.delete'), {
+      type: 'warning',
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
+    })
     await configApi.deleteSkill(s.id)
     ElMessage.success('已删除')
     await load()
@@ -118,111 +118,67 @@ async function remove(s: SkillDto): Promise<void> {
     /* 取消 */
   }
 }
-
-async function resync(): Promise<void> {
-  try {
-    const res = await configApi.resyncSkills()
-    ElMessage.success(`已重新物化 ${res.materialized} 个技能`)
-    await load()
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  }
-}
 </script>
 
 <template>
   <div v-loading="loading" class="skill-manager">
+    <!-- v1028：删除顶部提示语，只保留「新建技能」入口 -->
     <div class="toolbar">
-      <span class="muted text-sm">
-        技能以 SKILL.md 渐进披露给 Agent（模型按需 read_file）；启用即物化到 data/skills/。
-      </span>
-      <div class="row">
-        <el-button size="small" @click="resync">重新物化</el-button>
-        <el-button type="primary" size="small" @click="openDialog()">＋ 新建技能</el-button>
-      </div>
+      <div />
+      <el-button type="primary" @click="openDialog()">＋ {{ t('skills.add') }}</el-button>
     </div>
 
-    <div v-for="s in skills" :key="s.id" class="skill-card">
+    <div v-for="s in sortedSkills" :key="s.id" class="skill-card">
       <div class="card-head">
         <div class="row">
-          <strong>{{ s.name }}</strong>
-          <el-tag size="small" :type="s.is_builtin ? 'info' : 'success'">
-            {{ s.is_builtin ? '内置' : '自建' }}
+          <strong class="skill-name">{{ s.name }}</strong>
+          <el-tag size="small" :type="s.is_builtin ? 'info' : 'success'" effect="plain">
+            {{ s.is_builtin ? t('skills.builtin') : t('skills.custom') }}
           </el-tag>
-          <el-tag v-if="!s.is_builtin" size="small" :type="s.materialized ? 'success' : 'danger'">
-            {{ s.materialized ? '已物化' : '未物化' }}
-          </el-tag>
-          <el-tag v-if="s.allowed_tools.length" size="small">
-            工具：{{ s.allowed_tools.join(' ') }}
+          <el-tag v-if="!s.is_builtin && !s.enabled" size="small" type="info" effect="plain">
+            已停用
           </el-tag>
         </div>
+
         <div class="row">
-          <el-button text size="small" @click="preview(s)">查看</el-button>
-          <template v-if="!s.is_builtin">
-            <el-switch
-              :model-value="s.enabled"
-              size="small"
-              @change="toggleEnabled(s, Boolean($event))"
-            />
-            <el-button text size="small" @click="openDialog(s)">编辑</el-button>
-            <el-button text size="small" type="danger" @click="remove(s)">
-              {{ t('common.delete') }}
-            </el-button>
-          </template>
-          <el-tag v-else size="small" type="info">只读</el-tag>
+          <!-- v1028：查看 / 编辑；内置工具两项均置灰 -->
+          <el-button size="small" text :disabled="s.is_builtin" @click="preview(s)">
+            {{ t('skills.view') }}
+          </el-button>
+          <el-button size="small" plain :disabled="s.is_builtin" @click="openDialog(s)">
+            {{ t('skills.edit') }}
+          </el-button>
+          <el-button v-if="!s.is_builtin" size="small" type="danger" plain @click="remove(s)">
+            {{ t('common.delete') }}
+          </el-button>
         </div>
       </div>
-      <div class="desc">{{ s.description }}</div>
+
+      <!-- v1028：内置工具不展示描述 -->
+      <div v-if="!s.is_builtin && s.description" class="desc">{{ s.description }}</div>
     </div>
 
-    <!-- 编辑对话框 -->
-    <el-dialog
-      v-model="dialogVisible"
-      :title="editing ? `编辑技能：${editing.name}` : '新建技能'"
-      width="640px"
-    >
-      <el-form :model="form" label-width="110px">
-        <el-form-item label="技能名" required>
-          <el-input
-            v-model="form.name"
-            :disabled="!!editing"
-            placeholder="小写字母/数字/连字符，须与物化目录名一致"
-          />
-          <div class="muted text-sm">改名会迁移物化目录；创建后不可再改。</div>
+    <!-- 新建/编辑弹窗：无顶部标题 -->
+    <el-dialog v-model="dialogVisible" width="640px" class="skill-dialog">
+      <el-form :model="form" label-width="90px" label-position="left">
+        <el-form-item :label="t('skills.nameLabel')" required>
+          <el-input v-model="form.name" :disabled="!!editing" maxlength="64" />
         </el-form-item>
-        <el-form-item label="描述" required>
-          <el-input
-            v-model="form.description"
-            type="textarea"
-            :rows="2"
-            maxlength="1024"
-            show-word-limit
-            placeholder="Agent 据此决定何时加载本技能（写清适用场景）"
-          />
+
+        <el-form-item :label="t('skills.descLabel')" required>
+          <el-input v-model="form.description" type="textarea" :rows="2" maxlength="1024" show-word-limit />
         </el-form-item>
-        <el-form-item label="技能正文">
-          <el-input
-            v-model="form.body"
-            type="textarea"
-            :rows="10"
-            placeholder="Markdown 正文：工作流程、检查表、示例、禁止事项…"
-          />
-        </el-form-item>
-        <el-form-item label="allowed-tools">
-          <el-input
-            v-model="form.allowed_tools_text"
-            type="textarea"
-            :rows="2"
-            placeholder="每行一个工具名（可选），如 web_search"
-          />
-        </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="form.enabled" />
+
+        <el-form-item :label="t('skills.bodyLabel')" required>
+          <el-input v-model="form.body" type="textarea" :rows="12" />
         </el-form-item>
       </el-form>
+
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!!formError" @click="save">
+          {{ t('common.save') }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -245,16 +201,15 @@ async function resync(): Promise<void> {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-bottom: 4px;
 }
 
 .skill-card {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .card-head {
@@ -271,13 +226,18 @@ async function resync(): Promise<void> {
   gap: 8px;
 }
 
+.skill-name {
+  font-size: 14px;
+}
+
 .desc {
   font-size: 13px;
   color: var(--el-text-color-regular);
+  line-height: 1.6;
 }
 
 .muted {
-  color: var(--el-text-color-secondary);
+  color: var(--text-muted);
 }
 
 .text-sm {
@@ -294,5 +254,17 @@ async function resync(): Promise<void> {
   border-radius: 6px;
   padding: 10px;
   margin: 0;
+}
+</style>
+
+<style>
+/* 弹窗无标题时压缩顶部留白 */
+.skill-dialog .el-dialog__header {
+  padding-bottom: 4px;
+  margin-right: 0;
+}
+
+.skill-dialog .el-dialog__body {
+  padding-top: 8px;
 }
 </style>

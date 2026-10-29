@@ -61,7 +61,7 @@ async function submitEdit(): Promise<void> {
   try {
     parsed = JSON.parse(editedArgsText.value)
   } catch {
-    ElMessage.error(t('aiTools.invalidJson'))
+    ElMessage.error(t('common.invalidJson'))
     return
   }
   await decide('edit', { edited_args: parsed })

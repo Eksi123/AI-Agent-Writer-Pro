@@ -68,6 +68,9 @@ async def create_provider(body: LlmProviderCreate, session: AsyncSession = Depen
         extra=body.extra,
         enabled=body.enabled,
         priority=body.priority,
+        timeout_sec=body.timeout_sec,
+        temperature=body.temperature,
+        max_tokens=body.max_tokens,
     )
     await session.commit()
     return ok(dto)
@@ -101,6 +104,9 @@ async def update_provider(
         extra=body.extra,
         enabled=body.enabled,
         priority=body.priority,
+        timeout_sec=body.timeout_sec,
+        temperature=body.temperature,
+        max_tokens=body.max_tokens,
     )
     await session.commit()
     return ok(dto)

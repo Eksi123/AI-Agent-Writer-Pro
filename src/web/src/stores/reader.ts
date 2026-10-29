@@ -12,7 +12,8 @@ export type TocNodeKind = 'outline' | 'volume' | 'chapter'
 export const useReaderStore = defineStore('reader', () => {
   const mode = ref<MainMode>('read')
   const editTab = ref<EditTab>('content')
-  const tocOpen = ref(true)
+  /** v1028：目录浮在阅读区左上角，默认收起，点击展开 */
+  const tocOpen = ref(false)
   /** 夜间模式独立于全局暗色主题（阅读模式专用） */
   const nightMode = ref(false)
   /** 当前打开的章 id；null 表示正在看「大纲」节点 */

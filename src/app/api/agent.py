@@ -47,6 +47,7 @@ from app.schemas import (
     AgentSessionContext,
     AgentSessionCreate,
     AgentSessionUpdate,
+    AgentSteerIn,
 )
 from app.services import agent as agent_service
 
@@ -66,6 +67,14 @@ async def get_sessions(
 ) -> dict:
     """会话列表（按项目隔离：带 novel_id 只返回该项目会话）。"""
     return ok(await agent_service.list_sessions(session, novel_id))
+
+
+@router.get("/usage")
+async def get_usage(
+    novel_id: str = Query(...), session: AsyncSession = Depends(get_session)
+) -> dict:
+    """项目用量（v1028：会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。"""
+    return ok(await agent_service.project_usage(session, novel_id))
 
 
 @router.post("/sessions")
@@ -265,6 +274,31 @@ async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)) 
     dto = await run_manager.cancel(run_id)
     await session.commit()
     return ok(dto)
+
+
+@router.post("/runs/{run_id}/steer")
+async def steer_run(
+    run_id: str, body: AgentSteerIn, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """v1028：运行中「通过消息引导发送」。
+
+    引导文本入 run 级队列，由 `SteerInjectionMiddleware` 在**下次模型调用前**注入，
+    不中断当前 run、不新建 run。run 已结束 → 409/40902（前端回落为普通发送）。
+    """
+    run = await session.get(AgentRun, run_id)
+    if run is None:
+        raise NotFoundError(f"run 不存在：{run_id}")
+    if not run_manager.is_running(run_id):
+        from app.core.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            f"运行已结束（{run.status}），无法引导发送",
+            code=ErrorCode.RUN_STATE_CONFLICT,
+            data={"run_id": run_id, "status": run.status},
+        )
+    run_manager.push_steer(run_id, body.content)
+    logger.info("run_steered", run_id=run_id, chars=len(body.content))
+    return ok({"run_id": run_id, "steered": True})
 
 
 # ---------------------------------------------------------------------------

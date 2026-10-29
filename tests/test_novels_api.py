@@ -41,12 +41,20 @@ async def test_create_novel_initializes_workspace(client):
 
 
 @pytest.mark.asyncio
-async def test_create_novel_rejects_default_name(client):
-    """显式命名：默认名返回 422 / 42201。"""
-    for bad in ("未命名小说", "第 1 卷", "", "   "):
+async def test_create_novel_rejects_invalid_title(client):
+    """v1028 书名校验：空 / 全阿拉伯数字 / 含 #$% 等特殊字符 → 422 / 42201。"""
+    for bad in ("", "   ", "12", "123456", "#星海", "星海$拾荒", "星海%拾荒"):
         resp = await client.post("/api/v1/novels", json={"title": bad})
         assert resp.status_code == 422, f"{bad!r} 应被拒绝，实际 {resp.status_code}"
         assert resp.json()["code"] == 42201
+
+
+@pytest.mark.asyncio
+async def test_create_novel_allows_punctuation_title(client):
+    """v1028：书名允许出现标点符号（如冒号、间隔号）。"""
+    resp = await client.post("/api/v1/novels", json={"title": "星海拾荒人：黎明"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["title"] == "星海拾荒人：黎明"
 
 
 @pytest.mark.asyncio
@@ -93,8 +101,9 @@ async def test_rename_novel_renames_outline_file(client, novel_id):
 
 
 @pytest.mark.asyncio
-async def test_rename_to_default_name_rejected(client, novel_id):
-    resp = await client.patch(f"/api/v1/novels/{novel_id}", json={"title": "未命名小说"})
+async def test_rename_to_invalid_title_rejected(client, novel_id):
+    """v1028：重命名为全阿拉伯数字 / 含特殊字符仍被拒。"""
+    resp = await client.patch(f"/api/v1/novels/{novel_id}", json={"title": "123456"})
     assert resp.status_code == 422
     assert resp.json()["code"] == 42201
 

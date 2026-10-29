@@ -15,16 +15,17 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.memory import load_tree, set_active_leaf
 from app.core.errors import ApiError, ErrorCode, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel, ProjectIndex, ToolCallLog
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Message, Novel, ProjectIndex, ToolCallLog
 from app.db.session import session_scope
 from app.services import audit
 
@@ -46,6 +47,54 @@ _CONSULT_DECISIONS = ("option", "text")
 # ---------------------------------------------------------------------------
 # 会话 CRUD
 # ---------------------------------------------------------------------------
+
+
+def summarize_session_title(content: str, *, max_len: int = 30) -> str:
+    """首条用户消息 → 会话标题（v1028：会话记录名称 = 当前会话下第一个问答的问题总结）。
+
+    本地规则总结（不额外调 LLM）：取首个问句/首行，压缩空白，截断加省略号。
+    """
+    text = (content or "").strip()
+    if not text:
+        return "新会话"
+    # 优先取第一个问句（以 ？/? 结尾），其次取首行
+    first = ""
+    for seg in re.split(r"[。！？!?\n]", text):
+        seg = seg.strip()
+        if seg:
+            first = seg
+            break
+    first = re.sub(r"\s+", " ", first)
+    if len(first) > max_len:
+        first = first[: max_len - 1] + "…"
+    return first or "新会话"
+
+
+async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
+    """项目级用量（v1028：AI 会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。"""
+    sessions = (
+        (await db.execute(select(AgentSession).where(AgentSession.project_id == project_id))).scalars().all()
+    )
+    session_ids = [s.id for s in sessions]
+    tokens_in = 0
+    tokens_out = 0
+    if session_ids:
+        rows = (
+            await db.execute(
+                select(func.sum(Message.tokens_in), func.sum(Message.tokens_out)).where(
+                    Message.session_id.in_(session_ids)
+                )
+            )
+        ).first()
+        tokens_in = int(rows[0] or 0)
+        tokens_out = int(rows[1] or 0)
+    return {
+        "project_id": project_id,
+        "session_count": len(session_ids),
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "tokens_total": tokens_in + tokens_out,
+    }
 
 
 async def create_session(

@@ -57,6 +57,12 @@ class AgentBranchIn(BaseModel):
     message_id: str
 
 
+class AgentSteerIn(BaseModel):
+    """v1028：运行中「通过消息引导发送」——把引导文本注入正在跑的 run。"""
+
+    content: str = Field(min_length=1, max_length=20_000)
+
+
 class AgentInterruptResolveIn(BaseModel):
     """审批与咨询统一入口。
 

@@ -119,7 +119,8 @@ export async function del<T>(url: string, config?: AxiosRequestConfig): Promise<
  */
 export function errorMessage(err: unknown, fallback?: string): string {
   if (err instanceof ApiError) {
-    if (err.isNamingInvalid) return t('novel.namingRejected')
+    // v1028：命名类错误优先展示后端具体原因（如「不允许全部为阿拉伯数字」）
+    if (err.isNamingInvalid) return err.message || t('novel.namingRejected')
     if (err.isDependencyUnavailable) return err.message
     if (err.isVersionConflict) return t('conflict.message')
     return err.message || fallback || t('common.unknownError')

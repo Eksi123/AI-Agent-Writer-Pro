@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import Boolean, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, new_id
@@ -31,6 +31,10 @@ class LlmProvider(Base, TimestampMixin):
     extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: v1028：大模型级常用参数（超时秒 / 温度 / 最大输出 token）
+    timeout_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048)
 
 
 class LlmModel(Base, TimestampMixin):

@@ -24,7 +24,7 @@ from app.services import audit
 router = APIRouter(tags=["settings"])
 
 _DEFAULTS: dict[str, Any] = {
-    "theme": "system",
+    "theme": "light",
     "primary_color": "#409EFF",
     "font_size": 18,
     "font_family": "serif",
@@ -84,5 +84,24 @@ async def put_settings(body: SettingsIn, session: AsyncSession = Depends(get_ses
         row.updated_at = utcnow()
         await session.flush()
         await audit.record(session, "settings.update", entity_type="settings", entity_id="default", detail=changes)
+        await session.commit()
+    return ok(_to_dto(row))
+
+
+@router.post("/settings/reset")
+async def reset_settings(session: AsyncSession = Depends(get_session)) -> dict:
+    """恢复默认设置（v1028：保存按钮旁的「恢复默认设置」）。"""
+    row = await _get_or_create(session)
+    changes: dict[str, Any] = {}
+    for field in _PUBLIC_FIELDS:
+        default = _DEFAULTS[field]
+        if getattr(row, field) != default:
+            changes[field] = {"from": getattr(row, field), "to": default}
+            setattr(row, field, default)
+
+    if changes:
+        row.updated_at = utcnow()
+        await session.flush()
+        await audit.record(session, "settings.reset", entity_type="settings", entity_id="default", detail=changes)
         await session.commit()
     return ok(_to_dto(row))

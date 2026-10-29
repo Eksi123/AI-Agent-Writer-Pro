@@ -190,6 +190,9 @@ export const settingsApi = {
   get: () => get<UserSettings>('/settings'),
 
   save: (payload: Partial<UserSettings>) => put<UserSettings>('/settings', payload),
+
+  /** v1028：恢复默认设置 */
+  reset: () => post<UserSettings>('/settings/reset'),
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +213,9 @@ export const llmApi = {
     extra?: Record<string, unknown>
     enabled?: boolean
     priority?: number
+    timeout_sec?: number
+    temperature?: number
+    max_tokens?: number
   }) => post<LlmProviderDto>('/llm/providers', payload),
 
   updateProvider: (
@@ -224,6 +230,9 @@ export const llmApi = {
       extra?: Record<string, unknown>
       enabled?: boolean
       priority?: number
+      timeout_sec?: number
+      temperature?: number
+      max_tokens?: number
     },
   ) => patch<LlmProviderDto>(`/llm/providers/${id}`, payload),
 
@@ -295,6 +304,8 @@ export interface SkillDto {
   enabled: boolean
   is_builtin: boolean
   materialized: boolean
+  /** v1028：内置技能对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search） */
+  tool_name?: string
   created_at?: string | null
   updated_at?: string | null
 }
@@ -344,22 +355,10 @@ export const configApi = {
 }
 
 // ---------------------------------------------------------------------------
-// MCP 服务 + 动态组件（M6）
+// 动态组件（M6）
+// ★v1028：前端已删除「MCP 服务」管理页（mcpApi 随之移除）；
+//   后端 /mcp-servers API 与内置天气 MCP 保留，天气 MCP 仍由 Agent 自动装配。
 // ---------------------------------------------------------------------------
-
-export interface McpServerDto {
-  id: string
-  name: string
-  transport: 'stdio' | 'http' | 'sse'
-  command?: { command: string; args: string[] } | null
-  url?: string | null
-  enabled: boolean
-  confirmed_at?: string | null
-  needs_confirm: boolean
-  tools: { name: string; description: string }[]
-  created_at?: string | null
-  updated_at?: string | null
-}
 
 export interface WeatherDto {
   city: string
@@ -373,6 +372,9 @@ export interface WeatherDto {
   description: string
   icon: string
   observed_at?: string | null
+  /** v1028：空气质量指数（US AQI）与等级（优/良/轻度污染…） */
+  aqi?: number | null
+  aqi_level?: string | null
 }
 
 export interface PetStateDto {
@@ -382,29 +384,9 @@ export interface PetStateDto {
   last_updated?: string | null
 }
 
-export const mcpApi = {
-  list: () => get<McpServerDto[]>('/mcp-servers'),
-
-  create: (payload: {
-    name: string
-    transport: 'stdio' | 'http' | 'sse'
-    command?: { command: string; args: string[] }
-    url?: string
-  }) => post<McpServerDto>('/mcp-servers', payload),
-
-  update: (id: string, payload: { command?: { command: string; args: string[] }; url?: string; enabled?: boolean }) =>
-    patch<McpServerDto>(`/mcp-servers/${id}`, payload),
-
-  remove: (id: string) => del<{ id: string; deleted: boolean }>(`/mcp-servers/${id}`),
-
-  probe: (id: string) => post<McpServerDto>(`/mcp-servers/${id}/probe`),
-
-  confirm: (id: string) => post<McpServerDto>(`/mcp-servers/${id}/confirm`),
-}
-
 export const widgetsApi = {
-  /** 坐标优先；无坐标传 city；都不传后端回落设置城市 */
-  weather: (params: { latitude?: number; longitude?: number; city?: string }) =>
+  /** 坐标优先；无坐标传 city；都不传后端回落设置城市。refresh=true 跳过缓存取实时数据 */
+  weather: (params: { latitude?: number; longitude?: number; city?: string; refresh?: boolean }) =>
     get<WeatherDto>('/widgets/weather', { params }),
 
   city: (latitude: number, longitude: number) =>
@@ -423,6 +405,13 @@ export const widgetsApi = {
 export const agentApi = {
   listSessions: (novelId?: string) =>
     get<AgentSessionDto[]>('/agent/sessions', { params: novelId ? { novel_id: novelId } : undefined }),
+
+  /** v1028：项目用量（会话数量 + 累计 token） */
+  usage: (novelId: string) =>
+    get<{ project_id: string; session_count: number; tokens_in: number; tokens_out: number; tokens_total: number }>(
+      '/agent/usage',
+      { params: { novel_id: novelId } },
+    ),
 
   createSession: (payload: { novel_id: string; title?: string; model_ref?: string }) =>
     post<AgentSessionDto>('/agent/sessions', payload),
@@ -457,6 +446,10 @@ export const agentApi = {
   getRun: (runId: string) => get<AgentRunDto>(`/agent/runs/${runId}`),
 
   cancelRun: (runId: string) => post<{ run_id: string; cancelled: boolean }>(`/agent/runs/${runId}/cancel`),
+
+  /** v1028：运行中「通过消息引导发送」（把引导文本注入正在跑的 run） */
+  steerRun: (runId: string, content: string) =>
+    post<{ run_id: string; steered: boolean }>(`/agent/runs/${runId}/steer`, { content }),
 
   resolveInterrupt: (
     interruptId: string,

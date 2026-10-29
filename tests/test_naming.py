@@ -18,7 +18,7 @@ from app.services.naming import (
     validate_volume_title,
 )
 
-#: 应被拒绝的名字（空名 / 默认名 / 纯序号名）
+#: 卷名/章名应被拒绝的名字（空名 / 默认名 / 纯序号名）——铁律 6 仍适用于卷章
 REJECTED = [
     "",
     "   ",
@@ -45,6 +45,30 @@ REJECTED = [
     "aaa",
 ]
 
+#: 书名应被拒绝的名字（v1028 规则：空 / 全阿拉伯数字 / 含 #$% 等特殊字符）
+NOVEL_REJECTED = [
+    "",
+    "   ",
+    "\u3000",
+    None,
+    "12",
+    "123456",
+    "123 456",  # 去空白后仍全是阿拉伯数字
+    "#星海",
+    "星海$拾荒",
+    "星海%拾荒",
+    "星海&拾荒",
+    "星海*拾荒",
+    "星海+拾荒",
+    "星海=拾荒",
+    "星海<拾荒",
+    "星海>拾荒",
+    "星海@拾荒",
+    "星海^拾荒",
+    "星海|拾荒",
+    "星海~拾荒",
+]
+
 #: 应通过的名字（合法名）
 ACCEPTED = [
     "星海拾荒人",
@@ -56,12 +80,30 @@ ACCEPTED = [
     "拾荒者（外传）",
 ]
 
+#: v1028：书名允许默认名/序号名/标点（规则只禁空、全数字、特殊字符）
+NOVEL_ACCEPTED = [
+    *ACCEPTED,
+    "未命名小说",
+    "第 1 卷",
+    "测试",
+    "aaa",
+    "拾荒者：黎明",  # 冒号等标点允许
+    "星海·拾荒人",
+    "Winter-is-Coming",  # 连字符允许
+    "第3章",
+]
 
-@pytest.mark.parametrize("bad", REJECTED)
+
+@pytest.mark.parametrize("bad", NOVEL_REJECTED)
 def test_novel_title_rejected(bad):
     with pytest.raises(NamingInvalidError) as exc:
         validate_novel_title(bad)
     assert exc.value.code == 42201
+
+
+@pytest.mark.parametrize("good", NOVEL_ACCEPTED)
+def test_novel_title_accepted(good):
+    assert validate_novel_title(good)
 
 
 @pytest.mark.parametrize("bad", REJECTED)
@@ -84,9 +126,9 @@ def test_titles_accepted(good):
 
 
 def test_full_width_space_normalized():
-    """全角空格归一后仍视为默认名。"""
+    """全角空格归一后仍视为默认名（卷名/章名，铁律 6）。"""
     with pytest.raises(NamingInvalidError):
-        validate_novel_title("未命名\u3000小说")
+        validate_volume_title("未命名\u3000卷")
 
 
 def test_long_title_rejected():

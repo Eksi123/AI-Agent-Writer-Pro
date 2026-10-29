@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from sqlalchemy import select
+
 from app.agent.gates.runner import execute_gate_run
 from app.agent.loop.builder import build_agent
 from app.agent.loop.context import AgentContext
@@ -47,7 +49,7 @@ from app.agent.memory import add_message
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentRun, AgentSession
+from app.db.models import AgentRun, AgentSession, Message
 from app.db.session import session_scope
 from app.services import agent as agent_service
 
@@ -62,12 +64,24 @@ class RunManager:
         self._cancel_flags: dict[str, dict[str, bool]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._sessions: dict[str, str] = {}
+        #: v1028：运行中「通过消息引导发送」的引导消息队列（run 级，中间件每次模型调用前取用）
+        self._steer_queues: dict[str, list[str]] = {}
 
     def running_ids(self) -> list[str]:
         return [rid for rid, t in self._tasks.items() if not t.done()]
 
     def session_of(self, run_id: str) -> str | None:
         return self._sessions.get(run_id)
+
+    # ---- v1028：引导消息（steer） ----
+
+    def push_steer(self, run_id: str, text: str) -> None:
+        """运行中追加引导消息（SteerInjectionMiddleware 在下次模型调用前注入）。"""
+        self._steer_queues.setdefault(run_id, []).append(text)
+
+    def take_steer(self, run_id: str) -> list[str]:
+        """取出并清空该 run 的引导消息（中间件调用）。"""
+        return self._steer_queues.pop(run_id, [])
 
     # ---- 对外入口 ----
 
@@ -85,6 +99,15 @@ class RunManager:
         """新建 run（落库 + 起后台任务），返回 run_id。对应用户发新消息。"""
         async with session_scope() as db:
             agent_session = await agent_service.require_session(db, session_id)
+
+            # v1028：首条用户消息 → 会话标题自动改为「问题总结」（此前无 user 消息时才改）
+            has_user_msg = (
+                await db.execute(
+                    select(Message).where(Message.session_id == session_id, Message.role == "user").limit(1)
+                )
+            ).scalars().first()
+            if has_user_msg is None:
+                agent_session.title = agent_service.summarize_session_title(content)
 
             # 用户消息入树（parent_id 为空时接在 active_leaf 后；传 parent_id 则形成兄弟分支）
             user_msg = await add_message(

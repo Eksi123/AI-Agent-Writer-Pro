@@ -3,10 +3,10 @@
  * 变量由 stores/settings.ts 的 applyToDom() 运行时写入。
  */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --el-color-primary: #409eff;
   --novel-font-size: 18px;
-  --novel-font-family: 'Songti SC', 'SimSun', serif;
+  --novel-font-family: 'Source Han Serif SC', 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
   --novel-reading-width: 42em;
 
   --bg: #f7f8fa;
@@ -21,6 +21,7 @@
 }
 
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #141414;
   --bg-panel: #1d1e1f;
   --bg-hover: #262727;
@@ -28,6 +29,23 @@
   --text-muted: #a3a6ad;
   --border: #363637;
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+/* v1028：护眼模式（豆沙绿底色，降低亮度与对比刺激） */
+:root[data-theme='eye'] {
+  color-scheme: light;
+  --bg: #e7edda;
+  --bg-panel: #f2f6ea;
+  --bg-hover: #dfe7d0;
+  --text: #2c3527;
+  --text-muted: #6c7663;
+  --border: #ccd6bb;
+  --shadow: 0 2px 12px rgba(60, 80, 40, 0.1);
+}
+
+:root[data-theme='eye'] .novel-prose {
+  background: var(--bg-panel);
+  color: var(--text);
 }
 
 * {

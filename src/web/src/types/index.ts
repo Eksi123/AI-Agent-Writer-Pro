@@ -154,7 +154,8 @@ export interface Outline {
 }
 
 export interface UserSettings {
-  theme: 'light' | 'dark' | 'system'
+  /** v1028：light（浅色）| dark（深色）| eye（护眼）；system 仅为兼容旧数据 */
+  theme: 'light' | 'dark' | 'eye' | 'system'
   primary_color: string
   font_size: number
   font_family: string
@@ -246,6 +247,10 @@ export interface LlmProviderDto {
   extra?: Record<string, unknown> | null
   enabled: boolean
   priority: number
+  /** v1028：大模型级常用参数 */
+  timeout_sec: number
+  temperature: number
+  max_tokens: number
   models: LlmModelDto[]
   created_at?: string | null
   updated_at?: string | null

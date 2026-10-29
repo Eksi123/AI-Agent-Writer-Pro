@@ -21,12 +21,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SettingsIn(BaseModel):
-    theme: Literal["light", "dark", "system"] | None = None
+    #: v1028：深色 / 浅色 / 护眼三种主题（system 保留兼容旧数据）
+    theme: Literal["light", "dark", "eye", "system"] | None = None
     primary_color: str | None = None
-    font_size: int | None = Field(default=None, ge=10, le=48)
+    #: v1028：正文字号限制在合理范围（不要太小也不要太大）
+    font_size: int | None = Field(default=None, ge=14, le=28)
     font_family: str | None = None
     reading_width: int | None = Field(default=None, ge=20, le=80)
-    autosave_interval_sec: int | None = Field(default=None, ge=5, le=600)
+    #: v1028：自动保存间隔最少 10s，最多 60s
+    autosave_interval_sec: int | None = Field(default=None, ge=10, le=60)
     city: str | None = Field(default=None, max_length=60)
     pet_idle_minutes: int | None = Field(default=None, ge=1, le=1440)
 

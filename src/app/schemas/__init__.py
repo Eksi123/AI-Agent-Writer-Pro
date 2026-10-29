@@ -22,6 +22,7 @@ from app.schemas.agent import (
     AgentSessionContext,
     AgentSessionCreate,
     AgentSessionUpdate,
+    AgentSteerIn,
     SseEnvelopeOut,
 )
 from app.schemas.config import (
@@ -65,6 +66,7 @@ from app.schemas.novel import (
 
 __all__ = [
     "AgentBranchIn",
+    "AgentSteerIn",
     "AgentInterruptResolveIn",
     "AgentMessageIn",
     "AgentSessionContext",

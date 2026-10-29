@@ -79,7 +79,7 @@ def build_chat_model(
     Raises:
         LlmProviderError: 密钥缺失或类型不支持。
     """
-    params = _params_of(model, extra_params)
+    params = _params_of(model, extra_params, provider=provider)
 
     api_key = ""
     if provider.api_key_env:
@@ -140,9 +140,23 @@ def _extra_of(provider: LlmProvider) -> dict[str, Any]:
         return {}
 
 
-def _params_of(model: LlmModel, extra_params: dict[str, Any] | None) -> dict[str, Any]:
-    """default_params_json（全局层）+ 调用方覆盖（消息/会话层）合并。"""
+def _params_of(
+    model: LlmModel,
+    extra_params: dict[str, Any] | None,
+    *,
+    provider: LlmProvider | None = None,
+) -> dict[str, Any]:
+    """Provider 参数（v1028：超时/温度/Max Token）+ default_params_json + 调用方覆盖合并。"""
     from app.agent.llm.params import merge_params
+
+    provider_layer: dict[str, Any] = {}
+    if provider is not None:
+        # v1028：大模型配置弹窗的超时时长 / Temperature / Max Token（除密钥外均入库）
+        provider_layer = {
+            "timeout": getattr(provider, "timeout_sec", None),
+            "temperature": getattr(provider, "temperature", None),
+            "max_tokens": getattr(provider, "max_tokens", None),
+        }
 
     default: dict[str, Any] = {}
     if model.default_params_json:
@@ -150,7 +164,7 @@ def _params_of(model: LlmModel, extra_params: dict[str, Any] | None) -> dict[str
             default = json.loads(model.default_params_json)
         except ValueError:
             default = {}
-    merged = merge_params(default, extra_params)
+    merged = merge_params(provider_layer, default, extra_params)
     # ChatModel 构造参数名对齐（streaming → stream 由各 SDK 处理；extra_body 仅 openai 用）
     return merged
 

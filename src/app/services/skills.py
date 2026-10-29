@@ -126,7 +126,7 @@ def _extract_allowed_tools(content_md: str) -> list[str]:
 
 
 async def list_skills(session: AsyncSession, *, include_builtin: bool = True) -> list[dict[str, Any]]:
-    """用户自建技能（DB）+ 内置技能（包内目录，只读呈现）。"""
+    """用户自建技能（DB）+ 内置工具（v1028：read/edit/list/grep/glob/web_search，只读呈现）。"""
     result: list[dict[str, Any]] = []
 
     rows = (
@@ -139,27 +139,37 @@ async def list_skills(session: AsyncSession, *, include_builtin: bool = True) ->
     return result
 
 
+#: v1028：内置技能 = Agent 基础工具（展示名用文档口径 read/edit/list/grep/glob/web_search，
+#: 值为 deepagents / registry 里的真实工具名；不展示描述，UI 查看/编辑置灰）
+BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
+    {"tool": "read_file", "label": "read"},
+    {"tool": "edit_file", "label": "edit"},
+    {"tool": "ls", "label": "list"},
+    {"tool": "grep", "label": "grep"},
+    {"tool": "glob", "label": "glob"},
+    {"tool": "web_search", "label": "web_search"},
+]
+
+#: 真实工具名集合（子代理多选勾选后按此解析为工具实例）
+BUILTIN_TOOL_NAMES = frozenset(d["tool"] for d in BUILTIN_TOOL_DTOS)
+
+
 def _builtin_skill_dtos() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    if not BUILTIN_SKILLS_DIR.is_dir():
-        return out
-    for d in sorted(BUILTIN_SKILLS_DIR.iterdir()):
-        skill_md = d / "SKILL.md"
-        if not d.is_dir() or not skill_md.is_file():
-            continue
-        content = skill_md.read_text(encoding="utf-8")
-        description = _extract_description(content)
+    for item in BUILTIN_TOOL_DTOS:
         out.append(
             {
-                "id": f"builtin:{d.name}",
-                "name": d.name,
-                "description": description,
-                "content_md": content,
-                "allowed_tools": _extract_allowed_tools(content),
+                "id": f"builtin:{item['tool']}",
+                "name": item["label"],
+                "description": "",  # v1028：内置技能不展示描述
+                "content_md": "",
+                "allowed_tools": [],
                 "assets": [],
                 "enabled": True,
                 "is_builtin": True,
                 "materialized": True,
+                #: 真实工具名（前端多选勾选后回传，供子代理装配解析）
+                "tool_name": item["tool"],
                 "created_at": None,
                 "updated_at": None,
             }

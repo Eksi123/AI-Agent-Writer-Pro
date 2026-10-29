@@ -85,6 +85,9 @@ def provider_to_dto(row: LlmProvider, *, models: list[LlmModel] | None = None) -
         "extra": extra,
         "enabled": row.enabled,
         "priority": row.priority,
+        "timeout_sec": getattr(row, "timeout_sec", 30),
+        "temperature": getattr(row, "temperature", 1.0),
+        "max_tokens": getattr(row, "max_tokens", 2048),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -129,6 +132,16 @@ def model_to_dto(row: LlmModel) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _check_params(type_: str, *, temperature: float, timeout_sec: int, max_tokens: int) -> None:
+    """v1028：大模型必填参数校验（协议类型决定 temperature 取值范围）。"""
+    from app.schemas.llm import validate_provider_params
+
+    try:
+        validate_provider_params(type_, temperature, timeout_sec, max_tokens)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+
 async def list_providers(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (
         (await session.execute(select(LlmProvider).order_by(LlmProvider.priority.desc(), LlmProvider.created_at.asc())))
@@ -161,12 +174,16 @@ async def create_provider(
     extra: dict[str, Any] | None = None,
     enabled: bool = True,
     priority: int = 0,
+    timeout_sec: int = 30,
+    temperature: float = 1.0,
+    max_tokens: int = 2048,
 ) -> dict[str, Any]:
     name = (name or "").strip()
     if not name:
         raise BadRequestError("Provider 名称不能为空")
     if type not in PROVIDER_TYPES:
         raise BadRequestError(f"不支持的 provider 类型：{type}（可选：{', '.join(PROVIDER_TYPES)}）")
+    _check_params(type, temperature=temperature, timeout_sec=timeout_sec, max_tokens=max_tokens)
 
     duplicate = (
         await session.execute(select(LlmProvider).where(LlmProvider.name == name))
@@ -191,6 +208,9 @@ async def create_provider(
         extra_json=json.dumps(extra, ensure_ascii=False) if extra else None,
         enabled=enabled,
         priority=priority,
+        timeout_sec=int(timeout_sec),
+        temperature=float(temperature),
+        max_tokens=int(max_tokens),
     )
     session.add(row)
     await session.flush()
@@ -220,6 +240,9 @@ async def update_provider(
     extra: dict[str, Any] | None = None,
     enabled: bool | None = None,
     priority: int | None = None,
+    timeout_sec: int | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     row = await session.get(LlmProvider, provider_id)
     if row is None:
@@ -246,6 +269,13 @@ async def update_provider(
         if type not in PROVIDER_TYPES:
             raise BadRequestError(f"不支持的 provider 类型：{type}")
         if type != row.type:
+            # 协议类型变更后，既有 temperature 必须仍在新协议取值范围内（v1028）
+            _check_params(
+                type,
+                temperature=float(temperature) if temperature is not None else float(getattr(row, "temperature", 1.0)),
+                timeout_sec=int(timeout_sec) if timeout_sec is not None else int(getattr(row, "timeout_sec", 30)),
+                max_tokens=int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 2048)),
+            )
             changes["type"] = {"from": row.type, "to": type}
             row.type = type
 
@@ -287,6 +317,23 @@ async def update_provider(
     if priority is not None and priority != row.priority:
         changes["priority"] = {"from": row.priority, "to": priority}
         row.priority = priority
+
+    # v1028：超时 / Temperature / Max Token（校验以最终生效的 type 为准）
+    if timeout_sec is not None or temperature is not None or max_tokens is not None:
+        eff_type = type or row.type
+        eff_temp = float(temperature) if temperature is not None else float(getattr(row, "temperature", 1.0))
+        eff_timeout = int(timeout_sec) if timeout_sec is not None else int(getattr(row, "timeout_sec", 30))
+        eff_max = int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 2048))
+        _check_params(eff_type, temperature=eff_temp, timeout_sec=eff_timeout, max_tokens=eff_max)
+        if timeout_sec is not None and timeout_sec != row.timeout_sec:
+            changes["timeout_sec"] = {"from": row.timeout_sec, "to": timeout_sec}
+            row.timeout_sec = int(timeout_sec)
+        if temperature is not None and float(temperature) != float(row.temperature):
+            changes["temperature"] = {"from": row.temperature, "to": temperature}
+            row.temperature = float(temperature)
+        if max_tokens is not None and max_tokens != row.max_tokens:
+            changes["max_tokens"] = {"from": row.max_tokens, "to": max_tokens}
+            row.max_tokens = int(max_tokens)
 
     if changes:
         row.updated_at = utcnow()

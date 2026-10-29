@@ -23,6 +23,28 @@ from pydantic import BaseModel, Field
 
 _PROVIDER_TYPES = ("openai", "openai_compatible", "anthropic", "google", "azure_openai", "openrouter")
 
+#: 协议类型 → temperature 合法范围（v1028 大模型配置弹窗；两端均为闭区间，0 不允许）
+_TEMPERATURE_RANGES: dict[str, tuple[float, float]] = {
+    "openai": (0.0, 2.0),
+    "openai_compatible": (0.0, 2.0),
+    "openrouter": (0.0, 2.0),
+    "azure_openai": (0.0, 2.0),
+    "anthropic": (0.0, 1.0),
+    "google": (0.0, 2.0),
+}
+
+
+def validate_provider_params(type_: str, temperature: float, timeout_sec: int, max_tokens: int) -> None:
+    """校验大模型必填参数（v1028）。不合法抛 `ValueError`（API 层转 40001）。"""
+    if not (10 <= timeout_sec <= 60):
+        raise ValueError(f"超时时长须在 10~60 秒之间，收到：{timeout_sec}")
+    lo, hi = _TEMPERATURE_RANGES.get(type_, (0.0, 2.0))
+    # 0 不允许（不同协议取值范围不含 0）
+    if not (lo < temperature <= hi):
+        raise ValueError(f"Temperature 须在 ({lo}, {hi}] 范围内（不包括 0），收到：{temperature}")
+    if max_tokens < 1:
+        raise ValueError(f"Max Token 须为正整数，收到：{max_tokens}")
+
 
 class LlmProviderCreate(BaseModel):
     name: str = Field(max_length=100, description="Provider 名称，必填")
@@ -34,6 +56,12 @@ class LlmProviderCreate(BaseModel):
     extra: dict[str, Any] | None = None
     enabled: bool = True
     priority: int = 0
+    #: v1028 必填参数：超时（秒，10~60，默认 30）
+    timeout_sec: int = Field(default=30, ge=10, le=60)
+    #: v1028 必填参数：温度（按协议类型校验范围，默认 1.0）
+    temperature: float = Field(default=1.0, gt=0, le=2)
+    #: v1028 必填参数：最大输出 token（默认 2048，不设上限）
+    max_tokens: int = Field(default=2048, ge=1)
 
 
 class LlmProviderUpdate(BaseModel):
@@ -46,6 +74,9 @@ class LlmProviderUpdate(BaseModel):
     extra: dict[str, Any] | None = None
     enabled: bool | None = None
     priority: int | None = None
+    timeout_sec: int | None = Field(default=None, ge=10, le=60)
+    temperature: float | None = Field(default=None, gt=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=1)
 
 
 class LlmModelCreate(BaseModel):

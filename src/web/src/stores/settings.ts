@@ -1,15 +1,16 @@
 /**
- * 设置 store：通用设置（主题/字号/字体/页宽/自动保存间隔/回落城市）。
+ * 设置 store：通用设置（主题/字号/字体/自动保存间隔/回落城市）。
  * 全部持久化到后端 `user_settings` 单行表。
+ * v1028：主题为 深色/浅色/护眼 三种（system 仅兼容旧数据，按浅色渲染）。
  */
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { healthApi, settingsApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import type { Health, UserSettings } from '@/types'
 
-const DEFAULTS: UserSettings = {
-  theme: 'system',
+export const SETTINGS_DEFAULTS: UserSettings = {
+  theme: 'light',
   primary_color: '#409EFF',
   font_size: 18,
   font_family: 'serif',
@@ -19,11 +20,13 @@ const DEFAULTS: UserSettings = {
   pet_idle_minutes: 30,
 }
 
-/** 字体族 → CSS font-family */
+const DEFAULTS = SETTINGS_DEFAULTS
+
+/** 字体族 → CSS font-family（v1028：只给开源免费字体） */
 const FONT_STACKS: Record<string, string> = {
-  serif: '"Songti SC", "SimSun", "Source Han Serif SC", serif',
-  hei: '"Heiti SC", "SimHei", "Source Han Sans SC", sans-serif',
-  kai: '"Kaiti SC", "KaiTi", "STKaiti", serif',
+  serif: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif',
+  hei: '"Source Han Sans SC", "Noto Sans SC", "Heiti SC", "SimHei", sans-serif',
+  kai: '"LXGW WenKai", "Kaiti SC", "KaiTi", "STKaiti", serif',
   system: 'system-ui, "Microsoft YaHei", sans-serif',
 }
 
@@ -32,18 +35,20 @@ export const useSettingsStore = defineStore('settings', () => {
   const loaded = ref(false)
   const saving = ref(false)
   const error = ref<string | null>(null)
+  /** 已持久化到后端的设置快照（本地预览未保存时可回滚到这里） */
+  const persisted = ref<UserSettings>({ ...DEFAULTS })
 
   /** 后端自检：FTS5 可用性 / calibre 是否安装（决定 mobi 是否置灰） */
   const health = ref<Health | null>(null)
   const calibreAvailable = computed(() => health.value?.calibre_available ?? false)
   const fts5Available = computed(() => health.value?.fts5_available ?? true)
 
-  /** 实际生效的暗色模式（system 时跟随 prefers-color-scheme） */
-  const isDark = computed(() => {
-    if (settings.value.theme === 'dark') return true
-    if (settings.value.theme === 'light') return false
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+  /** v1028：三主题（light | dark | eye）；旧数据 system 归一到 light */
+  const theme = computed<'light' | 'dark' | 'eye'>(() => {
+    const v = settings.value.theme
+    return v === 'dark' || v === 'eye' ? v : 'light'
   })
+  const isDark = computed(() => theme.value === 'dark')
 
   const fontFamilyCss = computed(() => FONT_STACKS[settings.value.font_family] ?? FONT_STACKS.serif)
 
@@ -53,8 +58,7 @@ export const useSettingsStore = defineStore('settings', () => {
     root.style.setProperty('--el-color-primary', settings.value.primary_color)
     root.style.setProperty('--novel-font-size', `${settings.value.font_size}px`)
     root.style.setProperty('--novel-font-family', fontFamilyCss.value)
-    root.style.setProperty('--novel-reading-width', `${settings.value.reading_width}em`)
-    root.dataset.theme = isDark.value ? 'dark' : 'light'
+    root.dataset.theme = theme.value
     root.classList.toggle('dark', isDark.value)
   }
 
@@ -62,6 +66,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const [s, h] = await Promise.all([settingsApi.get(), healthApi.get()])
       settings.value = { ...DEFAULTS, ...s }
+      persisted.value = { ...settings.value }
       health.value = h
       loaded.value = true
     } catch (err) {
@@ -78,6 +83,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const next = await settingsApi.save(patch)
       settings.value = { ...DEFAULTS, ...next }
+      persisted.value = { ...settings.value }
       applyToDom()
     } catch (err) {
       error.value = errorMessage(err)
@@ -87,21 +93,52 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // 跟随系统主题变化时实时应用
-  watch(isDark, () => applyToDom())
+  /** v1028：仅本地即时预览（主题/字号/字体变更立即生效，不落库；点「保存」才持久化） */
+  function preview(patch: Partial<UserSettings>): void {
+    settings.value = { ...settings.value, ...patch }
+    applyToDom()
+  }
+
+  /** 丢弃未保存的本地预览，回到已持久化的设置 */
+  function revert(): void {
+    settings.value = { ...DEFAULTS, ...persisted.value }
+    applyToDom()
+  }
+
+  /** v1028：恢复默认设置（后端 POST /settings/reset） */
+  async function reset(): Promise<void> {
+    saving.value = true
+    error.value = null
+    try {
+      const next = await settingsApi.reset()
+      settings.value = { ...DEFAULTS, ...next }
+      persisted.value = { ...settings.value }
+      applyToDom()
+    } catch (err) {
+      error.value = errorMessage(err)
+      throw err
+    } finally {
+      saving.value = false
+    }
+  }
 
   return {
     settings,
+    persisted,
     loaded,
     saving,
     error,
     health,
     calibreAvailable,
     fts5Available,
+    theme,
     isDark,
     fontFamilyCss,
     load,
     save,
+    reset,
+    preview,
+    revert,
     applyToDom,
   }
 })

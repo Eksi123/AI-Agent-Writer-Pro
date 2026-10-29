@@ -39,8 +39,8 @@ class UserSettings(Base):
     __tablename__ = "user_settings"
 
     id: Mapped[str] = mapped_column(String(20), primary_key=True, default="default")
-    #: light | dark | system
-    theme: Mapped[str] = mapped_column(String(16), nullable=False, default="system")
+    #: v1028：light | dark | eye（护眼）；system 仅为兼容旧数据保留读取
+    theme: Mapped[str] = mapped_column(String(16), nullable=False, default="light")
     primary_color: Mapped[str] = mapped_column(String(20), nullable=False, default="#409EFF")
     font_size: Mapped[int] = mapped_column(Integer, nullable=False, default=18)
     font_family: Mapped[str] = mapped_column(String(50), nullable=False, default="serif")

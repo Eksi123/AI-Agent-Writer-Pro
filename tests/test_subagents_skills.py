@@ -133,10 +133,18 @@ class TestSubagentsApi:
 
 class TestSkillsApi:
     async def test_list_includes_builtin(self, client):
+        """v1028：内置「技能」= Agent 基础工具（read/edit/list/grep/glob/web_search），
+        不展示描述；原内置写作技能目录不再在列表中呈现。"""
         data = (await client.get("/api/v1/skills")).json()["data"]
         builtin = [s for s in data if s["is_builtin"]]
         names = {s["name"] for s in builtin}
-        assert {"novel-planning", "prose-writing", "line-editing", "continuity-check", "naming"} <= names
+        assert {"read", "edit", "list", "grep", "glob", "web_search"} <= names
+        assert {"prose-writing", "novel-planning"} & names == set()
+        # 内置工具不展示描述
+        assert all(s["description"] == "" for s in builtin)
+        # 每个内置项都带真实工具名，供子代理多选装配
+        tool_names = {s["tool_name"] for s in builtin}
+        assert {"read_file", "edit_file", "ls", "grep", "glob", "web_search"} <= tool_names
         assert all(s["materialized"] for s in builtin)
 
     async def test_create_skill_materializes(self, client):

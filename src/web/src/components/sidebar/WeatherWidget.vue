@@ -1,32 +1,26 @@
 <script setup lang="ts">
 /**
- * 左上角动态组件（M6，手册「三、(3) 左侧栏」）：
- * 宠物动态 icon（SVG 动画状态机，**仅两态**：写作中→敲键盘 / 久无进展→打瞌睡）
- * + 所在城市（浏览器定位，失败回落通用设置的回落城市）+ 当前天气。
+ * 左上角动态组件（v1028 重做）：生肖宠物 + 城市 + 天气卡片。
  *
- * 数据流：浏览器定位 → /widgets/weather?lat&lon（含反向地理编码）；
- * 定位失败/被拒 → /widgets/weather?city={回落城市}。
- * 宠物状态：/widgets/pet-state?novel_id（project_index.last_updated 距今 ≤ pet_idle_minutes → writing）。
+ * 数据流：浏览器定位 → /widgets/weather?lat&lon&refresh=true（含反向地理编码）；
+ * 定位失败/被拒 → /widgets/weather?refresh=true（回落通用设置的回落城市）。
+ * ★城市靠定位取得；天气、温度、空气质量在**页面刷新时**都取实时数据（refresh 跳过后端缓存）。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { widgetsApi, type PetStateDto, type WeatherDto } from '@/api'
-import { useProjectStore } from '@/stores/project'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { widgetsApi, type WeatherDto } from '@/api'
 import { useSettingsStore } from '@/stores/settings'
+import ZodiacPet from './ZodiacPet.vue'
 
-const project = useProjectStore()
 const settings = useSettingsStore()
 
 const weather = ref<WeatherDto | null>(null)
-const pet = ref<PetStateDto | null>(null)
 const locating = ref(false)
+const loading = ref(true)
 const weatherError = ref('')
 
-const REFRESH_MS = 5 * 60 * 1000 // 天气 5 分钟刷新
-const PET_POLL_MS = 60 * 1000 // 宠物状态 1 分钟轮询
-let weatherTimer: ReturnType<typeof setInterval> | null = null
-let petTimer: ReturnType<typeof setInterval> | null = null
+const REFRESH_MS = 10 * 60 * 1000 // 组件自身 10 分钟兜底刷新（实时性主要由刷新页面触发）
+let timer: ReturnType<typeof setInterval> | null = null
 
-const petState = computed(() => pet.value?.state ?? 'idle')
 const cityLabel = computed(() => weather.value?.city || settings.settings.city || '—')
 const tempLabel = computed(() => {
   const w = weather.value
@@ -34,18 +28,30 @@ const tempLabel = computed(() => {
   return `${Math.round(w.temperature)}°`
 })
 
-async function loadWeather(): Promise<void> {
+/** 空气质量等级 → 语义色 */
+const aqiClass = computed(() => {
+  const aqi = weather.value?.aqi
+  if (aqi == null) return 'aqi-none'
+  if (aqi <= 50) return 'aqi-good'
+  if (aqi <= 100) return 'aqi-moderate'
+  if (aqi <= 150) return 'aqi-light'
+  if (aqi <= 200) return 'aqi-mid'
+  if (aqi <= 300) return 'aqi-heavy'
+  return 'aqi-severe'
+})
+
+async function loadWeather(force = false): Promise<void> {
   weatherError.value = ''
+  loading.value = !weather.value
   try {
-    // 浏览器定位（可能失败/被拒 → 回落设置城市）
     const coords = await geolocate()
-    if (coords) {
-      weather.value = await widgetsApi.weather({ latitude: coords.lat, longitude: coords.lon })
-    } else {
-      weather.value = await widgetsApi.weather({})
-    }
+    weather.value = coords
+      ? await widgetsApi.weather({ latitude: coords.lat, longitude: coords.lon, refresh: force })
+      : await widgetsApi.weather({ refresh: force })
   } catch {
     weatherError.value = '天气暂不可用'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -56,102 +62,71 @@ function geolocate(): Promise<{ lat: number; lon: number } | null> {
       return
     }
     locating.value = true
-    const timer = setTimeout(() => {
+    const t = setTimeout(() => {
       locating.value = false
       resolve(null)
     }, 6000)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        clearTimeout(timer)
+        clearTimeout(t)
         locating.value = false
         resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude })
       },
       () => {
-        clearTimeout(timer)
+        clearTimeout(t)
         locating.value = false
-        resolve(null) // 被拒/失败 → 回落城市（后端处理）
+        resolve(null)
       },
       { timeout: 5000, maximumAge: 10 * 60 * 1000 },
     )
   })
 }
 
-async function loadPet(): Promise<void> {
-  try {
-    pet.value = await widgetsApi.petState(project.currentNovelId ?? undefined)
-  } catch {
-    pet.value = null
-  }
-}
-
 onMounted(async () => {
-  await Promise.all([loadWeather(), loadPet()])
-  weatherTimer = setInterval(() => void loadWeather(), REFRESH_MS)
-  petTimer = setInterval(() => void loadPet(), PET_POLL_MS)
+  // 页面加载（刷新）即取一次实时数据
+  await loadWeather(true)
+  timer = setInterval(() => void loadWeather(false), REFRESH_MS)
 })
 
 onBeforeUnmount(() => {
-  if (weatherTimer) clearInterval(weatherTimer)
-  if (petTimer) clearInterval(petTimer)
+  if (timer) clearInterval(timer)
 })
-
-// 切换项目时刷新宠物状态
-watch(
-  () => project.currentNovelId,
-  () => void loadPet(),
-)
 </script>
 
 <template>
-  <div class="weather-widget" :title="weatherError || undefined">
-    <!-- 宠物：两态 SVG 动画 -->
-    <div class="pet" :class="`pet-${petState}`">
-      <svg viewBox="0 0 48 48" width="40" height="40" aria-hidden="true">
-        <!-- 身体 -->
-        <ellipse cx="24" cy="30" rx="14" ry="11" class="pet-body" />
-        <!-- 头 -->
-        <circle cx="24" cy="17" r="10" class="pet-body" />
-        <!-- 耳朵 -->
-        <path d="M16 10 L13 3 L20 7 Z" class="pet-body" />
-        <path d="M32 10 L35 3 L28 7 Z" class="pet-body" />
-        <!-- 眼睛：写作态睁眼 / 瞌睡态闭眼 -->
-        <g v-if="petState === 'writing'" class="pet-eyes-open">
-          <circle cx="20" cy="16" r="1.6" class="pet-pupil" />
-          <circle cx="28" cy="16" r="1.6" class="pet-pupil" />
-        </g>
-        <g v-else class="pet-eyes-closed">
-          <path d="M18 16 q2 2 4 0" class="pet-line" />
-          <path d="M26 16 q2 2 4 0" class="pet-line" />
-        </g>
-        <!-- 鼻子嘴 -->
-        <path d="M22 20 q2 2 4 0" class="pet-line" />
-        <!-- 写作态：敲键盘的前爪（交替动画） -->
-        <g v-if="petState === 'writing'">
-          <ellipse cx="15" cy="38" rx="3.4" ry="2.4" class="paw paw-left" />
-          <ellipse cx="33" cy="38" rx="3.4" ry="2.4" class="paw paw-right" />
-          <rect x="9" y="41" width="30" height="4" rx="2" class="keyboard" />
-        </g>
-        <!-- 瞌睡态：zzz -->
-        <g v-else class="zzz">
-          <text x="34" y="10" font-size="7" class="zzz-text">z</text>
-          <text x="39" y="5" font-size="9" class="zzz-text zzz-2">Z</text>
-        </g>
-      </svg>
-    </div>
+  <div class="weather-widget">
+    <div class="widget-row">
+      <ZodiacPet />
+      <div class="wx-card" :class="{ 'wx-loading': loading }" :title="weatherError || undefined">
+        <div class="wx-head">
+          <span v-if="locating" class="wx-city muted">定位中…</span>
+          <span v-else class="wx-city">{{ cityLabel }}</span>
+          <span v-if="weather" class="wx-desc muted">{{ weather.description }}</span>
+        </div>
 
-    <!-- 城市 + 天气 -->
-    <div class="wx-info">
-      <div class="wx-city">
-        <span v-if="locating" class="muted">定位中…</span>
-        <span v-else>{{ cityLabel }}</span>
-      </div>
-      <div class="wx-line">
-        <template v-if="weather">
+        <div v-if="weather" class="wx-main">
           <span class="wx-icon">{{ weather.icon }}</span>
           <span class="wx-temp">{{ tempLabel }}</span>
-          <span class="wx-desc">{{ weather.description }}</span>
-        </template>
-        <span v-else class="muted">{{ weatherError || '…' }}</span>
+          <span
+            v-if="weather.aqi != null"
+            class="wx-aqi"
+            :class="aqiClass"
+            :title="`AQI ${weather.aqi}`"
+          >
+            {{ weather.aqi_level || weather.aqi }}
+          </span>
+        </div>
+        <div v-else class="wx-main">
+          <span class="muted wx-fallback">{{ weatherError || '…' }}</span>
+        </div>
+
+        <div v-if="weather" class="wx-meta muted">
+          <span v-if="weather.humidity != null">湿度 {{ Math.round(weather.humidity) }}%</span>
+          <span v-if="weather.wind_speed != null">风 {{ weather.wind_speed }} km/h</span>
+          <span v-if="weather.apparent_temperature != null">
+            体感 {{ Math.round(weather.apparent_temperature) }}°
+          </span>
+        </div>
       </div>
     </div>
   </div>
@@ -159,89 +134,39 @@ watch(
 
 <style scoped>
 .weather-widget {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  padding: 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.pet {
-  flex-shrink: 0;
-  line-height: 0;
+.widget-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.pet-body {
-  fill: var(--el-color-primary-light-3);
-}
-
-.pet-pupil {
-  fill: #303133;
-}
-
-.pet-line {
-  stroke: #303133;
-  stroke-width: 1.4;
-  fill: none;
-  stroke-linecap: round;
-}
-
-.keyboard {
-  fill: var(--el-fill-color-dark);
-}
-
-.paw {
-  fill: var(--el-color-primary-light-5);
-}
-
-/* 写作态：前爪交替敲键盘 */
-.paw-left {
-  animation: tap 0.6s infinite ease-in-out;
-  transform-origin: center;
-}
-
-.paw-right {
-  animation: tap 0.6s infinite ease-in-out 0.3s;
-  transform-origin: center;
-}
-
-@keyframes tap {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(2px); }
-}
-
-/* 瞌睡态：轻微呼吸起伏 + zzz 漂浮 */
-.pet-idle svg {
-  animation: breathe 3s infinite ease-in-out;
-  transform-origin: center bottom;
-}
-
-@keyframes breathe {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.04); }
-}
-
-.zzz-text {
-  fill: var(--el-text-color-secondary);
-  animation: float 2.4s infinite ease-in-out;
-}
-
-.zzz-2 {
-  animation-delay: 1.2s;
-}
-
-@keyframes float {
-  0% { opacity: 0; transform: translateY(2px); }
-  40% { opacity: 1; }
-  100% { opacity: 0; transform: translateY(-4px); }
-}
-
-.wx-info {
+.wx-card {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--bg-hover), color-mix(in srgb, var(--el-color-primary) 8%, var(--bg-hover)));
+  border: 1px solid var(--border);
+  transition: opacity 0.2s;
+}
+
+.wx-card.wx-loading {
+  opacity: 0.6;
+}
+
+.wx-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .wx-city {
@@ -252,25 +177,60 @@ watch(
   text-overflow: ellipsis;
 }
 
-.wx-line {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.wx-temp {
-  font-weight: 600;
-}
-
 .wx-desc {
-  color: var(--el-text-color-secondary);
+  font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.wx-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wx-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.wx-temp {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.5px;
+}
+
+.wx-aqi {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 8px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.wx-fallback {
+  font-size: 12px;
+}
+
+.aqi-none { background: var(--text-muted); }
+.aqi-good { background: #52c41a; }
+.aqi-moderate { background: #d4b106; }
+.aqi-light { background: #fa8c16; }
+.aqi-mid { background: #f5222d; }
+.aqi-heavy { background: #a8071a; }
+.aqi-severe { background: #531dab; }
+
+.wx-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
 .muted {
-  color: var(--el-text-color-secondary);
+  color: var(--text-muted);
 }
 </style>

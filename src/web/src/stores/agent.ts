@@ -65,6 +65,10 @@ export const useAgentStore = defineStore('agent', () => {
   const activeSubagents = ref<string[]>([])
   /** 最近一次运行的用量 */
   const lastUsage = ref<{ tokens_in: number; tokens_out: number }>({ tokens_in: 0, tokens_out: 0 })
+  /** v1028：当前项目 token 使用量 + 会话数（会话框头部展示） */
+  const usage = ref<{ session_count: number; tokens_total: number }>({ session_count: 0, tokens_total: 0 })
+  /** v1028：运行中「添加到队列」的待发消息（run.end 后自动发送首条） */
+  const queued = ref<{ content: string; modelRef?: string }[]>([])
 
   let sseClient: SseClient | null = null
   let currentRunId: string | null = null
@@ -78,10 +82,9 @@ export const useAgentStore = defineStore('agent', () => {
     error.value = null
     try {
       sessions.value = await agentApi.listSessions(novelId)
-      // 自动选中第一个会话（没有则不选，由 UI 提供新建入口）
-      if (sessions.value.length > 0 && !sessions.value.some((s) => s.id === currentSessionId.value)) {
-        await selectSession(sessions.value[0].id)
-      } else if (sessions.value.length === 0) {
+      await loadUsage(novelId)
+      // v1028：会话记录列表默认不选中任何会话（点击记录才进入），最多展示 50 条
+      if (sessions.value.length === 0) {
         currentSessionId.value = null
         messages.value = []
       }
@@ -92,10 +95,55 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  /** v1028：轻量刷新会话列表（不改变当前选中，run 结束后更新标题/排序） */
+  async function refreshSessionsLight(): Promise<void> {
+    const novelId = currentSession.value?.project_id
+    if (!novelId) return
+    try {
+      sessions.value = await agentApi.listSessions(novelId)
+    } catch {
+      /* 忽略：下一轮轮询/切换会再取 */
+    }
+  }
+
+  /** v1028：当前小说项目的会话数量与累计 token 使用量 */
+  async function loadUsage(novelId?: string | null): Promise<void> {
+    const id = novelId ?? (currentSession.value?.project_id ?? null)
+    if (!id) return
+    try {
+      const u = await agentApi.usage(id)
+      usage.value = { session_count: u.session_count, tokens_total: u.tokens_total }
+    } catch {
+      /* 用量读取失败不阻断会话 */
+    }
+  }
+
+  /** v1028：运行中「添加到队列」 */
+  function queueMessage(content: string, modelRef?: string): void {
+    queued.value = [...queued.value, { content, modelRef }]
+  }
+
+  function clearQueue(): void {
+    queued.value = []
+  }
+
+  function backToList(): void {
+    stopStream()
+    currentSessionId.value = null
+    messages.value = []
+    pendingInterrupt.value = null
+    pendingConsult.value = null
+    streaming.value = []
+    todos.value = []
+    gateStage.value = null
+    gateResults.value = {}
+  }
+
   async function createSession(novelId: string, title?: string, modelRef?: string): Promise<AgentSessionDto> {
     const sess = await agentApi.createSession({ novel_id: novelId, title, model_ref: modelRef })
     sessions.value.unshift(sess)
     await selectSession(sess.id)
+    await loadUsage(novelId)
     return sess
   }
 
@@ -222,6 +270,15 @@ export const useAgentStore = defineStore('agent', () => {
         // run.end 后收尾：把流式消息合入正式列表
         running.value = false
         void refreshMessages()
+        // v1028：run 结束后自动发送队列中的首条消息（「添加到队列」）
+        if (queued.value.length) {
+          const next = queued.value[0]
+          queued.value = queued.value.slice(1)
+          void sendMessage(next.content, next.modelRef)
+        }
+        // 会话标题/用量随运行结束刷新（首问总结、token 累计）
+        void loadUsage()
+        void refreshSessionsLight()
       },
     })
     sseClient.connect()
@@ -380,6 +437,21 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  /** v1028：运行中「通过消息引导发送」——把引导文本注入正在跑的 run */
+  async function steerCurrentRun(content: string): Promise<void> {
+    if (!currentRunId || !running.value) {
+      // 无进行中的 run → 回落为普通发送
+      await sendMessage(content)
+      return
+    }
+    try {
+      await agentApi.steerRun(currentRunId, content)
+    } catch (err) {
+      error.value = errorMessage(err)
+      throw err
+    }
+  }
+
   function stopStream(): void {
     sseClient?.close()
     sseClient = null
@@ -410,9 +482,16 @@ export const useAgentStore = defineStore('agent', () => {
     gateResults,
     activeSubagents,
     lastUsage,
+    usage,
+    queued,
     loadSessions,
+    loadUsage,
+    refreshSessionsLight,
     createSession,
     selectSession,
+    backToList,
+    queueMessage,
+    clearQueue,
     refreshMessages,
     renameSession,
     deleteSession,
@@ -423,6 +502,7 @@ export const useAgentStore = defineStore('agent', () => {
     resolveInterrupt,
     resolveConsult,
     cancelRun,
+    steerCurrentRun,
     stopStream,
     clearFileChanged,
   }

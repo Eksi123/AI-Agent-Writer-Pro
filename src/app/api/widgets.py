@@ -44,15 +44,23 @@ async def widget_weather(
     latitude: float | None = Query(default=None, ge=-90, le=90),
     longitude: float | None = Query(default=None, ge=-180, le=180),
     city: str | None = Query(default=None, max_length=60),
+    refresh: bool = Query(default=False, description="v1028：跳过缓存取实时数据"),
 ) -> dict:
-    """组件天气：优先坐标（浏览器定位）→ 反向地理编码取城市名；否则按城市名；都无则回落设置城市。"""
+    """组件天气：优先坐标（浏览器定位）→ 反向地理编码取城市名；否则按城市名；都无则回落设置城市。
+
+    `refresh=true`（前端页面刷新时传）→ 跳过缓存，天气/温度/空气质量均取实时值。
+    """
     if latitude is not None and longitude is not None:
         located = await weather_service.reverse_geocode(latitude, longitude)
         label = (located or {}).get("city") or city or await _fallback_city(session)
-        return ok(await weather_service.current_weather_by_coords(latitude, longitude, city_label=label))
+        return ok(
+            await weather_service.current_weather_by_coords(
+                latitude, longitude, city_label=label, force_refresh=refresh
+            )
+        )
 
     target = (city or "").strip() or await _fallback_city(session)
-    return ok(await weather_service.current_weather(target))
+    return ok(await weather_service.current_weather(target, force_refresh=refresh))
 
 
 @router.get("/widgets/city")

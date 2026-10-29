@@ -36,7 +36,7 @@ def build_weather_server() -> MCPServer:
         instructions="免费开源天气服务（Open-Meteo）：当前天气与多日预报，支持中文城市名。",
     )
 
-    @server.tool(name="get_current_weather", description="查询指定城市的当前天气（温度/体感/湿度/风速/天气状况）。")
+    @server.tool(name="get_current_weather", description="查询指定城市的当前天气（温度/体感/湿度/风速/天气状况/空气质量 AQI）。")
     async def get_current_weather(city: str) -> str:
         """city: 城市名（中文或英文，如「杭州」「Beijing」）。"""
         from app.services import weather
@@ -68,7 +68,7 @@ def build_weather_server() -> MCPServer:
 
 @tool("get_current_weather", parse_docstring=True)
 async def get_current_weather_tool(city: str) -> str:
-    """查询指定城市的当前天气（温度/体感/湿度/风速/天气状况）。
+    """查询指定城市的当前天气（温度/体感/湿度/风速/天气状况/空气质量 AQI）。
 
     Args:
         city: 城市名（中文或英文，如「杭州」「Beijing」）。

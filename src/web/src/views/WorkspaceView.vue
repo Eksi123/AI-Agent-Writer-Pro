@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * 工作台（三栏主界面）：
- *   左栏 = 项目列表（+ 设置 / AI 工具入口）
- *   中栏 = 阅读模式（目录 + 正文/大纲） / 编辑模式（【正文】【卷章】两页签，大纲经目录「大纲」节点编辑）
+ *   左栏 = 项目列表（+ 设置 / AI 设置入口）
+ *   中栏 = 阅读模式（正文/大纲） / 编辑模式（【正文】【卷章】两页签，大纲经目录「大纲」节点编辑）
+ *          ★v1028：目录不放在最上面；无小说项目时不展示目录，有项目时浮在阅读区域左上角，可点击展开收起
  *   右栏 = Agent 面板（可收起）
  */
 import { computed, onMounted, ref, watch } from 'vue'
@@ -47,9 +48,7 @@ const editingOutline = computed(() => reader.mode === 'edit' && reader.activeOut
 
 onMounted(async () => {
   await settingsStore.load()
-  await project.loadNovels()
-  // 默认选中第一个项目
-  if (project.novels.length) await project.selectNovel(project.novels[0].id)
+  // v1028：项目列表加载与「默认选中上次打开的项目」由 ProjectList 统一负责（含 localStorage 记忆）
 })
 
 // 目录里点章：阅读模式直接渲染，编辑模式同时载入正文到编辑器
@@ -138,17 +137,18 @@ window.addEventListener('beforeunload', (e) => {
 
     <!-- 中栏 -->
     <main class="main-panel">
-      <ReaderToolbar @toggle-agent="agentOpen = !agentOpen" />
+      <ReaderToolbar :agent-open="agentOpen" @toggle-agent="agentOpen = !agentOpen" />
 
+      <!-- v1028：没有小说项目时不展示目录，提示文案改为「点击「新建小说」开始创作」 -->
       <div v-if="!hasNovel" class="empty-state">
         <el-empty :description="t('sidebar.noProjects')" />
       </div>
 
       <div v-else class="main-body">
-        <!-- 目录抽屉（顶端固定「大纲」节点） -->
-        <TocDrawer v-if="reader.tocOpen" />
-
         <div class="content-area flex-fill">
+          <!-- v1028：目录浮在阅读区域左上角，点击可展开收起 -->
+          <TocDrawer />
+
           <!-- 阅读模式 -->
           <template v-if="reader.mode === 'read'">
             <OutlineReader v-if="reader.activeOutline || !reader.activeChapterId" />
@@ -203,6 +203,8 @@ window.addEventListener('beforeunload', (e) => {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  /* v1028：目录悬浮层的定位上下文 */
+  position: relative;
 }
 
 .empty-state {

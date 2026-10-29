@@ -4,7 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
  * 路由（M0 迁移：hash → history，单体部署由后端 SPA 回落承接）。
  * - `/`          工作台（三栏主界面 WorkspaceView）
  * - `/settings`  通用设置（SettingsView）
- * - `/ai-tools`  AI 工具（Provider/Model/子代理/技能/MCP，AiToolsView）
+ * - `/ai-tools`  AI 设置（v1028 更名：大模型/子代理/技能，AiSettingsView）
  */
 export const router = createRouter({
   history: createWebHistory(),
@@ -24,8 +24,8 @@ export const router = createRouter({
     {
       path: '/ai-tools',
       name: 'ai-tools',
-      component: () => import('@/views/AiToolsView.vue'),
-      meta: { title: 'AI 工具' },
+      component: () => import('@/views/AiSettingsView.vue'),
+      meta: { title: 'AI 设置' },
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

@@ -247,6 +247,8 @@ async def reset_builtin(session: AsyncSession, pk: str) -> dict[str, Any]:
     row.system_prompt = spec["system_prompt"]
     row.mode = spec.get("mode", "isolated")
     row.skills_json = json.dumps(spec.get("skills") or [], ensure_ascii=False)
+    #: v1028：恢复默认时一并清除自定义工具勾选
+    row.tools_json = None
     row.model_ref = None
     row.enabled = True
     row.updated_at = utcnow()

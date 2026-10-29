@@ -39,6 +39,7 @@ from app.agent.loop.context import AgentContext
 from app.agent.loop.middleware import (
     FileChangeNotifyMiddleware,
     RecapInjectionMiddleware,
+    SteerInjectionMiddleware,
     WorkspaceGuardMiddleware,
     WriteApprovalMiddleware,
 )
@@ -83,6 +84,7 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
                 "system_prompt": spec["system_prompt"],
                 "mode": spec.get("mode", "isolated"),
                 "skills": list(spec.get("skills") or []),
+                "tools": [],
                 "model_ref": None,
             }
             for name, spec in BUILTIN_SUBAGENTS.items()
@@ -102,6 +104,8 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
                 "system_prompt": row.system_prompt or BUILTIN_SUBAGENTS.get(row.name, {}).get("system_prompt", ""),
                 "mode": mode,
                 "skills": skills,
+                #: v1028：多选的内置工具名（read_file/edit_file/ls/grep/glob/web_search）
+                "tools": _loads_list(row.tools_json),
                 "model_ref": row.model_ref,
             }
         )
@@ -118,10 +122,35 @@ def _loads_list(raw: str | None) -> list[str]:
     return [str(x) for x in value] if isinstance(value, list) else []
 
 
+#: v1028：子代理可选的内置工具。键为 UI 展示名（read/edit/list/grep/glob/web_search），
+#: 值为 deepagents FilesystemMiddleware 的工具名（web_search 走自研 registry，不在 fs 工具内）。
+_FS_TOOL_ALIASES = {
+    "read_file": "read_file",
+    "read": "read_file",
+    "edit_file": "edit_file",
+    "edit": "edit_file",
+    "ls": "ls",
+    "list": "ls",
+    "grep": "grep",
+    "glob": "glob",
+    "web_search": "web_search",
+    "web_serach": "web_search",  # 容错：文档里的拼写
+}
+
+
 def build_subagents_from_specs(
-    specs: list[dict[str, Any]], resolved_models: dict[str, BaseChatModel]
+    specs: list[dict[str, Any]],
+    resolved_models: dict[str, BaseChatModel],
+    *,
+    backend: Any = None,
+    permissions: Any = None,
 ) -> list[Any]:
-    """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。"""
+    """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
+
+    v1028：`spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search）。
+    非空时把子代理的工具集收窄为这些工具——文件类工具经
+    `FilesystemMiddleware(tools=[...])` 限定，`web_search` 直接给工具实例。
+    """
     result: list[Any] = []
     for spec in specs:
         agent: dict[str, Any] = {
@@ -132,6 +161,26 @@ def build_subagents_from_specs(
         }
         if spec["skills"]:
             agent["skills"] = spec["skills"]
+
+        selected = _resolve_selected_tools(spec.get("tools") or [])
+        fs_tools = selected["fs"]
+        extra_tools = selected["extra"]
+        if selected["selected"]:
+            # 显式勾选 → 收窄工具集：文件类工具经 FilesystemMiddleware(tools=[...]) 限定
+            # （deepagents 按中间件 name 原位替换基座 FilesystemMiddleware）。
+            # read_file 是 deepagents 强制要求的最小集。
+            agent["tools"] = list(extra_tools)
+            if backend is not None:
+                try:
+                    from deepagents.middleware.filesystem import FilesystemMiddleware
+
+                    restricted = list(fs_tools) or ["read_file"]
+                    agent["middleware"] = [
+                        FilesystemMiddleware(backend=backend, tools=restricted, _permissions=permissions)
+                    ]
+                except Exception as exc:  # pragma: no cover - deepagents 版本差异兜底
+                    logger.warning("subagent_fs_middleware_failed", name=spec["name"], error=str(exc))
+
         ref = spec.get("model_ref")
         if ref:
             chat_model = resolved_models.get(ref)
@@ -141,6 +190,43 @@ def build_subagents_from_specs(
                 logger.warning("subagent_model_unresolved", name=spec["name"], model_ref=ref)
         result.append(agent)
     return result
+
+
+def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
+    """把勾选的工具名解析为「文件工具名列表 + 非文件工具实例列表 + 是否有显式勾选」。
+
+    ★deepagents 要求 FilesystemMiddleware 的 tools 必含 `read_file`，故勾选了任何
+    文件工具时自动补上 read_file。
+    """
+    fs: list[str] = []
+    want_web_search = False
+    selected = False
+    for raw in names:
+        key = (raw or "").strip()
+        if not key:
+            continue
+        real = _FS_TOOL_ALIASES.get(key)
+        if real is None:
+            logger.warning("subagent_tool_unknown", tool=raw)
+            continue
+        selected = True
+        if real == "web_search":
+            want_web_search = True
+        elif real not in fs:
+            fs.append(real)
+
+    if fs and "read_file" not in fs:
+        fs.insert(0, "read_file")
+
+    extra: list[Any] = []
+    if want_web_search:
+        try:
+            from app.agent.tools.web_search import web_search
+
+            extra.append(web_search)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("web_search_tool_unavailable", error=str(exc))
+    return {"fs": fs, "extra": extra, "selected": selected}
 
 
 async def resolve_subagent_models(
@@ -176,6 +262,7 @@ def build_middleware_stack(
     primary_model: BaseChatModel,
     fallback_models: list[BaseChatModel],
     recap_provider: Any = None,
+    steer_provider: Any = None,
     model_call_limit: int = DEFAULT_MODEL_CALL_LIMIT,
     write_approval_enabled: bool = True,
     max_context: int | None = None,
@@ -184,7 +271,7 @@ def build_middleware_stack(
 
     顺序（不可随意调换）：
     ModelRetry → ModelFallback → ModelCallLimit → TodoList
-    → RecapInjection → WorkspaceGuard → FileChangeNotify → WriteApproval
+    → RecapInjection → SteerInjection → WorkspaceGuard → FileChangeNotify → WriteApproval
     """
     stack: list[Any] = []
 
@@ -223,6 +310,7 @@ def build_middleware_stack(
 
     # ⑥~⑨ 自定义中间件
     stack.append(RecapInjectionMiddleware(recap_provider=recap_provider))
+    stack.append(SteerInjectionMiddleware(steer_provider=steer_provider))
     stack.append(WorkspaceGuardMiddleware())
     stack.append(FileChangeNotifyMiddleware())
     stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
@@ -247,6 +335,16 @@ def _build_summarization(model: BaseChatModel, *, max_context: int | None) -> An
     except Exception as exc:  # pragma: no cover
         logger.warning("summarization_fallback_unavailable", error=str(exc))
         return None
+
+
+def _steer_provider(run_id: str) -> list[str]:
+    """v1028：取出该 run 的用户引导消息（「通过消息引导发送」）。
+
+    经 `run_manager` 的 run 级队列中转；builder 不持有状态，避免并发 run 串数据。
+    """
+    from app.agent.loop.runner import run_manager
+
+    return run_manager.take_steer(run_id)
 
 
 async def build_agent(
@@ -311,12 +409,13 @@ async def build_agent(
         if subagent_names:
             specs = [s for s in specs if s["name"] in subagent_names]
         resolved = await resolve_subagent_models(session, {s["model_ref"] for s in specs if s.get("model_ref")})
-        subagents = build_subagents_from_specs(specs, resolved)
+        subagents = build_subagents_from_specs(specs, resolved, backend=backend, permissions=permissions)
 
     middleware_stack = build_middleware_stack(
         primary_model=model,
         fallback_models=fallback_models or [],
         recap_provider=recap_provider,
+        steer_provider=_steer_provider,
         write_approval_enabled=write_approval_enabled,
         model_call_limit=get_settings().agent_model_call_limit,
     )

@@ -171,6 +171,39 @@ class TestWeatherService:
         assert data["days"][1]["description"] == "中雨"
         assert data["days"][1]["temp_max"] == 20
 
+    async def test_current_weather_includes_aqi(self, fake_http):
+        """v1028：天气数据带空气质量（us_aqi + 中文等级）。"""
+        fake_http.registry["air-quality-api"] = {
+            "current": {"us_aqi": 42, "pm2_5": 12.5, "pm10": 20.0, "time": "t"}
+        }
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 20, "weather_code": 0, "time": "t"}
+        }
+        data = await weather.current_weather_by_coords(30.25, 120.17, city_label="杭州")
+        assert data["aqi"] == 42
+        assert data["aqi_level"] == "优"
+
+    async def test_aqi_failure_does_not_break_weather(self, fake_http):
+        """v1028：空气质量接口异常时天气主数据照常返回（aqi 为空）。"""
+        import httpx
+
+        fake_http.registry["air-quality-api"] = httpx.ConnectError("AQI 不可达")
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 18, "weather_code": 2, "time": "t"}
+        }
+        data = await weather.current_weather_by_coords(31.2, 121.5)
+        assert data["temperature"] == 18
+        assert data["aqi"] is None
+
+    def test_aqi_level_scale(self):
+        assert weather.aqi_level(None) == ""
+        assert weather.aqi_level(50) == "优"
+        assert weather.aqi_level(100) == "良"
+        assert weather.aqi_level(150) == "轻度污染"
+        assert weather.aqi_level(200) == "中度污染"
+        assert weather.aqi_level(300) == "重度污染"
+        assert weather.aqi_level(500) == "严重污染"
+
     def test_describe_weathercode(self):
         assert weather.describe_weathercode(0) == ("晴", "☀️")
         assert weather.describe_weathercode(95) == ("雷暴", "⛈️")

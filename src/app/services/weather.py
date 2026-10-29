@@ -27,6 +27,7 @@ logger = get_logger(__name__)
 
 _GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+_AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 _TIMEOUT = 10.0
 _CACHE_TTL_SEC = 600  # 天气缓存 10 分钟（组件轮询友好）
 
@@ -153,18 +154,23 @@ async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any] |
     return out
 
 
-async def current_weather(city: str) -> dict[str, Any]:
+async def current_weather(city: str, *, force_refresh: bool = False) -> dict[str, Any]:
     """按城市名取当前天气（geocode → forecast）。"""
     geo = await geocode(city)
-    return await current_weather_by_coords(geo["latitude"], geo["longitude"], city_label=geo["city"])
+    return await current_weather_by_coords(
+        geo["latitude"], geo["longitude"], city_label=geo["city"], force_refresh=force_refresh
+    )
 
 
 async def current_weather_by_coords(
-    latitude: float, longitude: float, *, city_label: str = ""
+    latitude: float, longitude: float, *, city_label: str = "", force_refresh: bool = False
 ) -> dict[str, Any]:
-    """按坐标取当前天气。"""
+    """按坐标取当前天气（含空气质量 AQI；AQI 失败不影响天气主数据）。
+
+    `force_refresh=True` 时跳过缓存，保证「刷新页面即取实时数据」。
+    """
     key = f"cw:{round(latitude, 2)}:{round(longitude, 2)}"
-    cached = _cache_get(key)
+    cached = None if force_refresh else _cache_get(key)
     if cached is not None:
         return cached
 
@@ -188,6 +194,7 @@ async def current_weather_by_coords(
 
     current = payload.get("current") or {}
     desc, icon = describe_weathercode(current.get("weather_code"))
+    aqi = await air_quality(latitude, longitude, force_refresh=force_refresh)
     out = {
         "city": city_label,
         "latitude": latitude,
@@ -199,6 +206,68 @@ async def current_weather_by_coords(
         "weather_code": current.get("weather_code"),
         "description": desc,
         "icon": icon,
+        "observed_at": current.get("time"),
+        "aqi": aqi.get("aqi"),
+        "aqi_level": aqi.get("level"),
+    }
+    _cache_set(key, out)
+    return out
+
+
+#: 中国 AQI 分级：(上限, 等级, 颜色语义) —— HJ 633-2012 六级
+_AQI_LEVELS = (
+    (50, "优"),
+    (100, "良"),
+    (150, "轻度污染"),
+    (200, "中度污染"),
+    (300, "重度污染"),
+)
+
+
+def aqi_level(aqi: int | None) -> str:
+    """AQI 数值 → 中文等级（优/良/轻度污染…）。None 返回空串。"""
+    if aqi is None:
+        return ""
+    for upper, level in _AQI_LEVELS:
+        if aqi <= upper:
+            return level
+    return "严重污染"
+
+
+async def air_quality(latitude: float, longitude: float, *, force_refresh: bool = False) -> dict[str, Any]:
+    """按坐标取当前空气质量（Open-Meteo Air Quality，us_aqi）。
+
+    失败返回空 dict（空气质量是增强信息，不阻断天气主流程）。
+    """
+    key = f"aq:{round(latitude, 2)}:{round(longitude, 2)}"
+    cached = None if force_refresh else _cache_get(key)
+    if cached is not None:
+        return cached
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                _AIR_QUALITY_URL,
+                params={
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "current": "us_aqi,pm2_5,pm10",
+                    "timezone": "auto",
+                },
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as exc:  # 空气质量是增强信息：任何失败都不阻断天气主数据
+        logger.info("air_quality_failed", error=str(exc))
+        return {}
+
+    current = payload.get("current") or {}
+    aqi_value = current.get("us_aqi")
+    aqi_int = int(round(aqi_value)) if aqi_value is not None else None
+    out = {
+        "aqi": aqi_int,
+        "level": aqi_level(aqi_int),
+        "pm2_5": current.get("pm2_5"),
+        "pm10": current.get("pm10"),
         "observed_at": current.get("time"),
     }
     _cache_set(key, out)

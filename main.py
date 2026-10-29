@@ -12,7 +12,9 @@
         python main.py --backend-only  # 只启动后端
         python main.py --frontend-only # 只启动前端（需后端已在 8000 运行）
         python main.py --port 9000     # 指定后端端口（前端代理自动跟随）
+        python main.py --no-browser    # 启动后不自动打开浏览器
 
+    ★默认在端口就绪后用系统默认浏览器**主动打开前端页面**（单体模式打开后端同源页面）。
     Ctrl+C 同时优雅停止两个进程。
 """
 
@@ -24,6 +26,8 @@ import signal
 import subprocess
 import sys
 import time
+import threading
+import webbrowser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -35,6 +39,27 @@ FRONTEND_PORT = 5173
 
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+def _open_browser(url: str, port: int, *, timeout: float = 40.0) -> None:
+    """等端口就绪后用系统默认浏览器打开页面（后台线程，不阻塞启动流程）。
+
+    端口迟迟未就绪则放弃打开，只打印提示——不因为浏览器问题影响服务启动。
+    """
+
+    def _worker() -> None:
+        if _wait_port(port, timeout=timeout):
+            try:
+                if webbrowser.open(url, new=2):
+                    print(f"[main] 已在浏览器打开 → {url}")
+                    return
+            except Exception as exc:  # 无 GUI / 浏览器未注册
+                print(f"[main] ⚠ 打开浏览器失败：{exc}")
+        else:
+            print(f"[main] ⚠ {url} 端口 {timeout:.0f}s 内未就绪，未自动打开浏览器")
+        print(f"[main] 可手动访问 → {url}")
+
+    threading.Thread(target=_worker, name="open-browser", daemon=True).start()
 
 
 def _has_uv() -> bool:
@@ -149,7 +174,7 @@ def _terminate(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def run_dev(backend_port: int) -> int:
+def run_dev(backend_port: int, *, open_browser: bool = True) -> int:
     """开发模式：后端（reload）+ 前端（Vite HMR）双进程。"""
     print(f"[main] 后端  → http://{BACKEND_HOST}:{backend_port}  (API 文档 /api/docs)")
     backend = _spawn(_backend_cmd(backend_port, prod=False), ROOT, extra_env=_backend_env())
@@ -165,6 +190,10 @@ def run_dev(backend_port: int) -> int:
     frontend_env = {"VITE_BACKEND": f"http://{BACKEND_HOST}:{backend_port}"}
     print(f"[main] 前端  → http://localhost:{FRONTEND_PORT}  (Ctrl+C 同时停止两端)")
     frontend = _spawn(_frontend_cmd(), WEB_DIR, extra_env=frontend_env)
+
+    # ★Vite dev server 就绪后主动打开前端页面
+    if open_browser:
+        _open_browser(f"http://localhost:{FRONTEND_PORT}", FRONTEND_PORT)
 
     try:
         while True:
@@ -183,7 +212,7 @@ def run_dev(backend_port: int) -> int:
     return 0
 
 
-def run_prod(backend_port: int) -> int:
+def run_prod(backend_port: int, *, open_browser: bool = True) -> int:
     """单体模式：前端产物由 FastAPI 挂载，只开后端一个端口。"""
     dist = WEB_DIR / "dist"
     if not dist.is_dir():
@@ -202,6 +231,11 @@ def run_prod(backend_port: int) -> int:
             return 1
     print(f"[main] 单体模式 → http://{BACKEND_HOST}:{backend_port}  (Ctrl+C 停止)")
     backend = _spawn(_backend_cmd(backend_port, prod=True), ROOT, extra_env=_backend_env())
+
+    # ★单体模式下前端由后端同源挂载，直接打开后端地址
+    if open_browser:
+        _open_browser(f"http://{BACKEND_HOST}:{backend_port}", backend_port)
+
     try:
         return backend.wait()
     except KeyboardInterrupt:
@@ -210,9 +244,11 @@ def run_prod(backend_port: int) -> int:
         return 0
 
 
-def run_backend_only(backend_port: int) -> int:
+def run_backend_only(backend_port: int, *, open_browser: bool = True) -> int:
     backend = _spawn(_backend_cmd(backend_port, prod=False), ROOT, extra_env=_backend_env())
     print(f"[main] 仅后端 → http://{BACKEND_HOST}:{backend_port}")
+    if open_browser:
+        _open_browser(f"http://{BACKEND_HOST}:{backend_port}", backend_port)
     try:
         return backend.wait()
     except KeyboardInterrupt:
@@ -220,7 +256,7 @@ def run_backend_only(backend_port: int) -> int:
         return 0
 
 
-def run_frontend_only(backend_port: int) -> int:
+def run_frontend_only(backend_port: int, *, open_browser: bool = True) -> int:
     if not _ensure_frontend_deps():
         return 1
     frontend = _spawn(
@@ -228,6 +264,8 @@ def run_frontend_only(backend_port: int) -> int:
         extra_env={"VITE_BACKEND": f"http://{BACKEND_HOST}:{backend_port}"},
     )
     print(f"[main] 仅前端 → http://localhost:{FRONTEND_PORT}（代理到 {backend_port}）")
+    if open_browser:
+        _open_browser(f"http://localhost:{FRONTEND_PORT}", FRONTEND_PORT)
     try:
         return frontend.wait()
     except KeyboardInterrupt:
@@ -238,19 +276,26 @@ def run_frontend_only(backend_port: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI Writer Pro 本地调试启动器")
     parser.add_argument("--port", type=int, default=DEFAULT_BACKEND_PORT, help="后端端口（默认 8000）")
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="启动后不自动打开浏览器（默认会在端口就绪后用系统默认浏览器打开前端页面）",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prod", action="store_true", help="单体模式（构建前端 + 只开后端）")
     mode.add_argument("--backend-only", action="store_true", help="只启动后端")
     mode.add_argument("--frontend-only", action="store_true", help="只启动前端（需后端已运行）")
     args = parser.parse_args()
 
+    open_browser = not args.no_browser
+
     if args.frontend_only:
-        return run_frontend_only(args.port)
+        return run_frontend_only(args.port, open_browser=open_browser)
     if args.backend_only:
-        return run_backend_only(args.port)
+        return run_backend_only(args.port, open_browser=open_browser)
     if args.prod:
-        return run_prod(args.port)
-    return run_dev(args.port)
+        return run_prod(args.port, open_browser=open_browser)
+    return run_dev(args.port, open_browser=open_browser)
 
 
 if __name__ == "__main__":

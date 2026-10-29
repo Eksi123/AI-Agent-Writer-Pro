@@ -1,46 +1,102 @@
 <script setup lang="ts">
 /**
- * 通用设置页：主题色（含暗色）/ 字号 / 字体 / 阅读页宽 / 自动保存间隔 / 回落城市 / 宠物阈值。
- * 全部持久化到后端 `user_settings` 单行表。
- *
- * 注：本项目**不设「每日目标字数」**，故无该设置项（手册「三、(3)」）。
+ * 通用设置页（v1028 重构）：
+ *   外观：主题（深色 / 浅色 / 护眼）、正文字号、字体
+ *   编辑：自动保存间隔（10~60 秒）
+ * 已删除：主题色、阅读页宽、动态组件设置、AI 工具入口、运行状态。
+ * 左上角仅返回箭头；「保存」与「恢复默认设置」位于所有设置项下方。
  */
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSettingsStore } from '@/stores/settings'
 import { errorMessage } from '@/api/http'
 import { t } from '@/i18n'
+import type { UserSettings } from '@/types'
 
 const router = useRouter()
 const store = useSettingsStore()
 const saving = ref(false)
-const form = reactive({ ...store.settings })
+const resetting = ref(false)
+const form = reactive<Pick<UserSettings, 'theme' | 'font_size' | 'font_family' | 'autosave_interval_sec'>>({
+  theme: 'light',
+  font_size: 18,
+  font_family: 'serif',
+  autosave_interval_sec: 30,
+})
+
+/** 字体候选：只用开源免费字体 */
+const FONT_OPTIONS = [
+  { value: 'serif', label: t('settings.fontSerif'), css: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif' },
+  { value: 'hei', label: t('settings.fontHei'), css: '"Source Han Sans SC", "Noto Sans SC", "Heiti SC", "SimHei", sans-serif' },
+  { value: 'kai', label: t('settings.fontKai'), css: '"LXGW WenKai", "Kaiti SC", "KaiTi", "STKaiti", serif' },
+  { value: 'system', label: t('settings.fontSystem'), css: 'system-ui, "Microsoft YaHei", sans-serif' },
+]
+
+function syncForm(): void {
+  // 旧数据的 system 主题按浅色呈现
+  const th = store.settings.theme
+  form.theme = th === 'dark' || th === 'eye' ? th : 'light'
+  form.font_size = store.settings.font_size
+  form.font_family = store.settings.font_family
+  form.autosave_interval_sec = store.settings.autosave_interval_sec
+}
 
 onMounted(async () => {
   if (!store.loaded) await store.load()
-  Object.assign(form, store.settings)
+  syncForm()
 })
+
+/** 未保存时也让主题/字号即时生效（选择不同主题整个应用背景随之改变）；点「保存」才持久化 */
+function preview(): void {
+  store.preview({
+    theme: form.theme,
+    font_size: form.font_size,
+    font_family: form.font_family,
+    autosave_interval_sec: form.autosave_interval_sec,
+  })
+}
 
 async function save(): Promise<void> {
   saving.value = true
   try {
     await store.save({
       theme: form.theme,
-      primary_color: form.primary_color,
       font_size: form.font_size,
       font_family: form.font_family,
-      reading_width: form.reading_width,
       autosave_interval_sec: form.autosave_interval_sec,
-      city: form.city,
-      pet_idle_minutes: form.pet_idle_minutes,
     })
-    Object.assign(form, store.settings)
+    syncForm()
     ElMessage.success(t('settings.saved'))
   } catch (err) {
+    // 保存失败 → 回滚本地预览，避免界面与后端不一致
+    store.revert()
+    syncForm()
     ElMessage.error(errorMessage(err))
   } finally {
     saving.value = false
+  }
+}
+
+async function resetDefaults(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(t('settings.resetConfirm'), t('settings.resetConfirmTitle'), {
+      type: 'warning',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel'),
+    })
+  } catch {
+    return
+  }
+  resetting.value = true
+  try {
+    await store.reset()
+    syncForm()
+    ElMessage.success(t('settings.resetDone'))
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+  } finally {
+    resetting.value = false
   }
 }
 
@@ -51,93 +107,89 @@ function back(): void {
 
 <template>
   <div class="settings-view">
-    <div class="settings-head row-between">
-      <div class="row">
-        <el-button text @click="back">‹ {{ t('settings.back') }}</el-button>
-        <strong>{{ t('settings.title') }}</strong>
-      </div>
-      <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
+    <!-- v1028：左上角只要返回箭头 -->
+    <div class="settings-head">
+      <el-button text class="back-btn" :title="t('settings.back')" @click="back">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+          <path d="M15.4 4.6a1 1 0 0 0-1.4 0l-6.7 6.7a1 1 0 0 0 0 1.4l6.7 6.7a1 1 0 0 0 1.4-1.4L9.4 12l6-6a1 1 0 0 0 0-1.4z" />
+        </svg>
+      </el-button>
     </div>
 
     <div class="settings-body scroll-y">
-      <el-form :model="form" label-width="180px" class="form">
-        <el-divider content-position="left">外观</el-divider>
+      <el-form :model="form" label-width="150px" class="form">
+        <el-divider content-position="left">{{ t('settings.appearance') }}</el-divider>
 
         <el-form-item :label="t('settings.theme')">
-          <el-radio-group v-model="form.theme">
+          <el-radio-group v-model="form.theme" @change="preview">
             <el-radio value="light">{{ t('settings.themeLight') }}</el-radio>
             <el-radio value="dark">{{ t('settings.themeDark') }}</el-radio>
-            <el-radio value="system">{{ t('settings.themeSystem') }}</el-radio>
+            <el-radio value="eye">{{ t('settings.themeEye') }}</el-radio>
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item :label="t('settings.primaryColor')">
-          <el-color-picker v-model="form.primary_color" />
-          <span class="muted text-sm preview-text" :style="{ color: form.primary_color }">
-            预览文字
-          </span>
-        </el-form-item>
-
         <el-form-item :label="t('settings.fontSize')">
-          <el-slider v-model="form.font_size" :min="12" :max="32" show-input size="small" />
+          <!-- v1028：合理范围（14~28），不会太小也不会太大 -->
+          <el-slider
+            v-model="form.font_size"
+            :min="14"
+            :max="28"
+            :step="1"
+            show-input
+            size="small"
+            class="font-slider"
+            @change="preview"
+          />
         </el-form-item>
 
         <el-form-item :label="t('settings.fontFamily')">
-          <el-select v-model="form.font_family">
-            <el-option label="宋体" value="serif" />
-            <el-option label="黑体" value="hei" />
-            <el-option label="楷体" value="kai" />
-            <el-option label="系统默认" value="system" />
+          <el-select v-model="form.font_family" class="font-select" @change="preview">
+            <el-option
+              v-for="f in FONT_OPTIONS"
+              :key="f.value"
+              :label="f.label"
+              :value="f.value"
+            >
+              <span :style="{ fontFamily: f.css }">{{ f.label }}</span>
+            </el-option>
           </el-select>
+          <!-- 预览：修改字号/字体后，阅读与编辑模式的小说显示随之改变 -->
+          <div
+            class="font-preview"
+            :style="{
+              fontFamily: FONT_OPTIONS.find((f) => f.value === form.font_family)?.css,
+              fontSize: `${form.font_size}px`,
+            }"
+          >
+            星海拾荒人 · 预览
+          </div>
         </el-form-item>
 
-        <el-form-item :label="t('settings.readingWidth')">
-          <el-slider v-model="form.reading_width" :min="24" :max="70" show-input size="small" />
-        </el-form-item>
-
-        <el-divider content-position="left">编辑</el-divider>
+        <el-divider content-position="left">{{ t('settings.editing') }}</el-divider>
 
         <el-form-item :label="t('settings.autosaveInterval')">
-          <el-input-number v-model="form.autosave_interval_sec" :min="5" :max="600" :step="5" />
+          <!-- v1028：最少 10s，最多 60s -->
+          <el-slider
+            v-model="form.autosave_interval_sec"
+            :min="10"
+            :max="60"
+            :step="5"
+            show-input
+            size="small"
+            class="font-slider"
+            @change="preview"
+          />
+          <div class="muted text-sm">{{ t('settings.autosaveHint') }}</div>
         </el-form-item>
-
-        <el-divider content-position="left">动态组件</el-divider>
-
-        <el-form-item :label="t('settings.fallbackCity')">
-          <el-input v-model="form.city" maxlength="60" style="max-width: 240px" />
-          <div class="muted text-sm">{{ t('settings.fallbackCityHint') }}</div>
-        </el-form-item>
-
-        <el-form-item :label="t('settings.petIdleMinutes')">
-          <el-input-number v-model="form.pet_idle_minutes" :min="1" :max="1440" />
-        </el-form-item>
-
-        <el-divider content-position="left">AI 工具</el-divider>
-        <el-alert type="info" :closable="false">
-          <template #title>
-            大模型 Provider / 子代理 / 技能 / MCP 管理已迁移至独立页面。
-            <el-button text type="primary" size="small" @click="router.push('/ai-tools')">
-              前往「AI 工具」
-            </el-button>
-          </template>
-        </el-alert>
-
-        <el-divider content-position="left">运行状态</el-divider>
-        <el-descriptions v-if="store.health" :column="1" border size="small">
-          <el-descriptions-item label="后端版本">{{ store.health.version }}</el-descriptions-item>
-          <el-descriptions-item label="SQLite">{{ store.health.sqlite_version }}</el-descriptions-item>
-          <el-descriptions-item label="FTS5">
-            {{ store.health.fts5_available ? '可用（二元切分 + unicode61）' : `不可用，降级 LIKE：${store.health.fts5_reason}` }}
-          </el-descriptions-item>
-          <el-descriptions-item label="calibre（mobi 导出）">
-            {{ store.calibreAvailable ? '已安装' : '未安装，mobi 选项置灰' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Langfuse">
-            {{ store.health.langfuse_enabled ? '已配置' : '未配置（降级为本地日志）' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="数据目录">{{ store.health.data_root }}</el-descriptions-item>
-        </el-descriptions>
       </el-form>
+
+      <!-- v1028：保存移到所有设置下面，旁边加恢复默认设置 -->
+      <div class="settings-actions">
+        <el-button :loading="resetting" @click="resetDefaults">
+          {{ t('settings.resetDefault') }}
+        </el-button>
+        <el-button type="primary" :loading="saving" @click="save">{{ t('common.save') }}</el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -151,24 +203,55 @@ function back(): void {
 }
 
 .settings-head {
-  padding: 12px 20px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   flex-shrink: 0;
 }
 
+.back-btn {
+  padding: 4px 8px;
+}
+
 .settings-body {
   flex: 1;
   min-height: 0;
-  padding: 20px;
+  padding: 20px 20px 40px;
 }
 
 .form {
-  max-width: 760px;
+  max-width: 720px;
 }
 
-.preview-text {
+.font-slider {
+  max-width: 420px;
+}
+
+.font-select {
+  width: 200px;
+}
+
+.font-preview {
   margin-left: 12px;
-  font-size: 16px;
+  color: var(--text);
+  line-height: 1.6;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+.settings-actions {
+  max-width: 720px;
+  margin: 24px 0 0 150px;
+  display: flex;
+  gap: 12px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.text-sm {
+  font-size: 12px;
 }
 </style>

@@ -47,6 +47,9 @@ _DEFAULT_NAMES = {
 #: 纯序号名：仅由数字、中文数字、序数词、标点空白构成
 _PURE_ORDINAL_RE = re.compile(rf"^[{_CN_NUM}\d\s第卷章回节篇部集话話\.\-·_]+$")
 
+#: 书籍名称禁用的特殊字符（v1028：不允许出现 #$% 等特殊字符，标点符号可以出现）
+_SPECIAL_CHARS = set("#$%&*+=<>@^|~`\\")
+
 
 def normalize_for_check(name: str) -> str:
     """归一化用于校验：全角空格转半角、压缩空白、去首尾。"""
@@ -62,8 +65,33 @@ def collapse_whitespace(name: str) -> str:
 
 
 def validate_novel_title(title: str | None) -> str:
-    """校验小说名。返回归一化后的标题；不合法抛 `NamingInvalidError`（42201）。"""
-    return _validate(title, kind="小说名")
+    """校验小说名（v1028 规则）。返回归一化后的标题；不合法抛 `NamingInvalidError`（42201）。
+
+    规则：不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；
+    可以出现标点符号。
+    """
+    if title is None:
+        raise NamingInvalidError("书籍名称不允许为空")
+
+    name = normalize_for_check(title)
+    if not name:
+        raise NamingInvalidError("书籍名称不允许为空")
+
+    if len(name) > 200:
+        raise NamingInvalidError("书籍名称过长（最多 200 字符）")
+
+    # 全部为阿拉伯数字（允许夹杂空白，如「123 456」同样拒绝）
+    digits_only = name.replace(" ", "")
+    if digits_only and digits_only.isdigit():
+        raise NamingInvalidError(f"书籍名称不允许全部为阿拉伯数字「{name}」")
+
+    bad = sorted({ch for ch in name if ch in _SPECIAL_CHARS})
+    if bad:
+        raise NamingInvalidError(
+            f"书籍名称不允许出现特殊字符 {' '.join(bad)}（可以出现标点符号）"
+        )
+
+    return name
 
 
 def validate_volume_title(title: str | None) -> str:

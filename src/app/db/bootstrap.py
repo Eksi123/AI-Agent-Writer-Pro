@@ -65,13 +65,67 @@ async def _stamp_head(conn: AsyncConnection) -> None:
 
 
 async def init_database() -> None:
-    """幂等初始化：业务表 + alembic 版本戳 + `story_fts`（FTS5 可用时）。"""
+    """幂等初始化：业务表 + alembic 迁移 + `story_fts`（FTS5 可用时）。
+
+    两条路径互相幂等：
+    - **全新库**：`create_all` 建表 → 无 `alembic_version` 行 → 打版本戳到 head；
+    - **既有库落后于 head**：`create_all` 只补新表、**不会给已存在的表加列**，
+      因此这里再跑一次 `alembic upgrade head` 应用增量（如 v1028 给 llm_providers
+      加 timeout_sec / temperature / max_tokens），避免「模型加了列但旧库没列」导致 500。
+    """
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await _stamp_head(conn)
         await _init_fts(conn)
+
+    # 迁移在 begin() 之外执行：alembic 用自己的连接，避免与启动连接争 SQLite 写锁
+    await _upgrade_if_behind()
+
+    async with engine.begin() as conn:
+        await _stamp_head(conn)
     logger.info("database_initialized", fts5=fts_available())
+
+
+async def _current_revision() -> str | None:
+    """读 `alembic_version` 当前版本号；表不存在返回 None。"""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'"))).first()
+        if row is None:
+            return None
+        current = (await conn.execute(text("SELECT version_num FROM alembic_version"))).first()
+    return str(current[0]) if current else None
+
+
+async def _upgrade_if_behind() -> None:
+    """既有库落后于迁移 head 时执行 `alembic upgrade head`（失败不阻断启动）。"""
+    head = _head_revision()
+    if head is None:
+        return
+    try:
+        current = await _current_revision()
+    except Exception as exc:  # pragma: no cover - 版本探测失败不影响建表
+        logger.info("alembic_current_lookup_failed", error=str(exc))
+        return
+    if current is None or current == head:
+        return
+
+    import asyncio
+
+    from alembic import command
+    from alembic.config import Config
+
+    def _run_upgrade() -> None:
+        cfg = Config()
+        cfg.set_main_option("script_location", str(MIGRATIONS_DIR))
+        command.upgrade(cfg, "head")
+
+    try:
+        # alembic 的 env.py 内部用 asyncio.run()，必须在**无事件循环的线程**里跑
+        await asyncio.to_thread(_run_upgrade)
+        logger.info("alembic_upgraded", revision_from=current, revision_to=head)
+    except Exception as exc:  # pragma: no cover - 迁移失败降级为告警，交由 `writer migrate`
+        logger.warning("alembic_upgrade_failed_run_writer_migrate", error=str(exc))
 
 
 async def _init_fts(conn: AsyncConnection) -> None:
