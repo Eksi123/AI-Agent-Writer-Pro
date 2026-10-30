@@ -146,6 +146,24 @@ class TestSkillsApi:
         tool_names = {s["tool_name"] for s in builtin}
         assert {"read_file", "edit_file", "ls", "grep", "glob", "web_search"} <= tool_names
         assert all(s["materialized"] for s in builtin)
+        assert all(s["kind"] == "tool" for s in builtin)
+
+    async def test_list_include_writing_returns_builtin_writing_skills(self, client):
+        """v1030：`include_writing=true` 追加包内写作技能（供会话级「工具添加」勾选）。"""
+        data = (await client.get("/api/v1/skills", params={"include_writing": True})).json()["data"]
+        writing = [s for s in data if s["is_builtin"] and s["kind"] == "writing"]
+        names = {s["name"] for s in writing}
+        assert {"prose-writing", "novel-planning"} <= names
+        for s in writing:
+            # id 形如 builtin:{name}，session_context_of 据此解析为技能名
+            assert s["id"] == f"builtin:{s['name']}"
+            assert s["description"]
+            assert s["content_md"]
+            assert s["tool_name"] is None
+
+        # 默认（不带 include_writing）仍只返回基础工具
+        default = (await client.get("/api/v1/skills")).json()["data"]
+        assert not [s for s in default if s["is_builtin"] and s["kind"] == "writing"]
 
     async def test_create_skill_materializes(self, client):
         resp = await client.post(

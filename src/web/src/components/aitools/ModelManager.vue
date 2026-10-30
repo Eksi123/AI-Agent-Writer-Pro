@@ -51,12 +51,13 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
-function paramSummary(p: LlmProviderDto): string {
-  return t('aiTools.paramSummary', {
-    timeout: p.timeout_sec ?? 30,
-    temp: (p.temperature ?? 1).toString(),
-    max: p.max_tokens ?? 2048,
-  })
+/** v1030：参数拆成三项分别渲染（用 flex gap 隔开，不再靠空格拼接） */
+function paramParts(p: LlmProviderDto): string[] {
+  return [
+    `${t('aiTools.timeoutSec')}=${p.timeout_sec ?? 30}`,
+    `${t('aiTools.temperature')}=${(p.temperature ?? 1).toString()}`,
+    `${t('aiTools.maxTokens')}=${p.max_tokens ?? 2048}`,
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -94,11 +95,11 @@ const tempError = computed(() => {
   return ''
 })
 
-/** 全部配置必填（v1029：模型 ID 即名称，不再单独填写） */
+/** 全部配置必填（v1029：模型 ID 即名称，不再单独填写；v1030：[密钥环境变量名]→[密钥名]、[API密钥]→[密钥API]） */
 const formError = computed(() => {
   if (!form.name.trim()) return '名称为必填'
-  if (!form.api_key_env.trim()) return '密钥环境变量名为必填'
-  if (!editing.value && !form.api_key_value.trim()) return 'API 密钥为必填'
+  if (!form.api_key_env.trim()) return '密钥名为必填'
+  if (!editing.value && !form.api_key_value.trim()) return '密钥API为必填'
   if (form.timeout_sec == null || form.timeout_sec < 10 || form.timeout_sec > 60) {
     return '超时时长须在 10 ~ 60 秒之间'
   }
@@ -243,7 +244,9 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
               {{ t('aiTools.apiKeyMissing') }}
             </el-tag>
           </div>
-          <div class="model-params">{{ paramSummary(p) }}</div>
+          <div class="model-params">
+            <span v-for="part in paramParts(p)" :key="part">{{ part }}</span>
+          </div>
         </div>
       </div>
       <div class="row-actions">
@@ -257,9 +260,9 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
       </div>
     </div>
 
-    <!-- 配置弹窗：无顶部标题；v1029 设置名字号更小、输入框收窄（不再挡住右上角 ×） -->
-    <el-dialog v-model="dialogVisible" width="480px" :show-close="true" class="provider-dialog">
-      <el-form :model="form" label-width="104px" label-position="left" size="small">
+    <!-- 配置弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <el-dialog v-model="dialogVisible" width="600px" :show-close="true" class="provider-dialog">
+      <el-form :model="form" label-width="128px" label-position="left">
         <el-form-item :label="t('aiTools.providerName')" required>
           <!-- v1029：名称即模型 ID（不再有单独的「模型 ID」输入框） -->
           <el-input v-model="form.name" class="field" maxlength="100" />
@@ -291,7 +294,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
         <el-form-item :label="t('aiTools.timeoutSec')" required>
           <!-- 左右带增减按钮的数字框：默认 30s，最少 10s，最多 60s -->
-          <el-input-number v-model="form.timeout_sec" :min="10" :max="60" :step="1" size="small" class="num" />
+          <el-input-number v-model="form.timeout_sec" :min="10" :max="60" :step="1" class="num" />
           <span class="unit muted">s</span>
         </el-form-item>
 
@@ -332,7 +335,8 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  /* v1030：条目加高，名称与参数行不再显得局促 */
+  padding: 18px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-panel);
@@ -346,11 +350,11 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   flex: 1;
 }
 
-/* v1029：模型名称在上，参数小字在下（两行） */
+/* v1030：模型名称在上，参数小字在下；两行之间拉开间距 */
 .model-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -363,13 +367,18 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   min-width: 0;
 }
 
-/* v1029：名称下方小字号显示 Time Out / Temperature / Max Token */
+/* v1030：名称下方小字号显示 Time Out / Temperature / Max Token；三项用 gap 隔开更透气 */
 .model-params {
+  display: flex;
+  align-items: center;
+  gap: 22px;
   font-size: 11px;
   color: var(--text-muted);
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.model-params > span {
+  white-space: nowrap;
 }
 
 .row-actions {
@@ -379,20 +388,20 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   flex-shrink: 0;
 }
 
-/* v1029：弹窗输入框收窄，避免挡住右上角 ×；设置名字号更小 */
+/* v1030：弹窗整体等比例放大（宽度 + 字体 + 输入框） */
 .field {
   width: 100%;
-  max-width: 300px;
+  max-width: 380px;
 }
 
 .num {
-  width: 110px;
+  width: 150px;
 }
 
 .unit,
 .hint {
-  margin-left: 8px;
-  font-size: 12px;
+  margin-left: 10px;
+  font-size: 13px;
 }
 
 .muted {
@@ -408,18 +417,18 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 }
 
 .provider-dialog .el-dialog__body {
-  padding-top: 8px;
-  /* v1029：输入框不要长到右上角 × 的位置 */
-  padding-right: 44px;
+  padding-top: 10px;
+  /* v1030：输入框不要长到右上角 × 的位置 */
+  padding-right: 52px;
 }
 
-/* v1029：设置名字号更小（一行展示），控件与设置名间距适中 */
+/* v1030：设置名字号放大（一行展示），控件与设置名间距适中 */
 .provider-dialog .el-form-item__label {
-  font-size: 12px;
-  padding-right: 16px;
+  font-size: 15px;
+  padding-right: 18px;
 }
 
 .provider-dialog .el-form-item {
-  margin-bottom: 14px;
+  margin-bottom: 20px;
 }
 </style>

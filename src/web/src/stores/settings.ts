@@ -15,6 +15,7 @@ export const SETTINGS_DEFAULTS: UserSettings = {
   font_size: 18,
   font_family: 'serif',
   reading_width: 42,
+  autosave_enabled: true,
   autosave_interval_sec: 30,
   city: '北京',
   pet_idle_minutes: 30,

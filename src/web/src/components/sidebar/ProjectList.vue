@@ -3,9 +3,10 @@
  * 左侧栏（v1028 / v1029）：新建小说 + 项目列表。
  *   - 无项目时**不展示任何提示**；
  *   - 有项目时默认选中上次打开的项目（localStorage 记忆）；
- *   - 一行一个项目：书籍 icon + 书名 + 小字题材标签 + 右侧 ··· （重命名 / 删除 / 导出）；
+ *   - 一行一个项目：书籍 icon + 书名 + 小字题材标签 + 右侧 ··· （编辑 / 删除 / 导出）；
  *   - v1029：悬浮框只展示简介，且展示在项目**下方**；
  *   - v1029：新建弹窗书名左上角带 *，输入框无提示词，题材改为勾选标签（1–3 个）。
+ *   - v1030：[重命名] 改为 [编辑]——复用新建弹窗同款表单，可修改名称 / 题材 / 简介。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -30,6 +31,9 @@ const form = reactive({ title: '', author_name: '', synopsis: '' })
 const genreTags = ref<string[]>([])
 /** 书名规则悬浮提示可见性（v1028：原 placeholder 收进悬浮弹窗） */
 const ruleHintVisible = ref(false)
+/** v1030：弹窗双模式——create 新建 / edit 编辑（复用同一表单） */
+const dialogMode = ref<'create' | 'edit'>('create')
+const editingNovel = ref<Novel | null>(null)
 
 const GENRE_MAX = 3
 const genreOptions = GENRE_OPTIONS
@@ -122,6 +126,18 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
+    // v1030：编辑模式复用同一表单（名称 / 题材 / 简介）
+    if (dialogMode.value === 'edit' && editingNovel.value) {
+      await store.updateNovel(editingNovel.value.id, {
+        title: form.title.trim(),
+        genre: genreTags.value.join('、'),
+        synopsis: form.synopsis.trim(),
+      })
+      ElMessage.success(t('novel.edited'))
+      dialogVisible.value = false
+      editingNovel.value = null
+      return
+    }
     const author = form.author_name.trim()
     const novel = await store.createNovel({
       title: form.title.trim(),
@@ -142,25 +158,31 @@ async function submitCreate(): Promise<void> {
   }
 }
 
+/** 打开「新建小说」弹窗 */
+function openCreate(): void {
+  dialogMode.value = 'create'
+  editingNovel.value = null
+  Object.assign(form, { title: '', author_name: '', synopsis: '' })
+  genreTags.value = []
+  dialogVisible.value = true
+}
+
+/** v1030：打开「编辑」弹窗（回填名称 / 题材 / 简介；作者不可改，隐藏该项） */
+function openEdit(novel: Novel): void {
+  dialogMode.value = 'edit'
+  editingNovel.value = novel
+  Object.assign(form, {
+    title: novel.title,
+    author_name: novel.author_name || '',
+    synopsis: novel.synopsis || '',
+  })
+  genreTags.value = genreTagList(novel)
+  dialogVisible.value = true
+}
+
 async function select(novel: Novel): Promise<void> {
   await store.selectNovel(novel.id)
   rememberNovel(novel.id)
-}
-
-async function onRename(novel: Novel): Promise<void> {
-  try {
-    const { value } = await ElMessageBox.prompt(t('novel.titleLabel'), t('novel.renameTitle'), {
-      inputValue: novel.title,
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      inputValidator: (v: string) => validateTitle(v) || true,
-    })
-    await store.renameNovel(novel.id, value.trim())
-    ElMessage.success(t('novel.renamed'))
-  } catch (err) {
-    if (err === 'cancel' || err === 'close') return
-    ElMessage.error(errorMessage(err))
-  }
 }
 
 async function onDelete(novel: Novel): Promise<void> {
@@ -194,7 +216,7 @@ async function onDelete(novel: Novel): Promise<void> {
     <WeatherWidget />
 
     <div class="sidebar-head">
-      <el-button type="primary" class="w100" @click="dialogVisible = true">
+      <el-button type="primary" class="w100" @click="openCreate">
         {{ t('sidebar.newNovel') }}
       </el-button>
     </div>
@@ -237,14 +259,14 @@ async function onDelete(novel: Novel): Promise<void> {
           </span>
 
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => {
-            if (cmd === 'rename') onRename(novel)
+            if (cmd === 'edit') openEdit(novel)
             else if (cmd === 'export') emit('export', novel)
             else if (cmd === 'delete') onDelete(novel)
           }">
             <span class="novel-more" @click.stop>···</span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="rename">{{ t('common.rename') }}</el-dropdown-item>
+                <el-dropdown-item command="edit">{{ t('common.edit') }}</el-dropdown-item>
                 <el-dropdown-item command="delete">{{ t('common.delete') }}</el-dropdown-item>
                 <el-dropdown-item command="export" divided>{{ t('common.export') }}</el-dropdown-item>
               </el-dropdown-menu>
@@ -259,8 +281,13 @@ async function onDelete(novel: Novel): Promise<void> {
       <el-button text @click="emit('open-ai-tools')">{{ t('sidebar.aiTools') }}</el-button>
     </div>
 
-    <!-- 新建小说弹窗（v1029：书名左上角 *，输入框无提示词，题材改勾选标签） -->
-    <el-dialog v-model="dialogVisible" :title="t('novel.createTitle')" width="480px">
+    <!-- 新建 / 编辑小说弹窗（v1029：书名左上角 *，输入框无提示词，题材改勾选标签；
+         v1030：[重命名] 升级为 [编辑]，复用同一弹窗修改名称 / 题材 / 简介） -->
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogMode === 'edit' ? t('novel.editTitle') : t('novel.createTitle')"
+      width="480px"
+    >
       <el-form :model="form" label-width="72px">
         <el-form-item required>
           <template #label>
@@ -288,7 +315,8 @@ async function onDelete(novel: Novel): Promise<void> {
           <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
         </el-form-item>
 
-        <el-form-item :label="t('novel.authorLabel')">
+        <!-- v1030：编辑模式只改名称 / 题材 / 简介，作者项不展示 -->
+        <el-form-item v-if="dialogMode === 'create'" :label="t('novel.authorLabel')">
           <el-input v-model="form.author_name" maxlength="100" />
         </el-form-item>
 
@@ -324,7 +352,7 @@ async function onDelete(novel: Novel): Promise<void> {
           :disabled="!!titleError || !form.synopsis.trim() || !!genreError"
           @click="submitCreate"
         >
-          {{ t('common.create') }}
+          {{ dialogMode === 'edit' ? t('common.save') : t('common.create') }}
         </el-button>
       </template>
     </el-dialog>

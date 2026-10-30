@@ -5,10 +5,12 @@
  * - 首层只展示两个入口：[写作子代理]、[写作技能]；**没有内容时整项不显示**
  *   （v1029：不需要「暂无可用子代理/技能」这类提示）；
  * - 点击任一入口 → 跳到对应的子代理 / 技能目录（逐级跳转，**不提供返回**）；
- * - 选中后由父级在聊天输入框开头展示 `#子代理名` 或 `@技能名`，
+ * - 选中后由父级在聊天输入框开头展示 `@工具名` 标记，
  *   并持久化到会话（后端 `session_context_of` 会把选中项装配进 agent，模型主动使用）。
+ *
+ * v1030：关闭弹窗后重新打开 → 回到初始界面（父级传 `open`，用于连续添加其它工具）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { configApi, type SkillDto, type SubagentDto } from '@/api'
 import { errorMessage } from '@/api/http'
 import { ElMessage } from 'element-plus'
@@ -24,6 +26,8 @@ const props = defineProps<{
   /** 当前已选中的工具 id（用于高亮） */
   selectedSubagentIds: string[]
   selectedSkillIds: string[]
+  /** 浮层是否打开：关闭再打开时重置到初始界面 */
+  open: boolean
 }>()
 
 type Level = 'root' | 'subagents' | 'skills'
@@ -33,14 +37,20 @@ const loading = ref(false)
 const subagents = ref<SubagentDto[]>([])
 const skills = ref<SkillDto[]>([])
 
-/** 只列启用项；子代理供主代理委派，技能只列自建写作技能（内置工具对主代理恒可用） */
+/**
+ * 只列启用项；子代理供主代理委派。
+ * v1030：[写作技能] 同时列出包内写作技能与用户自建技能
+ * （Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项）。
+ */
 const subagentList = computed(() => subagents.value.filter((s) => s.enabled))
-const skillList = computed(() => skills.value.filter((s) => s.enabled && !s.is_builtin))
+const skillList = computed(() =>
+  skills.value.filter((s) => s.enabled && s.kind !== 'tool'),
+)
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
+    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills(true)])
     subagents.value = subs
     skills.value = sks
   } catch (err) {
@@ -63,6 +73,14 @@ function onPick(kind: 'subagent' | 'skill', id: string, name: string): void {
   emit('toggle', kind, id, name)
   emit('close')
 }
+
+/** v1030：关闭后重新打开 → 回到初始界面（可继续添加其它工具） */
+watch(
+  () => props.open,
+  (open) => {
+    if (open) level.value = 'root'
+  },
+)
 </script>
 
 <template>

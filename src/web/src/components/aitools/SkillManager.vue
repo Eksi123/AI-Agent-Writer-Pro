@@ -158,9 +158,9 @@ async function remove(s: SkillDto): Promise<void> {
       <div v-if="!s.is_builtin && s.description" class="desc">{{ s.description }}</div>
     </div>
 
-    <!-- 新建/编辑弹窗：无顶部标题；v1029 设置名字号更小、弹窗收窄（不挡右上角 ×） -->
-    <el-dialog v-model="dialogVisible" width="560px" class="skill-dialog">
-      <el-form :model="form" label-width="82px" label-position="left" size="small">
+    <!-- 新建/编辑弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <el-dialog v-model="dialogVisible" width="700px" class="skill-dialog">
+      <el-form :model="form" label-width="104px" label-position="left">
         <el-form-item :label="t('skills.nameLabel')" required>
           <el-input v-model="form.name" :disabled="!!editing" maxlength="64" />
         </el-form-item>
@@ -265,14 +265,18 @@ async function remove(s: SkillDto): Promise<void> {
 }
 
 .skill-dialog .el-dialog__body {
-  padding-top: 8px;
-  /* v1029：输入框不要长到右上角 × 的位置 */
-  padding-right: 44px;
+  padding-top: 10px;
+  /* v1030：输入框不要长到右上角 × 的位置 */
+  padding-right: 52px;
 }
 
-/* v1029：设置名字号更小 */
+/* v1030：设置名字号放大 */
 .skill-dialog .el-form-item__label {
-  font-size: 12px;
-  padding-right: 16px;
+  font-size: 15px;
+  padding-right: 18px;
+}
+
+.skill-dialog .el-form-item {
+  margin-bottom: 20px;
 }
 </style>

@@ -312,8 +312,10 @@ export interface SkillDto {
   enabled: boolean
   is_builtin: boolean
   materialized: boolean
-  /** v1028：内置技能对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search） */
-  tool_name?: string
+  /** v1030：内置项类型 —— `tool`=Agent 基础工具，`writing`=包内写作技能；用户自建为空 */
+  kind?: 'tool' | 'writing'
+  /** v1028：内置技能对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search）；写作技能为 null */
+  tool_name?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -339,7 +341,9 @@ export const configApi = {
 
   resetSubagent: (id: string) => post<SubagentDto>(`/subagents/${id}/reset`),
 
-  listSkills: () => get<SkillDto[]>('/skills'),
+  /** `includeWriting=true`（v1030）额外返回包内写作技能，供会话级「工具添加」浮层勾选 */
+  listSkills: (includeWriting = false) =>
+    get<SkillDto[]>('/skills', { params: { include_writing: includeWriting } }),
 
   createSkill: (payload: {
     name: string

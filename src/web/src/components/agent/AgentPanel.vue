@@ -473,11 +473,11 @@ const toolNames = ref<{ subagents: Map<string, string>; skills: Map<string, stri
 
 async function loadToolNames(): Promise<void> {
   try {
-    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
+    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills(true)])
     toolNames.value = {
       subagents: new Map(subs.map((s) => [s.id, s.name])),
-      // v1028：内置「工具」对主代理恒可用，会话级只勾选自建写作技能
-      skills: new Map(sks.filter((s) => !s.is_builtin).map((s) => [s.id, s.name])),
+      // v1030：会话级技能 = 包内写作技能 + 用户自建（基础工具对主代理恒可用，不进 Chips）
+      skills: new Map(sks.filter((s) => s.kind !== 'tool').map((s) => [s.id, s.name])),
     }
   } catch {
     /* 名称解析失败不阻断输入（chips 会退回显示 id） */
@@ -823,6 +823,7 @@ watch(
             </template>
             <ContextPicker
               :attached-bytes="attachedBytes"
+              :open="addPopover"
               @add="onPicked"
               @close="addPopover = false"
             />
@@ -842,6 +843,7 @@ watch(
             <ToolsPicker
               :selected-subagent-ids="selectedSubagentIds"
               :selected-skill-ids="selectedSkillIds"
+              :open="toolPopover"
               @toggle="toggleChip"
               @close="toolPopover = false"
             />

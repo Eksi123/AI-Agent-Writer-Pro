@@ -19,10 +19,11 @@ const router = useRouter()
 const store = useSettingsStore()
 const saving = ref(false)
 const resetting = ref(false)
-const form = reactive<Pick<UserSettings, 'theme' | 'font_size' | 'font_family' | 'autosave_interval_sec'>>({
+const form = reactive<Pick<UserSettings, 'theme' | 'font_size' | 'font_family' | 'autosave_enabled' | 'autosave_interval_sec'>>({
   theme: 'light',
   font_size: 18,
   font_family: 'serif',
+  autosave_enabled: true,
   autosave_interval_sec: 30,
 })
 
@@ -40,6 +41,7 @@ function syncForm(): void {
   form.theme = th === 'dark' || th === 'eye' ? th : 'light'
   form.font_size = store.settings.font_size
   form.font_family = store.settings.font_family
+  form.autosave_enabled = store.settings.autosave_enabled
   form.autosave_interval_sec = store.settings.autosave_interval_sec
 }
 
@@ -54,6 +56,7 @@ function preview(): void {
     theme: form.theme,
     font_size: form.font_size,
     font_family: form.font_family,
+    autosave_enabled: form.autosave_enabled,
     autosave_interval_sec: form.autosave_interval_sec,
   })
 }
@@ -65,6 +68,7 @@ async function save(): Promise<void> {
       theme: form.theme,
       font_size: form.font_size,
       font_family: form.font_family,
+      autosave_enabled: form.autosave_enabled,
       autosave_interval_sec: form.autosave_interval_sec,
     })
     syncForm()
@@ -165,8 +169,13 @@ function back(): void {
           </div>
         </el-form-item>
 
+        <!-- v1030：新增[自动保存]开关，与[自动保存间隔]联动（关闭后间隔置灰） -->
+        <el-form-item :label="t('settings.autosaveEnabled')">
+          <el-switch v-model="form.autosave_enabled" @change="preview" />
+        </el-form-item>
+
         <el-form-item :label="t('settings.autosaveInterval')">
-          <!-- v1028：最少 10s，最多 60s -->
+          <!-- v1028：最少 10s，最多 60s；v1030：关闭自动保存后置灰 -->
           <el-slider
             v-model="form.autosave_interval_sec"
             :min="10"
@@ -175,6 +184,7 @@ function back(): void {
             show-input
             size="small"
             class="font-slider"
+            :disabled="!form.autosave_enabled"
             @change="preview"
           />
           <div class="muted text-sm">{{ t('settings.autosaveHint') }}</div>

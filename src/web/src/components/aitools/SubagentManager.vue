@@ -24,8 +24,8 @@ const subagents = ref<SubagentDto[]>([])
 const skills = ref<SkillDto[]>([])
 
 /** 内置工具（read/edit/list/grep/glob/web_search）与自建技能分开呈现 */
-const builtinTools = computed(() => skills.value.filter((s) => s.is_builtin))
-const userSkills = computed(() => skills.value.filter((s) => !s.is_builtin))
+const builtinTools = computed(() => skills.value.filter((s) => s.kind === 'tool'))
+const userSkills = computed(() => skills.value.filter((s) => s.kind !== 'tool'))
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -256,9 +256,9 @@ async function resetDefault(s: SubagentDto): Promise<void> {
       </div>
     </div>
 
-    <!-- 弹窗：无顶部标题；v1029 设置名字号更小、输入框收窄（不挡右上角 ×） -->
-    <el-dialog v-model="dialogVisible" width="560px" class="subagent-dialog">
-      <el-form :model="form" label-width="92px" label-position="left" size="small">
+    <!-- 弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <el-dialog v-model="dialogVisible" width="700px" class="subagent-dialog">
+      <el-form :model="form" label-width="116px" label-position="left">
         <el-form-item :label="t('subagents.nameLabel')" required>
           <el-input
             v-model="form.name"
@@ -429,15 +429,19 @@ async function resetDefault(s: SubagentDto): Promise<void> {
 }
 
 .subagent-dialog .el-dialog__body {
-  padding-top: 8px;
-  /* v1029：输入框不要长到右上角 × 的位置 */
-  padding-right: 44px;
+  padding-top: 10px;
+  /* v1030：输入框不要长到右上角 × 的位置 */
+  padding-right: 52px;
 }
 
-/* v1029：设置名字号更小，控件不挡住右上角 × */
+/* v1030：设置名字号放大，控件不挡住右上角 × */
 .subagent-dialog .el-form-item__label {
-  font-size: 12px;
-  padding-right: 16px;
+  font-size: 15px;
+  padding-right: 18px;
+}
+
+.subagent-dialog .el-form-item {
+  margin-bottom: 20px;
 }
 
 .subagent-dialog .el-dialog__headerbtn {

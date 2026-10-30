@@ -68,6 +68,15 @@ export const useProjectStore = defineStore('project', () => {
     await loadNovels()
   }
 
+  /** v1030：[编辑] 弹窗提交——可同时修改书名 / 题材 / 简介 */
+  async function updateNovel(
+    id: string,
+    payload: { title?: string; genre?: string; synopsis?: string },
+  ): Promise<void> {
+    await novelsApi.update(id, payload)
+    await loadNovels()
+  }
+
   async function deleteNovel(id: string): Promise<void> {
     await novelsApi.remove(id)
     if (currentNovelId.value === id) {
@@ -136,6 +145,7 @@ export const useProjectStore = defineStore('project', () => {
     loadVolumes,
     createNovel,
     renameNovel,
+    updateNovel,
     deleteNovel,
     duplicateNovel,
     createVolume,

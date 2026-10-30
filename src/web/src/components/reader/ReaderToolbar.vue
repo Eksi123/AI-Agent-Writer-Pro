@@ -9,7 +9,6 @@ import { computed } from 'vue'
 import { useReaderStore } from '@/stores/reader'
 import { useProjectStore } from '@/stores/project'
 import { useSettingsStore } from '@/stores/settings'
-import AutosaveIndicator from '@/components/editor/AutosaveIndicator.vue'
 import { t } from '@/i18n'
 
 defineProps<{
@@ -50,9 +49,8 @@ const backendHint = computed(() => {
     </div>
 
     <div class="row">
-      <!-- v1029：编辑模式主页面右上方的卷章结构操作条（与左上角浮层目录不在同一层，互不遮挡） -->
-      <slot name="actions" />
-      <AutosaveIndicator v-if="reader.mode === 'edit'" />
+      <!-- v1030：卷章操作条 / 保存 / 自动保存标记已移到「目录」所在工具栏行；
+           页面最上方不再显示「已保存 自动保存已开启（30 秒）」标记 -->
 
       <!-- v1028：AI写作助手（未展开）= 聊天框 icon + 文字，悬浮出功能提示 -->
       <el-tooltip

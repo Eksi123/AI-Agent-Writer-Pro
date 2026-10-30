@@ -125,10 +125,8 @@ function chLabel(title: string, sortOrder: number, index: number): string {
 
 <style scoped>
 .toc-wrap {
-  position: absolute;
-  top: 10px;
-  left: 12px;
-  z-index: 30;
+  /* v1030：目录按钮改由父级浮动工具栏（.float-toolbar）排布，这里只做展开面板的定位上下文 */
+  position: relative;
 }
 
 .toc-toggle {
@@ -166,7 +164,11 @@ function chLabel(title: string, sortOrder: number, index: number): string {
 }
 
 .toc-panel {
-  margin-top: 6px;
+  /* v1030：悬浮展开，不撑高工具栏行 */
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
   width: 280px;
   max-height: min(62vh, 470px);
   display: flex;

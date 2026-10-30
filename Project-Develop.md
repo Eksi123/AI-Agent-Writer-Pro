@@ -192,7 +192,7 @@ src/web/src/
 │   ├── reader/     ChapterReader / OutlineReader / TocDrawer / ReaderToolbar
 │   ├── editor/     TiptapEditor / aiSourceMark（AI 来源标记 Tiptap Mark 扩展）
 │   │               / RewriteDiffDialog（选区改写句级 diff）/ VolumeChapterTree（只读顺序）
-│   │               / OutlineEditor / ConflictBanner（版本冲突合并）/ AutosaveIndicator / WordCountBar
+│   │               / OutlineEditor / ConflictBanner（版本冲突合并）/ WordCountBar
 │   ├── agent/      AgentPanel（会话面板）/ ApprovalCard（审批卡片）/ ConsultCard（咨询卡片）
 │   │               / GateStatusBar（门禁状态条）/ PlanTodoList（待办计划）
 │   └── aitools/    SubagentManager / SkillManager / McpManager
@@ -257,7 +257,7 @@ src/web/src/
 | `volumes` | 8 | `/novels/{id}/volumes`、`/volumes/{vid}/chapters`、`/chapters/{cid}` |
 | `mcp` | 6 | `/mcp-servers` CRUD + `/probe` + `/confirm` |
 | `chapters` | 5 | `GET/PUT /{cid}/content`（乐观锁）、`/{cid}/rewrite`、`/revisions`、`/restore` |
-| `skills` | 5 | `/skills` CRUD + `/resync` |
+| `skills` | 5 | `/skills` CRUD（`GET` 支持 `include_writing=true` 追加包内写作技能）+ `/resync` |
 | `subagents` | 5 | `/subagents` CRUD + `/reset`（恢复出厂） |
 | `outline` | 3 | `GET/PUT /novels/{id}/outline`、`/outline/validate` |
 | `widgets` | 3 | `/widgets/city`、`/pet-state`、`/weather` |
@@ -916,7 +916,7 @@ AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **La
 | `audit.py` | `record(session, action, entity_type, entity_id, detail)`：写 `audit_logs` 表 + JSONL 备份（双写） |
 | `llm.py` | Provider/Model CRUD + 连接测试 + 降级链解析 + `/config/reload`（重读 `.env` + `bump_config_version` + `invalidate_model_cache` + `reset_client`）。密钥经 `security.set_env_key` 写 `.env`，DB 只存 `api_key_env`；响应回 `api_key_masked` |
 | `agent.py` | Agent 业务规则：会话 CRUD（严格按 `project_id` 隔离，默认标题按现有会话数派生）、会话级上下文（model_ref / subagent_ids / skill_ids / context_chapter_ids，变更落审计）、`load_message_tree` / `switch_branch`（经 `agent.memory`）、`run_dto`、`resolve_interrupt`（审批与咨询**统一入口**）、数据访问（`list_sessions` / `list_tool_calls` / `require_session` / `project_word_count`）。★运行编排（astream/SSE）不在这里，在 `agent/loop/runner.py` |
-| `skills.py` | `skill_configs` CRUD + **物化**到 `data/skills/{name}/SKILL.md`（frontmatter `name` 必须等于目录名、`description` ≤1024、SKILL.md ≤10MB）；改名迁移目录；停用移除物化；`/skills/resync` 一致性修复；与内置技能重名拒绝；`materialize_session_skills()` 把会话选中的技能物化到 `data/session-skills/{sid}/`（内置从包内复制，用户技能从 `data/skills/` 或 DB `content_md` 复制） |
+| `skills.py` | `skill_configs` CRUD + **物化**到 `data/skills/{name}/SKILL.md`（frontmatter `name` 必须等于目录名、`description` ≤1024、SKILL.md ≤10MB）；改名迁移目录；停用移除物化；`/skills/resync` 一致性修复；与内置技能重名拒绝；`materialize_session_skills()` 把会话选中的技能物化到 `data/session-skills/{sid}/`（内置从包内复制，用户技能从 `data/skills/` 或 DB `content_md` 复制）。`list_skills()` DTO 带 `kind`（`tool`=Agent 基础工具 / `writing`=写作技能）与 `tool_name`；★v1030 `include_builtin_writing=True` 才追加包内 8 个写作技能（`builtin:{name}` id），供会话级「工具添加」浮层勾选——「AI 工具 → 技能管理」页仍只看基础工具 |
 | `subagents.py` | `subagent_configs` CRUD + `seed_builtins()`（幂等：按 name 跳过，**不覆盖用户改动**）+ `reset_builtin()`（恢复出厂：提示词/描述/mode/skills/model_ref）。校验：`name` 小写字母开头 + 仅小写字母数字连字符 + ≤64；`mode=fork` 时 `skills_json` 必须为空（deepagents 实测会抛错）；内置不可删除（可停用） |
 | `mcp.py` | `mcp_servers` CRUD + `probe`（探测工具列表）+ `confirm`（stdio 二次确认，写 `confirmed_at`）。约束：仅开源免费无认证（无认证头字段）；stdio 命令走 `validate_stdio_command` 白名单；**命令全文落审计** |
 | `weather.py` | Open-Meteo 封装（Geocoding 城市 → 坐标 → 当前天气/预报），同时服务动态组件 API 与内置天气 MCP，避免两份实现漂移 |

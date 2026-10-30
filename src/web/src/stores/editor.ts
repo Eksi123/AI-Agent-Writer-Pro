@@ -21,8 +21,17 @@ export const useEditorStore = defineStore('editor', () => {
 
   const dirty = ref(false)
   const saving = ref(false)
-  const lastSavedAt = ref<string | null>(null)
   const error = ref<string | null>(null)
+
+  /**
+   * v1030：工具栏「保存」icon 触发保存请求。
+   * 编辑器（正文 / 大纲）监听该自增计数并执行各自的保存，避免跨组件 ref 传递。
+   */
+  const saveRequestTick = ref(0)
+
+  function requestSave(): void {
+    saveRequestTick.value += 1
+  }
 
   /** 409 冲突时的服务端最新内容，供 ConflictBanner 合并/覆盖 */
   const conflict = ref<VersionConflictData | null>(null)
@@ -63,7 +72,6 @@ export const useEditorStore = defineStore('editor', () => {
       lastWriter.value = result.last_writer as 'manual' | 'agent'
       dirty.value = false
       conflict.value = null
-      lastSavedAt.value = new Date().toISOString()
       return true
     } catch (err) {
       if (err instanceof ApiError && err.isVersionConflict) {
@@ -90,7 +98,6 @@ export const useEditorStore = defineStore('editor', () => {
       baseVersion.value = result.version
       wordCount.value = result.word_count
       dirty.value = false
-      lastSavedAt.value = new Date().toISOString()
       return true
     } catch (err) {
       error.value = errorMessage(err)
@@ -152,11 +159,12 @@ export const useEditorStore = defineStore('editor', () => {
     wordCount,
     dirty,
     saving,
-    lastSavedAt,
     error,
     conflict,
     revisions,
     hasConflict,
+    saveRequestTick,
+    requestSave,
     openChapter,
     markDirty,
     save,

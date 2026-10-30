@@ -190,6 +190,8 @@ function clearTimer(): void {
 
 function scheduleAutosave(): void {
   clearTimer()
+  // v1030：通用设置[自动保存]开关关闭时不再定时保存（只保留手动保存）
+  if (!settingsStore.settings.autosave_enabled) return
   const sec = settingsStore.settings.autosave_interval_sec
   if (!sec || sec <= 0) return
   timer = setTimeout(() => void doAutosave(), sec * 1000)
@@ -209,6 +211,12 @@ async function saveNow(): Promise<void> {
   if (!okSaved && editorStore.hasConflict) emit('conflict')
   else if (okSaved) emit('autosaved')
 }
+
+/** v1030：工具栏[保存] icon → editor store 保存请求 → 立即保存 */
+watch(
+  () => editorStore.saveRequestTick,
+  () => void saveNow(),
+)
 
 /** v1029：标记定稿 / 取消定稿（原【卷章】页签的入口收敛到此） */
 async function toggleFinalize(): Promise<void> {
@@ -283,9 +291,7 @@ defineExpose({ saveNow })
       >
         {{ editorStore.status === 'finalized' ? t('editor.unfinalize') : t('editor.finalize') }}
       </el-button>
-      <el-button size="small" type="primary" :loading="editorStore.saving" @click="saveNow">
-        {{ t('common.save') }}
-      </el-button>
+      <!-- v1030：[保存] 已移到「目录」所在工具栏（icon），正文工具栏不再重复 -->
     </div>
 
     <div class="editor-host" @click="onEditorClick">

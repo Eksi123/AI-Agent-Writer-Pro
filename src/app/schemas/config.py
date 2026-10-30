@@ -28,6 +28,8 @@ class SettingsIn(BaseModel):
     font_size: int | None = Field(default=None, ge=14, le=28)
     font_family: str | None = None
     reading_width: int | None = Field(default=None, ge=20, le=80)
+    #: v1030：自动保存开关（关闭后编辑器不再定时保存，只保留手动保存）
+    autosave_enabled: bool | None = None
     #: v1028：自动保存间隔最少 10s，最多 60s
     autosave_interval_sec: int | None = Field(default=None, ge=10, le=60)
     city: str | None = Field(default=None, max_length=60)
@@ -42,6 +44,7 @@ class SettingsOut(BaseModel):
     font_size: int = 18
     font_family: str = "serif"
     reading_width: int = 42
+    autosave_enabled: bool = True
     autosave_interval_sec: int = 30
     city: str = "北京"
     pet_idle_minutes: int = 30

@@ -163,6 +163,8 @@ export interface UserSettings {
   font_size: number
   font_family: string
   reading_width: number
+  /** v1030：自动保存开关（与自动保存间隔联动） */
+  autosave_enabled: boolean
   autosave_interval_sec: number
   /** ★回落城市：浏览器定位失败/被拒时使用，不是定位结果 */
   city: string

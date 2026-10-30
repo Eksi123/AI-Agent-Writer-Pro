@@ -6,10 +6,10 @@
  * 定位失败/被拒 → /widgets/weather?refresh=true（回落通用设置的回落城市）。
  * ★城市靠定位取得；天气、温度、空气质量在**页面刷新时**都取实时数据（refresh 跳过后端缓存）。
  *
- * v1029 天气卡片三排布局：
- *   1) 城市（大字号） + 具体地址（小字号，过长省略号，光标停留显示完整地址）
- *   2) 天气 icon + 天气说明小字 ｜ 空气质量等级 + AQI 数值小字
- *   3) 温度 / 湿度 / 风速（蒲福风力等级），体感温度已删除
+ * v1030 天气卡片三排布局：
+ *   1) 城市**居中**独占最上排（大字号）；光标停留城市 → 悬浮显示完整地址
+ *   2) 天气 icon + 天气说明小字 ｜ 污染程度突出显示 + AQI 数值小字挂右下角
+ *   3) 温度{X°} 湿度{Y%} 风速{Z级}（蒲福风力等级），体感温度已删除
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { widgetsApi, type WeatherDto } from '@/api'
@@ -28,27 +28,27 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const cityLabel = computed(() => weather.value?.city || settings.settings.city || '—')
 
-/** v1029：第一排右侧「具体地址」（反向地理编码给出，可为空） */
+/** v1030：完整地址只在「城市」上悬浮展示（反向地理编码给出，可为空） */
 const addressLabel = computed(() => weather.value?.address || '')
 
-/** v1029：温度（第三排小字号，与其它指标同字号） */
+/** v1030：第三排三项都带单位前缀（温度 X° / 湿度 Y% / 风速 Z 级） */
 const tempLabel = computed(() => {
   const w = weather.value
-  if (!w || w.temperature == null) return '--'
-  return `${Math.round(w.temperature)}°`
+  if (!w || w.temperature == null) return '温度 --'
+  return `温度 ${Math.round(w.temperature)}°`
 })
 
-/** v1029：风速以「风力等级」为单位（蒲福风级 0–12 级） */
+/** v1030：风速以「风力等级」为单位（蒲福风级 0–12 级） */
 const windLabel = computed(() => {
   const level = weather.value?.wind_level
-  if (level == null) return '--'
-  return `${level}级`
+  if (level == null) return '风速 --'
+  return `风速 ${level}级`
 })
 
 const humidityLabel = computed(() => {
   const h = weather.value?.humidity
-  if (h == null) return '--'
-  return `${Math.round(h)}%`
+  if (h == null) return '湿度 --'
+  return `湿度 ${Math.round(h)}%`
 })
 
 /** 空气质量等级 → 语义色 */
@@ -124,30 +124,33 @@ onBeforeUnmount(() => {
     <div class="widget-row">
       <ZodiacPet />
       <div class="wx-card" :class="{ 'wx-loading': loading }">
-        <!-- 第一排：城市（大字号） + 具体地址（小字号，过长省略，悬停显示完整地址） -->
+        <!-- 第一排：城市居中最上排（光标停留 → 悬浮显示完整地址） -->
         <div class="wx-row wx-head">
-          <span v-if="locating" class="wx-city muted">定位中…</span>
-          <span v-else class="wx-city">{{ cityLabel }}</span>
           <span
-            v-if="addressLabel"
-            class="wx-address muted"
-            :title="addressLabel"
-          >{{ addressLabel }}</span>
+            v-if="locating"
+            class="wx-city muted"
+          >定位中…</span>
+          <span
+            v-else
+            class="wx-city"
+            :class="{ 'has-address': !!addressLabel }"
+            :title="addressLabel || undefined"
+          >{{ cityLabel }}</span>
         </div>
 
-        <!-- 第二排：左 = 天气 icon + 说明小字；右 = 空气质量 + AQI 小字 -->
+        <!-- 第二排：左 = 天气 icon + 说明小字；右 = 污染程度突出 + AQI 小字挂右下 -->
         <div class="wx-row wx-main">
           <div class="wx-weather">
             <span v-if="weather" class="wx-icon">{{ weather.icon }}</span>
             <span v-if="weather" class="wx-desc muted">{{ weather.description }}</span>
           </div>
           <div v-if="weather && weather.aqi != null" class="wx-aqi-wrap">
-            <span class="wx-aqi-text muted">{{ aqiText }}</span>
-            <span class="wx-aqi" :class="aqiClass">{{ weather.aqi }}</span>
+            <span class="wx-aqi-level" :class="aqiClass">{{ aqiText }}</span>
+            <span class="wx-aqi muted">{{ weather.aqi }}</span>
           </div>
         </div>
 
-        <!-- 第三排：温度 / 湿度 / 风速（风力等级）—— v1029 删除体感温度 -->
+        <!-- 第三排：温度 X° / 湿度 Y% / 风速 Z 级（v1030 带单位） -->
         <div v-if="weather" class="wx-row wx-meta muted">
           <span>{{ tempLabel }}</span>
           <span>{{ humidityLabel }}</span>
@@ -198,9 +201,9 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-/* 第一排：城市大字号 + 地址小字号（过长省略号，title 显示完整地址） */
+/* 第一排：城市居中独占一行（光标停留显示完整地址） */
 .wx-head {
-  align-items: baseline;
+  justify-content: center;
 }
 
 .wx-city {
@@ -208,19 +211,18 @@ onBeforeUnmount(() => {
   font-weight: 700;
   letter-spacing: 0.3px;
   white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.wx-address {
-  font-size: 10px;
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 第二排：左天气 icon+说明，右空气质量+AQI */
+/* 有完整地址可悬浮时才给「可交互」光标提示 */
+.wx-city.has-address {
+  cursor: help;
+  border-bottom: 1px dashed color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+/* 第二排：左天气 icon+说明，右污染程度突出 + AQI 小字右下 */
 .wx-main {
   justify-content: space-between;
 }
@@ -244,44 +246,54 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+/* 右侧上下两行：污染程度（突出）在上，AQI 数值（小字）在右下 */
 .wx-aqi-wrap {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   flex-shrink: 0;
+  line-height: 1;
 }
 
-.wx-aqi-text {
-  font-size: 10px;
+.wx-aqi-level {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  color: var(--text);
 }
 
 .wx-aqi {
-  font-size: 10px;
+  font-size: 9px;
   line-height: 1;
-  padding: 3px 5px;
-  border-radius: 8px;
-  color: #fff;
   white-space: nowrap;
 }
 
-/* 第三排：温度 / 湿度 / 风速（小字号） */
+/* 第三排：温度 / 湿度 / 风速（带单位，均分不拥挤） */
 .wx-meta {
   font-size: 11px;
   justify-content: space-between;
-  padding-right: 2px;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.wx-meta > span {
+  white-space: nowrap;
 }
 
 .wx-fallback {
   font-size: 12px;
 }
 
-.aqi-none { background: var(--text-muted); }
-.aqi-good { background: #52c41a; }
-.aqi-moderate { background: #d4b106; }
-.aqi-light { background: #fa8c16; }
-.aqi-mid { background: #f5222d; }
-.aqi-heavy { background: #a8071a; }
-.aqi-severe { background: #531dab; }
+/* AQI 等级语义色（v1030：染色文字，不再是小色块） */
+.aqi-none { color: var(--text-muted); }
+.aqi-good { color: #52c41a; }
+.aqi-moderate { color: #d4b106; }
+.aqi-light { color: #fa8c16; }
+.aqi-mid { color: #f5222d; }
+.aqi-heavy { color: #a8071a; }
+.aqi-severe { color: #531dab; }
 
 .muted {
   color: var(--text-muted);

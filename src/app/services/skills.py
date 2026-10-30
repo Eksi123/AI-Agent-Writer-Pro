@@ -104,6 +104,9 @@ def _dto(row: SkillConfig, *, materialized: bool | None = None) -> dict[str, Any
         "assets": assets,
         "enabled": row.enabled,
         "is_builtin": row.is_builtin,
+        #: v1030：用户自建技能即「写作技能」（与包内 `kind="writing"` 同列，前端据此归组）
+        "kind": "writing",
+        "tool_name": None,
         "materialized": materialized,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -125,8 +128,19 @@ def _extract_allowed_tools(content_md: str) -> list[str]:
     return [str(x) for x in value] if isinstance(value, list) else []
 
 
-async def list_skills(session: AsyncSession, *, include_builtin: bool = True) -> list[dict[str, Any]]:
-    """用户自建技能（DB）+ 内置工具（v1028：read/edit/list/grep/glob/web_search，只读呈现）。"""
+async def list_skills(
+    session: AsyncSession,
+    *,
+    include_builtin: bool = True,
+    include_builtin_writing: bool = False,
+) -> list[dict[str, Any]]:
+    """用户自建技能（DB）+ 内置工具（v1028：read/edit/list/grep/glob/web_search，只读呈现）。
+
+    `include_builtin_writing=True`（v1030）额外附上包内**写作技能**（novel-planning /
+    prose-writing …）。「AI 工具 → 技能管理」页只关心基础工具，故默认关闭；
+    会话级「工具添加」浮层需要它们（`builtin:{name}` id 由 `session_context_of` 解析、
+    `materialize_session_skills` 从包内目录复制到会话精选目录）。
+    """
     result: list[dict[str, Any]] = []
 
     rows = (
@@ -136,6 +150,8 @@ async def list_skills(session: AsyncSession, *, include_builtin: bool = True) ->
 
     if include_builtin:
         result.extend(_builtin_skill_dtos())
+    if include_builtin_writing:
+        result.extend(_builtin_writing_dtos())
     return result
 
 
@@ -168,8 +184,42 @@ def _builtin_skill_dtos() -> list[dict[str, Any]]:
                 "enabled": True,
                 "is_builtin": True,
                 "materialized": True,
+                #: v1030：区分「基础工具」与「包内写作技能」（后者 tool_name 为 None）
+                "kind": "tool",
                 #: 真实工具名（前端多选勾选后回传，供子代理装配解析）
                 "tool_name": item["tool"],
+                "created_at": None,
+                "updated_at": None,
+            }
+        )
+    return out
+
+
+def _builtin_writing_dtos() -> list[dict[str, Any]]:
+    """v1030：包内写作技能（`src/app/agent/skills/{name}/SKILL.md`）只读呈现。
+
+    仅用于会话级「工具添加」浮层：id 形如 `builtin:prose-writing`，
+    `session_context_of` 去掉前缀得到技能名，`materialize_session_skills` 据此复制。
+    """
+    out: list[dict[str, Any]] = []
+    for d in sorted(_builtin_dirs(), key=lambda p: p.name):
+        content = (d / "SKILL.md").read_text(encoding="utf-8") if (d / "SKILL.md").is_file() else ""
+        if not content:
+            logger.warning("builtin_writing_skill_missing", name=d.name)
+            continue
+        out.append(
+            {
+                "id": f"builtin:{d.name}",
+                "name": d.name,
+                "description": _extract_description(content),
+                "content_md": content,
+                "allowed_tools": _extract_allowed_tools(content),
+                "assets": [],
+                "enabled": True,
+                "is_builtin": True,
+                "materialized": True,
+                "kind": "writing",
+                "tool_name": None,
                 "created_at": None,
                 "updated_at": None,
             }

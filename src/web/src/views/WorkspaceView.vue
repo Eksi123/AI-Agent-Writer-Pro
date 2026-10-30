@@ -196,12 +196,7 @@ window.addEventListener('beforeunload', (e) => {
 
     <!-- 中栏 -->
     <main class="main-panel">
-      <ReaderToolbar :agent-open="agentOpen" @toggle-agent="agentOpen = !agentOpen">
-        <!-- v1029：编辑模式主页面右上方 = 卷章结构操作条 -->
-        <template #actions>
-          <EditorActionBar v-if="hasNovel && reader.mode === 'edit'" />
-        </template>
-      </ReaderToolbar>
+      <ReaderToolbar :agent-open="agentOpen" @toggle-agent="agentOpen = !agentOpen" />
 
       <!-- v1028：没有小说项目时不展示目录，提示文案改为「点击「新建小说」开始创作」 -->
       <div v-if="!hasNovel" class="empty-state">
@@ -210,9 +205,36 @@ window.addEventListener('beforeunload', (e) => {
 
       <div v-else class="main-body">
         <!-- v1029：编辑模式顶部留出「目录」浮层的高度，避免遮挡编辑器工具条按钮 -->
-        <div class="content-area flex-fill" :class="{ 'edit-mode': reader.mode === 'edit' }">
-          <!-- v1028：目录浮在阅读区域左上角，点击可展开收起 -->
-          <TocDrawer />
+        <div class="content-area flex-fill">
+          <!-- v1030：工具栏（原「目录」入口那一行）＝ 目录 + 卷章结构操作 + 保存 + 自动保存标记。
+               阅读模式保持 v1028 的悬浮样式；编辑模式为独占一行，避免遮挡编辑器工具条 -->
+          <div class="float-toolbar" :class="{ 'in-flow': reader.mode === 'edit' }">
+            <TocDrawer />
+
+            <template v-if="reader.mode === 'edit'">
+              <span class="tb-sep" />
+              <EditorActionBar v-if="hasNovel" />
+              <span class="tb-sep" />
+
+              <!-- 保存（icon） -->
+              <el-tooltip :content="t('common.save')" placement="bottom">
+                <button
+                  class="tb-icon-btn"
+                  :disabled="editorStore.saving"
+                  @click="editorStore.requestSave()"
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
+                    <path d="M5 3h11l3 3v15H5V3zm2 2v4h8V5H7zm3 8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+                  </svg>
+                </button>
+              </el-tooltip>
+
+              <!-- 自动保存标记：开启=绿色，未开启=灰色 -->
+              <span class="autosave-badge" :class="{ on: settingsStore.settings.autosave_enabled }">
+                {{ t('settings.autosaveEnabled') }}
+              </span>
+            </template>
+          </div>
 
           <!-- 阅读模式 -->
           <template v-if="reader.mode === 'read'">
@@ -265,12 +287,79 @@ window.addEventListener('beforeunload', (e) => {
   position: relative;
 }
 
-/* v1029：编辑模式顶部留出目录浮层高度，工具条按钮不再被目录遮挡 */
-.content-area.edit-mode {
-  padding-top: 42px;
+/* v1030：工具栏（「目录」所在那一行）：
+   目录 + 插入卷/章 + 重命名 + 删除 + 保存 + 自动保存标记。
+   阅读模式悬浮在左上角（v1028 行为）；编辑模式独占一行（in-flow）。 */
+.float-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-/* v1029：编辑模式操作条挂在顶部工具栏右侧，与浮在阅读区左上角的目录不在同一行，互不遮挡 */
+.float-toolbar.in-flow {
+  position: static;
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.tb-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.tb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.tb-icon-btn:hover:not(:disabled) {
+  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--el-color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--el-color-primary) 30%, transparent);
+}
+
+.tb-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 自动保存标记：文字 + 外框；开启=绿色，未开启=灰色 */
+.autosave-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.autosave-badge.on {
+  color: var(--el-color-success);
+  border-color: color-mix(in srgb, var(--el-color-success) 45%, transparent);
+  background: color-mix(in srgb, var(--el-color-success) 10%, var(--bg-panel));
+}
 
 .empty-state {
   flex: 1;

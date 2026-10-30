@@ -44,9 +44,16 @@ class SkillUpdate(BaseModel):
 
 
 @router.get("/skills")
-async def list_skills(session: AsyncSession = Depends(get_session)) -> dict:
-    """用户自建（可编辑）+ 内置（只读）技能。"""
-    return ok(await skills_service.list_skills(session))
+async def list_skills(
+    include_writing: bool = False, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """用户自建（可编辑）+ 内置（只读）技能。
+
+    `include_writing=true`（v1030）额外返回包内写作技能，供会话级「工具添加」浮层勾选。
+    """
+    return ok(
+        await skills_service.list_skills(session, include_builtin_writing=include_writing)
+    )
 
 
 @router.post("/skills")

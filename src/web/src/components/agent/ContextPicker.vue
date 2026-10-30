@@ -1,29 +1,35 @@
 <script setup lang="ts">
 /**
- * 「＋」添加内容浮层（v1029 需求 7）。
+ * 「＋」添加内容浮层（v1029 需求 7 / v1030 重做目录层级）。
  *
  * 结构（自上而下）：
- *   1) 搜索框：检索定位**应用内小说项目目录**（大纲/摘要全文检索 + 项目名过滤）；
- *   2) [小说项目大纲或文章]：点进去 → 小说列表 → 大纲与卷列表 → 卷下章节列表
- *      （★逐级跳转，跳转过程中不提供返回）；
+ *   1) 搜索框：**直接搜索小说大纲或小说章节**（关键字匹配），命中项动态展示在列表上，
+ *      并用小字标记所属「小说项目」或「小说项目/卷」；右侧清空 icon，清空后回到初始界面
+ *      （不再停留在搜索结果列表）；
+ *   2) [小说项目大纲或章节]：点进去 → 小说项目 → 「小说名_大纲 + 各卷」 → 卷下章节
+ *      （★逐级跳转，跳转过程中不提供返回；无卷则不显示卷）；
  *   3) [本地文件]：只允许**单个**文件，格式 Markdown / TXT / JSON，单文件 ≤5MB，
  *      所有已添加文件合计 ≤20MB（超限提示），问答结束后由父级释放缓存；
  *   4) 最近打开的小说章节（最多 10 条）。
  *
- * v1029：删除原「支持文本类文件（txt/md/json/csv/yaml…）」提示（约束改为隐藏校验）。
+ * v1030：点击大纲 / 章节即「添加该文件」→ 收起弹窗，输入框上方标记已添加项；
+ *        弹窗每次重新打开都回到初始界面（父级传 `open`，关闭再打开即重置层级与搜索）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { contentApi, outlineApi, searchApi } from '@/api'
+import { contentApi, outlineApi, searchApi, volumesApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import { useProjectStore } from '@/stores/project'
 import { listRecentChapters } from '@/utils/recent'
+import { formatChapterTitle, formatOutlineNode, formatVolumeTitle } from '@/utils/titles'
 import { t } from '@/i18n'
 import type { ContextBlock, Novel, Volume } from '@/types'
 
 const props = defineProps<{
   /** 当前已添加的文件字节数合计（父级持有，用于 20MB 上限） */
   attachedBytes: number
+  /** 浮层是否打开：关闭再打开时重置到初始界面 */
+  open: boolean
 }>()
 const emit = defineEmits<{
   (e: 'add', block: ContextBlock): void
@@ -32,12 +38,12 @@ const emit = defineEmits<{
 
 const project = useProjectStore()
 
-/** 浮层内的层级：novels（小说列表）→ novel（大纲+卷）→ volume（章节列表） */
+/** 浮层内的层级：novels（小说项目）→ novel（大纲+卷）→ volume（章节列表） */
 type Level = 'root' | 'novels' | 'novel' | 'volume'
 const level = ref<Level>('root')
 
 // ---------------------------------------------------------------------------
-// 搜索（检索定位应用内小说项目目录）
+// 搜索：关键字匹配小说大纲 / 小说章节（跨项目）
 // ---------------------------------------------------------------------------
 
 const keyword = ref('')
@@ -45,64 +51,142 @@ const searching = ref(false)
 const searchHits = ref<SearchHit[]>([])
 
 interface SearchHit {
-  novelTitle: string
-  /** 摘要命中的 doc_ref 为 `summaries/ch-{chapterId}.md`，可解析出章节 id */
-  chapterId?: string
+  key: string
+  /** 展示标题：大纲 = 「小说名_大纲」；章节 = 「第X章 章名」 */
   title: string
-  snippet: string
-  kind: 'outline' | 'summary'
+  /** 小字归属标记：大纲 = 小说项目；章节 = 小说项目/卷 */
+  meta: string
+  kind: 'outline' | 'chapter'
+  novelId: string
+  chapterId?: string
 }
 
-/** 项目名匹配（无关键字时不显示） */
-const novelHits = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
-  if (!q) return []
-  return project.novels.filter(
-    (n) =>
-      n.title.toLowerCase().includes(q) ||
-      (n.author_name || '').toLowerCase().includes(q) ||
-      (n.genre || '').toLowerCase().includes(q),
-  )
-})
+const SEARCH_LIMIT_PER_NOVEL = 12
 
-/** 从摘要 doc_ref 解析章节 id：`summaries/ch-{id}.md` → `{id}` */
+/** 摘要命中的 doc_ref 为 `summaries/ch-{chapterId}.md`，可解析出章节 id */
 function chapterIdOf(docRef: string): string | undefined {
   const m = /^summaries\/ch-(.+)\.md$/.exec(docRef)
   return m ? m[1] : undefined
 }
 
-async function doSearch(): Promise<void> {
-  const q = keyword.value.trim()
-  if (!q) {
-    searchHits.value = []
-    return
-  }
-  searching.value = true
+/** 单个项目内的关键字匹配：大纲正文 + 章节标题 + 章节摘要 */
+async function searchNovel(novel: Novel, q: string): Promise<SearchHit[]> {
+  const hits: SearchHit[] = []
+  const seen = new Set<string>()
+  const lower = q.toLowerCase()
+
+  // 卷章树：章节标题匹配 + 摘要命中回落到章节
+  let volumes: Volume[] = []
   try {
-    const hits: SearchHit[] = []
-    // 当前项目内做全文检索（大纲 + 章节摘要）
-    if (project.currentNovelId) {
-      const res = await searchApi.search(project.currentNovelId, q, 'all', 8)
-      for (const item of res.items ?? []) {
-        hits.push({
-          novelTitle: project.currentNovel?.title ?? '',
-          chapterId: item.kind === 'summary' ? chapterIdOf(item.doc_ref) : undefined,
-          title: item.title || item.doc_ref,
-          snippet: (item.snippet || '').slice(0, 80),
-          kind: item.kind,
+    volumes = await volumesApi.list(novel.id)
+  } catch {
+    /* 卷章读取失败时仍可用大纲检索结果 */
+  }
+
+  const chapterById = new Map<string, { vol: Volume; ch: Volume['chapters'][number]; index: number }>()
+  volumes.forEach((vol, vi) => {
+    vol.chapters.forEach((ch, ci) => chapterById.set(ch.id, { vol, ch, index: ci }))
+    // 章节标题关键字匹配
+    vol.chapters.forEach((ch, ci) => {
+      if (!ch.title.toLowerCase().includes(lower)) return
+      if (seen.has(ch.id)) return
+      seen.add(ch.id)
+      hits.push({
+        key: `${novel.id}:${ch.id}`,
+        title: formatChapterTitle(ch.title, ch.sort_order, ci),
+        meta: `${novel.title}/${formatVolumeTitle(vol.title, vol.sort_order, vi)}`,
+        kind: 'chapter',
+        novelId: novel.id,
+        chapterId: ch.id,
+      })
+    })
+  })
+
+  // 大纲正文 / 章节摘要（后端 FTS5，不可用时 LIKE 降级）
+  try {
+    const res = await searchApi.search(novel.id, q, 'all', SEARCH_LIMIT_PER_NOVEL)
+    for (const item of res.items ?? []) {
+      if (item.kind === 'outline') {
+        if (seen.has('outline')) continue
+        seen.add('outline')
+        hits.unshift({
+          key: `${novel.id}:outline`,
+          title: formatOutlineNode(novel.title),
+          meta: novel.title,
+          kind: 'outline',
+          novelId: novel.id,
         })
+        continue
       }
+      const cid = chapterIdOf(item.doc_ref)
+      const found = cid ? chapterById.get(cid) : undefined
+      if (!cid || !found || seen.has(cid)) continue
+      seen.add(cid)
+      const vi = volumes.findIndex((v) => v.id === found.vol.id)
+      hits.push({
+        key: `${novel.id}:${cid}`,
+        title: formatChapterTitle(found.ch.title, found.ch.sort_order, found.index),
+        meta: `${novel.title}/${formatVolumeTitle(found.vol.title, found.vol.sort_order, Math.max(vi, 0))}`,
+        kind: 'chapter',
+        novelId: novel.id,
+        chapterId: cid,
+      })
     }
-    searchHits.value = hits
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  } finally {
-    searching.value = false
+  } catch {
+    /* 检索失败不阻断（章节标题匹配结果仍可用） */
+  }
+
+  return hits
+}
+
+/** 搜索防抖：关键字输入停顿后再发请求（避免每键一次跨项目检索） */
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelPendingSearch(): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
   }
 }
 
+function doSearch(): void {
+  const q = keyword.value.trim()
+  cancelPendingSearch()
+  if (!q) {
+    // v1030：清空关键字 → 回到原来的状态（不留在搜索结果列表）
+    searchHits.value = []
+    searching.value = false
+    return
+  }
+  searching.value = true
+  searchTimer = setTimeout(() => void runSearch(q), 250)
+}
+
+async function runSearch(q: string): Promise<void> {
+  searchTimer = null
+  // 防抖期间用户已改关键字 / 清空 → 丢弃这次结果
+  if (keyword.value.trim() !== q) return
+  try {
+    if (!project.novels.length) await project.loadNovels().catch(() => undefined)
+    const perNovel = await Promise.all(project.novels.map((n) => searchNovel(n, q)))
+    if (keyword.value.trim() === q) searchHits.value = perNovel.flat().slice(0, 30)
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+  } finally {
+    if (keyword.value.trim() === q) searching.value = false
+  }
+}
+
+/** 搜索结果里的「清空」：手动删除内容或点清空 icon 都回到初始界面 */
+function clearSearch(): void {
+  cancelPendingSearch()
+  keyword.value = ''
+  searchHits.value = []
+  searching.value = false
+}
+
 // ---------------------------------------------------------------------------
-// 逐级下钻：小说列表 → 大纲/卷 → 章节
+// 逐级下钻：小说项目 → 大纲/卷 → 章节
 // ---------------------------------------------------------------------------
 
 const activeNovel = ref<Novel | null>(null)
@@ -111,7 +195,6 @@ const activeVolume = ref<Volume | null>(null)
 const drilling = ref(false)
 
 async function enterNovels(): Promise<void> {
-  // 需求 7-(1.3)：跳转到小说目录（跳转过程中不需要返回）
   if (!project.novels.length) await project.loadNovels().catch(() => undefined)
   level.value = 'novels'
 }
@@ -119,11 +202,12 @@ async function enterNovels(): Promise<void> {
 async function enterNovel(novel: Novel): Promise<void> {
   drilling.value = true
   try {
-    // 该小说的卷章树（大纲单独作为第一个条目展示）
-    const prevId = project.currentNovelId
-    if (prevId !== novel.id) await project.selectNovel(novel.id)
+    const volumes = await volumesApi.list(novel.id)
     activeNovel.value = novel
-    activeVolumes.value = project.volumeTree
+    // v1030：有卷代表至少有一章节内容——空卷不展示，避免进入后无内容可选
+    activeVolumes.value = [...volumes]
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .filter((v) => v.chapters.length > 0)
     level.value = 'novel'
   } catch (err) {
     ElMessage.error(errorMessage(err))
@@ -137,16 +221,19 @@ function enterVolume(vol: Volume): void {
   level.value = 'volume'
 }
 
+/** 章节按 sort_order 只读排序（★顺序不可拖拽重排） */
+function sortedChapters(vol: Volume): Volume['chapters'] {
+  return [...vol.chapters].sort((a, b) => a.sort_order - b.sort_order)
+}
+
 // ---------------------------------------------------------------------------
 // 添加：大纲 / 章节
 // ---------------------------------------------------------------------------
 
-async function addOutline(): Promise<void> {
-  const novel = activeNovel.value ?? project.currentNovel
-  if (!novel) return
+async function addOutline(novel: Novel): Promise<void> {
   try {
     const o = await outlineApi.read(novel.id)
-    emit('add', { kind: 'outline', label: `${novel.title} · ${t('agent.ctxOutline')}`, text: o.content })
+    emit('add', { kind: 'outline', label: formatOutlineNode(novel.title), text: o.content })
     emit('close')
   } catch (err) {
     ElMessage.error(errorMessage(err))
@@ -164,16 +251,12 @@ async function addChapter(chapterId: string, label: string): Promise<void> {
 }
 
 async function addSearchHit(hit: SearchHit): Promise<void> {
-  if (!hit.chapterId) {
-    // 命中大纲（或摘要无法定位到章）：把整份大纲加进来
-    const novelId = project.currentNovelId
-    if (!novelId) return
-    const o = await outlineApi.read(novelId)
-    emit('add', { kind: 'outline', label: `${hit.novelTitle} · ${t('agent.ctxOutline')}`, text: o.content })
-    emit('close')
+  if (hit.kind === 'outline') {
+    const novel = project.novels.find((n) => n.id === hit.novelId)
+    if (novel) await addOutline(novel)
     return
   }
-  await addChapter(hit.chapterId, hit.title)
+  if (hit.chapterId) await addChapter(hit.chapterId, hit.title)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,11 +309,29 @@ const recents = ref(listRecentChapters())
 onMounted(() => {
   recents.value = listRecentChapters()
 })
+onBeforeUnmount(cancelPendingSearch)
+
+/** v1030：关闭后重新打开 → 回到初始界面（可继续添加其它文件） */
+function resetToRoot(): void {
+  level.value = 'root'
+  clearSearch()
+  activeNovel.value = null
+  activeVolumes.value = []
+  activeVolume.value = null
+  recents.value = listRecentChapters()
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) resetToRoot()
+  },
+)
 </script>
 
 <template>
   <div class="ctx-picker">
-    <!-- ① 搜索框：检索定位应用内小说项目目录 -->
+    <!-- ① 搜索框：关键字匹配小说大纲 / 小说章节 -->
     <div class="picker-search">
       <el-input
         v-model="keyword"
@@ -238,6 +339,7 @@ onMounted(() => {
         :placeholder="t('agent.pickerSearchPlaceholder')"
         clearable
         @input="doSearch"
+        @clear="clearSearch"
         @keyup.enter="doSearch"
       >
         <template #prefix>
@@ -250,29 +352,17 @@ onMounted(() => {
       <div v-if="searching" class="muted text-sm picker-loading">{{ t('common.loading') }}</div>
 
       <template v-if="keyword.trim()">
-        <div v-if="novelHits.length" class="picker-label">{{ t('agent.pickerNovelMatches') }}</div>
         <button
-          v-for="n in novelHits"
-          :key="n.id"
-          class="picker-item"
-          @click="enterNovel(n)"
-        >
-          <span class="pi-title">{{ n.title }}</span>
-          <span v-if="n.genre" class="pi-meta">{{ n.genre }}</span>
-        </button>
-
-        <div v-if="searchHits.length" class="picker-label">{{ t('agent.pickerContentMatches') }}</div>
-        <button
-          v-for="(h, i) in searchHits"
-          :key="i"
-          class="picker-item"
+          v-for="h in searchHits"
+          :key="h.key"
+          class="picker-item picker-item-col"
           @click="addSearchHit(h)"
         >
           <span class="pi-title">{{ h.title }}</span>
-          <span v-if="h.snippet" class="pi-meta pi-snippet">{{ h.snippet }}</span>
+          <span class="pi-meta">{{ h.meta }}</span>
         </button>
 
-        <div v-if="!novelHits.length && !searchHits.length && !searching" class="muted text-sm picker-empty">
+        <div v-if="!searchHits.length && !searching" class="muted text-sm picker-empty">
           {{ t('agent.pickerNoMatch') }}
         </div>
       </template>
@@ -297,9 +387,8 @@ onMounted(() => {
         </button>
       </template>
 
-      <!-- 小说列表 -->
+      <!-- 小说项目（v1030：不显示「选择小说项目」提示，也不显示「X章」） -->
       <template v-else-if="level === 'novels'">
-        <div class="picker-label">{{ t('agent.pickerChooseNovel') }}</div>
         <button
           v-for="n in project.novels"
           :key="n.id"
@@ -308,59 +397,50 @@ onMounted(() => {
           @click="enterNovel(n)"
         >
           <span class="pi-title">{{ n.title }}</span>
-          <span class="pi-meta">{{ n.chapter_count }}{{ t('sidebar.chaptersUnit') }}</span>
         </button>
+        <!-- 没有小说项目：居中提示 -->
+        <div v-if="!project.novels.length" class="picker-centered muted">
+          {{ t('agent.pickerNoNovels') }}
+        </div>
       </template>
 
-      <!-- 某本小说：大纲 + 卷列表 -->
+      <!-- 某本小说：最上面「小说名_大纲」，下面各卷（无卷则不显示，不加多余内容） -->
       <template v-else-if="level === 'novel' && activeNovel">
-        <div class="picker-label">{{ activeNovel.title }}</div>
-        <button class="picker-item picker-item-strong" @click="addOutline">
-          <span class="pi-title">{{ t('agent.ctxOutline') }}</span>
-          <span class="pi-meta">{{ t('agent.pickerAddHint') }}</span>
+        <button class="picker-item picker-item-strong" @click="addOutline(activeNovel)">
+          <span class="pi-title">{{ formatOutlineNode(activeNovel.title) }}</span>
         </button>
 
-        <div class="picker-label">{{ t('agent.pickerVolumes') }}</div>
         <button
-          v-for="v in activeVolumes"
+          v-for="(v, vi) in activeVolumes"
           :key="v.id"
           class="picker-item"
           @click="enterVolume(v)"
         >
-          <span class="pi-title">第{{ v.sort_order }}卷 {{ v.title }}</span>
-          <span class="pi-meta">{{ v.chapter_count }}{{ t('sidebar.chaptersUnit') }}</span>
+          <span class="pi-title">{{ formatVolumeTitle(v.title, v.sort_order, vi) }}</span>
         </button>
-        <div v-if="!activeVolumes.length" class="muted text-sm picker-empty">
-          {{ t('common.empty') }}
-        </div>
       </template>
 
-      <!-- 某卷：章节列表 -->
+      <!-- 某卷：章节列表（点击即添加该章节） -->
       <template v-else-if="level === 'volume' && activeVolume">
-        <div class="picker-label">{{ activeVolume.title }}</div>
         <button
-          v-for="c in activeVolume.chapters"
+          v-for="(c, ci) in sortedChapters(activeVolume)"
           :key="c.id"
           class="picker-item"
-          @click="addChapter(c.id, `${activeNovel?.title ?? ''} · ${c.title}`.replace(/^ · /, ''))"
+          @click="addChapter(c.id, formatChapterTitle(c.title, c.sort_order, ci))"
         >
-          <span class="pi-title">第{{ c.sort_order }}章 {{ c.title }}</span>
-          <span class="pi-meta">{{ c.word_count }}{{ t('sidebar.wordsUnit') }}</span>
+          <span class="pi-title">{{ formatChapterTitle(c.title, c.sort_order, ci) }}</span>
         </button>
-        <div v-if="!activeVolume.chapters.length" class="muted text-sm picker-empty">
-          {{ t('common.empty') }}
-        </div>
       </template>
     </template>
 
     <!-- ④ 最近打开的小说章节（最多 10 条） -->
-    <template v-if="level === 'root' && recents.length">
+    <template v-if="level === 'root' && !keyword.trim() && recents.length">
       <div class="picker-label">{{ t('agent.pickerRecent') }}</div>
       <button
         v-for="r in recents"
         :key="r.chapterId"
         class="picker-item"
-        @click="addChapter(r.chapterId, `${r.novelTitle} · ${r.chapterTitle}`)"
+        @click="addChapter(r.chapterId, r.chapterTitle)"
       >
         <span class="pi-title">{{ r.chapterTitle }}</span>
         <span class="pi-meta">{{ r.novelTitle }}</span>
@@ -436,6 +516,13 @@ onMounted(() => {
   cursor: pointer;
 }
 
+/* 搜索结果：标题在上，所属「小说项目 / 小说项目/卷」小字在下 */
+.picker-item-col {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
 .picker-item:hover:not(:disabled) {
   background: var(--bg-hover);
 }
@@ -460,15 +547,19 @@ onMounted(() => {
 
 .pi-meta {
   flex-shrink: 0;
+  max-width: 100%;
   font-size: 11px;
   color: var(--text-muted);
-}
-
-.pi-snippet {
-  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 没有小说项目：居中提示 */
+.picker-centered {
+  padding: 22px 10px;
+  text-align: center;
+  font-size: 13px;
 }
 
 .picker-empty,

@@ -16,6 +16,8 @@ export const zh = {
     saving: '保存中…',
     delete: '删除',
     rename: '重命名',
+    /** v1030：小说项目菜单 [重命名] → [编辑] */
+    edit: '编辑',
     duplicate: '复制',
     export: '导出',
     create: '新建',
@@ -57,14 +59,15 @@ export const zh = {
     synopsisLabel: '简介',
     /** v1029：简介输入框内不再有任何提示词 */
     synopsisPlaceholder: '',
-    renameTitle: '重命名小说',
     deleteConfirmTitle: '删除小说',
     deleteConfirm: '删除后项目会移入回收站（data/trash/），列表不再显示。确定删除「{title}」吗？',
     duplicateTitle: '复制小说',
     duplicateLabel: '副本书名',
     created: '小说「{title}」创建成功',
     deleted: '小说已删除（软删除，可在 data/trash/ 恢复）',
-    renamed: '已重命名，大纲文件同步更新',
+    /** v1030：编辑小说成功（名称 / 题材 / 简介） */
+    edited: '已保存修改',
+    editTitle: '编辑小说',
     namingRejected: '书名不合法：不允许空名、默认名或纯序号名',
   },
   reader: {
@@ -80,11 +83,7 @@ export const zh = {
   },
   editor: {
     wordCount: '字数',
-    autosaveOn: '自动保存已开启（{sec} 秒）',
-    autosaveOff: '自动保存已关闭',
-    lastSaved: '上次保存 {time}',
     unsaved: '有未保存的修改',
-    saveNow: '立即保存',
     aiRewrite: 'AI 改写',
     aiExpand: 'AI 扩写',
     aiCondense: 'AI 缩写',
@@ -147,8 +146,6 @@ export const zh = {
   },
   outline: {
     title: '大纲',
-    edit: '编辑',
-    preview: '预览',
     /** v1029：大纲是创作参考，保存不再同步卷章顺序 */
     saved: '大纲已保存',
     validateOk: '大纲校验通过（{volumes} 卷 / {chapters} 章）',
@@ -201,8 +198,10 @@ export const zh = {
     fontHei: '思源黑体',
     fontKai: '霞鹜文楷',
     fontSystem: '系统默认',
-    autosaveInterval: '自动保存间隔（秒）',
-    autosaveHint: '编辑模式下辅助主动保存，最少 10 秒，最多 60 秒。',
+    /** v1030：新增自动保存开关；间隔标签去掉「（秒）」，提示改文案 */
+    autosaveEnabled: '自动保存',
+    autosaveInterval: '自动保存间隔',
+    autosaveHint: '编辑模式下辅助主动保存，时长单位为秒',
     saved: '设置已保存',
     resetDefault: '恢复默认设置',
     resetConfirmTitle: '恢复默认设置',
@@ -222,8 +221,8 @@ export const zh = {
     providerType: '协议类型',
     /** v1028：API 地址 → Base Url */
     baseUrl: 'Base Url',
-    apiKeyEnv: '密钥环境变量名',
-    apiKeyValue: 'API 密钥',
+    apiKeyEnv: '密钥名',
+    apiKeyValue: '密钥API',
     apiKeyValuePlaceholder: '保存后写入系统级环境变量，仅显示掩码',
     apiKeyConfigured: '已配置',
     apiKeyMissing: '未配置密钥',
@@ -234,8 +233,6 @@ export const zh = {
     timeoutSec: 'Time Out',
     temperature: 'Temperature',
     maxTokens: 'Max Token',
-    /** v1029：模型卡片下方小字参数行（上方为模型名称） */
-    paramSummary: 'Time Out={timeout}  Temperature={temp}  Max Token={max}',
     tempRangeHint: '取值范围 {range}（不包括 0）',
     /** v1029：不再需要「模型 ID」——名称就等于模型 ID */
     maxContext: '上下文窗口',
@@ -351,15 +348,12 @@ export const zh = {
     addContext: '添加内容',
     ctxOutline: '大纲',
     ctxLocalFile: '本地文件',
-    /** v1029：添加文件页（小说大纲或文章 / 本地文件 / 最近打开的章节） */
-    ctxNovelContent: '小说项目大纲或文章',
-    pickerSearchPlaceholder: '搜索小说项目、大纲或章节…',
-    pickerNovelMatches: '匹配的小说项目',
-    pickerContentMatches: '匹配的内容',
-    pickerNoMatch: '没有匹配的项目或内容',
-    pickerChooseNovel: '选择小说项目',
-    pickerVolumes: '卷',
-    pickerAddHint: '添加',
+    /** v1030：添加文件页（小说大纲或章节 / 本地文件 / 最近打开的章节） */
+    ctxNovelContent: '小说项目大纲或章节',
+    pickerSearchPlaceholder: '搜索小说大纲或章节…',
+    pickerNoMatch: '没有匹配的大纲或章节',
+    /** v1030：小说项目二级目录为空时的居中提示 */
+    pickerNoNovels: '还没有小说项目',
     pickerRecent: '最近打开的章节',
     tools: '工具',
     /** v1029：工具弹窗（写作子代理 / 写作技能） */
