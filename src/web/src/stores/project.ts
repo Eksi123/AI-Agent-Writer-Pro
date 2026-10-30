@@ -83,9 +83,13 @@ export const useProjectStore = defineStore('project', () => {
     return novel
   }
 
-  async function createVolume(title: string, summary = ''): Promise<Volume> {
+  /**
+   * 新建卷。
+   * v1029：`ordinal` 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
+   */
+  async function createVolume(title: string, summary = '', ordinal?: number): Promise<Volume> {
     if (!currentNovelId.value) throw new ApiError(40401, t('common.unknownError'))
-    const vol = await volumesApi.create(currentNovelId.value, title, summary)
+    const vol = await volumesApi.create(currentNovelId.value, title, summary, ordinal)
     await loadVolumes()
     return vol
   }

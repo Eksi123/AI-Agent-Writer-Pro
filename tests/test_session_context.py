@@ -88,6 +88,207 @@ class TestPinnedChapters:
         assert skill_names == {"naming"}
 
 
+class TestProjectUsage:
+    async def test_usage_counts_runs_not_messages(self, client, novel_id):
+        """★v1029：token 按 `agent_runs` 汇总，子代理（独立上下文，不进消息树）的用量也算进来。"""
+        from app.db.models import AgentRun
+        from app.db.session import session_scope
+        from app.services.agent import project_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        async with session_scope() as db:
+            db.add(
+                AgentRun(
+                    id="run-usage-1",
+                    session_id=sid,
+                    project_id=novel_id,
+                    status="completed",
+                    # run 级用量已含子代理（streaming 对带 namespace 的 chunk 同样累加）
+                    tokens_in=700,
+                    tokens_out=300,
+                )
+            )
+            await db.commit()
+
+        async with session_scope() as db:
+            usage = await project_usage(db, novel_id)
+
+        assert usage["session_count"] == 1
+        assert usage["tokens_in"] == 700
+        assert usage["tokens_out"] == 300
+        assert usage["tokens_total"] == 1000
+
+    async def test_usage_sums_multiple_runs_without_double_count(self, client, novel_id):
+        """每个 run 的 tokens 是收尾时整体赋值，逐 run 求和不会重复计数。"""
+        from app.db.models import AgentRun
+        from app.db.session import session_scope
+        from app.services.agent import project_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        async with session_scope() as db:
+            for i, (tin, tout) in enumerate([(100, 50), (200, 80)], start=1):
+                db.add(
+                    AgentRun(
+                        id=f"run-multi-{i}",
+                        session_id=sid,
+                        project_id=novel_id,
+                        status="completed",
+                        tokens_in=tin,
+                        tokens_out=tout,
+                    )
+                )
+            await db.commit()
+
+        async with session_scope() as db:
+            usage = await project_usage(db, novel_id)
+
+        assert usage["tokens_in"] == 300
+        assert usage["tokens_out"] == 130
+        assert usage["tokens_total"] == 430
+
+    async def test_usage_scoped_to_project(self, client, novel_id):
+        """用量按项目隔离：其它项目的 run 不计入。"""
+        from app.db.models import AgentRun
+        from app.db.session import session_scope
+        from app.services.agent import project_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        async with session_scope() as db:
+            db.add(
+                AgentRun(
+                    id="run-scope-1",
+                    session_id=sid,
+                    project_id=novel_id,
+                    status="completed",
+                    tokens_in=10,
+                    tokens_out=5,
+                )
+            )
+            db.add(
+                AgentRun(
+                    id="run-scope-other",
+                    session_id="other-session",
+                    project_id="other-project",
+                    status="completed",
+                    tokens_in=9999,
+                    tokens_out=9999,
+                )
+            )
+            await db.commit()
+
+        async with session_scope() as db:
+            usage = await project_usage(db, novel_id)
+
+        assert usage["tokens_total"] == 15
+
+
+class TestSessionUsage:
+    """v1029（大模型选择弹窗 1.4）：会话级上下文占用 = 最近一次 run 的输入 token。"""
+
+    @staticmethod
+    async def _add_run(session_id: str, project_id: str, run_id: str, *, tokens_in: int, started_at: str):
+        from app.db.models import AgentRun
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            db.add(
+                AgentRun(
+                    id=run_id,
+                    session_id=session_id,
+                    project_id=project_id,
+                    status="completed",
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_in // 2,
+                    started_at=started_at,
+                )
+            )
+            await db.commit()
+
+    async def test_no_runs_returns_zero(self, client, novel_id):
+        """全新会话没有任何 run → 占用 0（前端显示剩余 100%）。"""
+        from app.services.agent import session_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        usage = await client.get(f"/api/v1/agent/sessions/{sid}/usage")
+        assert usage.status_code == 200
+        assert usage.json()["data"] == {"session_id": sid, "tokens_in": 0, "tokens_out": 0}
+
+        # service 层同构
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            assert (await session_usage(db, sid))["tokens_in"] == 0
+
+    async def test_returns_most_recent_run_not_sum(self, client, novel_id):
+        """★取**最后一次** run 的 tokens_in，而非历史累加（累加会严重高估占用）。"""
+        from app.db.session import session_scope
+        from app.services.agent import session_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        # 故意乱序写入：较新的 run 先落库
+        await self._add_run(
+            sid, novel_id, "run-sess-new", tokens_in=5000, started_at="2026-10-29T12:00:00.000Z"
+        )
+        await self._add_run(
+            sid, novel_id, "run-sess-old", tokens_in=1000, started_at="2026-10-29T09:00:00.000Z"
+        )
+        await self._add_run(
+            sid, novel_id, "run-sess-mid", tokens_in=3000, started_at="2026-10-29T10:30:00.000Z"
+        )
+
+        async with session_scope() as db:
+            usage = await session_usage(db, sid)
+
+        assert usage["tokens_in"] == 5000  # 不是 9000（求和）
+        assert usage["tokens_out"] == 2500
+
+    async def test_scoped_to_session(self, client, novel_id):
+        """按会话隔离：同项目其它会话的 run 不计入。"""
+        from app.db.session import session_scope
+        from app.services.agent import session_usage
+
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+        other = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+
+        await self._add_run(
+            sid, novel_id, "run-scope-mine", tokens_in=200, started_at="2026-10-29T08:00:00.000Z"
+        )
+        await self._add_run(
+            other, novel_id, "run-scope-theirs", tokens_in=9999, started_at="2026-10-29T09:00:00.000Z"
+        )
+
+        async with session_scope() as db:
+            assert (await session_usage(db, sid))["tokens_in"] == 200
+            assert (await session_usage(db, other))["tokens_in"] == 9999
+
+    async def test_unknown_session_returns_zero(self, client, novel_id):
+        """不存在的会话 → 0（不抛异常，前端保持 100%）。"""
+        from app.db.session import session_scope
+        from app.services.agent import session_usage
+
+        async with session_scope() as db:
+            assert (await session_usage(db, "no-such-session"))["tokens_in"] == 0
+
+
 class TestSessionSkillsMaterialization:
     async def test_materialize_selected_skills(self, client, session, novel_id):
         """会话精选技能物化到 data/session-skills/{sid}/（内置复制 + 用户技能复制）。"""

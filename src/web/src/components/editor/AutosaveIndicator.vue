@@ -30,8 +30,9 @@ const type = computed<'success' | 'warning' | 'info'>(() => {
     <el-tag :type="type" size="small" effect="plain">
       {{ label }}
     </el-tag>
+    <!-- v1029：[已保存] 右边只显示「自动保存已开启（X秒）」 -->
     <span class="muted text-sm">
-      v{{ editorStore.baseVersion }} · {{ t('editor.autosaveOn', { sec: settingsStore.settings.autosave_interval_sec }) }}
+      {{ t('editor.autosaveOn', { sec: settingsStore.settings.autosave_interval_sec }) }}
     </span>
   </div>
 </template>

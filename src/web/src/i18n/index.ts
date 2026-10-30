@@ -45,13 +45,18 @@ export const zh = {
   novel: {
     createTitle: '新建小说',
     titleLabel: '书名',
-    /** v1028：输入框内提示改为「必填」，详细规则收进左上角悬浮提示 */
-    titlePlaceholder: '必填',
+    /** v1029：书名左上角用 * 标记必填；输入框内不再有任何提示词 */
+    titlePlaceholder: '',
     titleRuleHint: '书籍名称不允许为空，不允许全部为阿拉伯数字，不允许出现#$%等特殊字符，可以出现标点符号',
     authorLabel: '作者',
     genreLabel: '题材',
+    /** v1029：题材改为勾选标签，最少 1 个、最多 3 个 */
+    genreHint: '最少选择 1 个，最多选择 3 个',
+    genreRequired: '请至少选择一个题材',
+    genreTooMany: '题材最多只能选择 3 个',
     synopsisLabel: '简介',
-    synopsisPlaceholder: '必填',
+    /** v1029：简介输入框内不再有任何提示词 */
+    synopsisPlaceholder: '',
     renameTitle: '重命名小说',
     deleteConfirmTitle: '删除小说',
     deleteConfirm: '删除后项目会移入回收站（data/trash/），列表不再显示。确定删除「{title}」吗？',
@@ -74,8 +79,6 @@ export const zh = {
     emptyChapter: '本章还没有正文，切换到编辑模式开始撰写。',
   },
   editor: {
-    tabContent: '正文',
-    tabVolumes: '卷章',
     wordCount: '字数',
     autosaveOn: '自动保存已开启（{sec} 秒）',
     autosaveOff: '自动保存已关闭',
@@ -95,43 +98,67 @@ export const zh = {
   },
   volumeChapter: {
     title: '卷章管理',
-    orderHint: '卷章顺序由大纲小节先后决定，此处不可拖动重排。',
-    gotoOutline: '去大纲调整',
+    /** v1029：顺序不再由大纲派生，改为「插入」直接指定位置 */
+    orderHint: '卷章顺序可直接调整：用「插入」指定序号插入，其后各项自动顺延。',
+    gotoOutline: '去大纲编辑',
     newVolume: '新建卷',
     newChapter: '新建章',
     volumeTitleLabel: '卷名',
     chapterTitleLabel: '章名',
-    titlePlaceholder: '必填，不允许「第 1 卷」「第 1 章」等默认名或纯序号名',
+    /** v1029：弹窗内输入框不要提示词 */
+    titlePlaceholder: '',
     summaryLabel: '卷简介',
     deleteVolumeTitle: '删除卷',
     deleteVolumeConfirm:
       '删除卷「{title}」会级联删除其下 {count} 个章节（共约 {words} 字），且不可撤销。确定删除吗？',
     deleteChapterTitle: '删除章',
     deleteChapterConfirm: '确定删除章节「{title}」吗？此操作不可撤销。',
-    appendedHint: '新建的卷/章会追加到末尾；如需插到中间，请在大纲中调整小节顺序。',
+    /** v1029：删空卷的二次确认文案 */
+    deleteLastChapterConfirm:
+      '「{title}」是本卷最后一章，删除后该卷「{volume}」也会一并删除。此操作不可撤销，确定吗？',
+    /** v1029：插入弹窗 */
+    insertVolumeTitle: '插入小说卷',
+    insertChapterTitle: '插入小说章节',
+    insertBeforeVolume: '往前插入小说卷',
+    insertAfterVolume: '往后插入小说卷',
+    insertBeforeChapter: '往前插入小说章节',
+    insertAfterChapter: '往后插入小说章节',
+    ordinalLabel: '卷序号',
+    chapterOrdinalLabel: '章节序号',
+    ordinalHint: '正整数，不可与已有{kind}序号重复；1 = 插到最前面',
+    renameDialogTitle: '重命名',
+    /** v1029：重命名弹窗同时含卷名（默认填当前卷名 = 不修改） */
+    renameVolumeHint: '默认不修改卷名',
+    appendedHint: '不填序号则追加到末尾；填序号则插入到该位置（其后各项自动顺延）。',
     noMoveHint: '章节不支持跨卷移动：需换卷请在目标卷下新建同名章并复制正文。',
     volumeCreated: '卷「{title}」已创建',
     chapterCreated: '章「{title}」已创建',
+    volumeInserted: '已在第 {ordinal} 位插入卷「{title}」',
+    chapterInserted: '已在第 {ordinal} 位插入章「{title}」',
     volumeDeleted: '卷已删除（含 {count} 个章节）',
     chapterDeleted: '章已删除',
+    /** v1029：删空卷时的提示 */
+    chapterDeletedVolumeGone: '章已删除，该卷已无章节，卷「{volume}」一并删除',
     renamedOk: '已重命名',
     chaptersToBeDeleted: '将被删除的章节',
+    /** v1029：编辑模式主页面右上角的卷章操作 */
+    editNoTarget: '请先在目录中选择要操作的卷或章节',
+    deleteOutlineDenied: '大纲是整本书的创作参考，不能在此删除；如需修改请在大纲编辑器中编辑。',
   },
   outline: {
     title: '大纲',
     edit: '编辑',
     preview: '预览',
-    saved: '大纲已保存，卷章顺序已同步',
-    orderSynced: '顺序回填：卷 {volumes} 项、章 {chapters} 项',
+    /** v1029：大纲是创作参考，保存不再同步卷章顺序 */
+    saved: '大纲已保存',
     validateOk: '大纲校验通过（{volumes} 卷 / {chapters} 章）',
     validateIssues: '大纲校验发现 {count} 条提示',
     warnings: '警告',
     errors: '错误',
     missing: '缺失清单',
-    unregistered: '未在大纲登记（顺序保持并追加末尾）',
+    unregistered: '未在大纲登记（大纲仅作参考，不影响卷章结构）',
     mismatches: '名称不一致',
     linePrefix: '第 {line} 行',
-    editorHint: '请保持层级：# 为卷（或附录），## 为章；简介行以「- 简介：」开头。',
   },
   conflict: {
     title: '内容冲突',
@@ -182,8 +209,6 @@ export const zh = {
     resetConfirm: '将把主题、字号、字体、自动保存间隔等全部恢复为默认值，确定吗？',
     resetDone: '已恢复默认设置',
     back: '返回',
-    appearance: '外观',
-    editing: '编辑',
   },
   aiTools: {
     /** v1028：AI 工具 → AI 设置 */
@@ -199,19 +224,20 @@ export const zh = {
     baseUrl: 'Base Url',
     apiKeyEnv: '密钥环境变量名',
     apiKeyValue: 'API 密钥',
-    apiKeyValuePlaceholder: '保存后写入环境变量，仅显示掩码',
+    apiKeyValuePlaceholder: '保存后写入系统级环境变量，仅显示掩码',
     apiKeyConfigured: '已配置',
     apiKeyMissing: '未配置密钥',
     /** v1028：添加 Provider → 添加大模型（右上角） */
     addProvider: '添加大模型',
     /** v1028：大模型级常用参数 */
-    timeoutSec: '超时时长',
+    /** v1029：超时时长 → Time Out */
+    timeoutSec: 'Time Out',
     temperature: 'Temperature',
     maxTokens: 'Max Token',
-    paramSummary: '超时 {timeout}s · Temperature {temp} · Max Token {max}',
+    /** v1029：模型卡片下方小字参数行（上方为模型名称） */
+    paramSummary: 'Time Out={timeout}  Temperature={temp}  Max Token={max}',
     tempRangeHint: '取值范围 {range}（不包括 0）',
-    modelId: '模型 ID',
-    modelIdPlaceholder: '如 qwen-plus / gpt-4o-mini / claude-sonnet-4-5',
+    /** v1029：不再需要「模型 ID」——名称就等于模型 ID */
     maxContext: '上下文窗口',
     isDefault: '设为默认',
     testConnection: '测试连接',
@@ -266,8 +292,12 @@ export const zh = {
     panelTooltip: '来试试AI写作功能吧，它可以实现创作小说、润色大纲、检验剧情、剧情汇总等等功能',
     expand: '展开 AI 写作助手',
     collapse: '收起 AI 会话框',
-    /** v1028：头部展示当前会话数量 + 当前小说项目 token 使用量 */
-    sessionCount: '{n} 个会话',
+    /** v1029：右栏可向左拉伸（最多到主页面的 1/3） */
+    resizeHint: '按住拖动可调整会话框宽度（最宽到主页面的 1/3）',
+    /** v1029：头部展示当前会话数量 + 当前小说项目 token 使用量（无模型提示已删除） */
+    sessionCount: '{n}个会话',
+    /** v1029：头部 token 用量带单位（x.yK Token） */
+    tokenTotal: '{n}K Token',
     tokenUsage: '{used}K / {window}K',
     tokenUsageOnly: '已用 {used}K tokens',
     sessionLabel: '会话',
@@ -320,17 +350,28 @@ export const zh = {
     /** v1028：输入框内的 + / 工具 / Model */
     addContext: '添加内容',
     ctxOutline: '大纲',
-    ctxChapters: '章节',
     ctxLocalFile: '本地文件',
-    ctxCurrentChapter: '当前章',
+    /** v1029：添加文件页（小说大纲或文章 / 本地文件 / 最近打开的章节） */
+    ctxNovelContent: '小说项目大纲或文章',
+    pickerSearchPlaceholder: '搜索小说项目、大纲或章节…',
+    pickerNovelMatches: '匹配的小说项目',
+    pickerContentMatches: '匹配的内容',
+    pickerNoMatch: '没有匹配的项目或内容',
+    pickerChooseNovel: '选择小说项目',
+    pickerVolumes: '卷',
+    pickerAddHint: '添加',
+    pickerRecent: '最近打开的章节',
     tools: '工具',
-    toolsSubagents: '子代理',
-    toolsSkills: '技能',
-    toolsMcp: 'MCP 服务',
+    /** v1029：工具弹窗（写作子代理 / 写作技能） */
+    toolsWritingSubagents: '写作子代理',
+    toolsWritingSkills: '写作技能',
     model: 'Model',
     modelOff: 'Model Off',
     contextUsage: '上下文使用情况',
-    noModelsHint: '尚未配置大模型，请先到左下角「AI 设置」添加。',
+    /** v1029（1.4）：Model Off 右侧「剩余上下文百分比」= 1 − 已占用token ÷ 窗口总容量 */
+    contextRemaining: '{n}%',
+    /** v1029：未配置大模型时的提示（只在模型弹窗内出现；会话框上方不再提示） */
+    noModelsHint: '尚未配置大模型',
     generateChapter: '生成本章',
   },
   health: {
@@ -342,6 +383,27 @@ export const zh = {
 export type I18nKey = string
 
 type Dict = Record<string, unknown>
+
+/**
+ * v1029：可勾选的题材标签（新建小说弹窗）。最多勾选 3 个、最少 1 个。
+ * 与后端 `novel.yaml` 的 `genre`（字符串）对应——多选用「、」连接存储，单值直接存。
+ */
+export const GENRE_OPTIONS: readonly string[] = [
+  '玄幻',
+  '仙侠',
+  '武侠',
+  '都市',
+  '架空历史',
+  '奇幻',
+  '科幻',
+  '悬疑',
+  '游戏',
+  '军事',
+  '历史',
+  '现实',
+  '言情',
+  '同人',
+]
 
 /** 简单插值：t('novel.created', { title: 'x' }) → 小说「x」创建成功 */
 export function t(key: string, vars?: Record<string, string | number>): string {

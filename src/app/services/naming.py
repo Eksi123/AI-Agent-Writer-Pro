@@ -95,13 +95,42 @@ def validate_novel_title(title: str | None) -> str:
 
 
 def validate_volume_title(title: str | None) -> str:
-    """校验卷名。"""
-    return _validate(title, kind="卷名")
+    """校验卷名（v1029：与书名同一套规则）。"""
+    return _validate_structural_title(title, kind="卷名")
 
 
 def validate_chapter_title(title: str | None) -> str:
-    """校验章名。"""
-    return _validate(title, kind="章名")
+    """校验章名（v1029：与书名同一套规则）。"""
+    return _validate_structural_title(title, kind="章名")
+
+
+def _validate_structural_title(title: str | None, *, kind: str) -> str:
+    """卷名 / 章名校验（v1029）。
+
+    需求「卷名或章节名的命名规则和书名的命名规则一样」：
+    不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；可以出现标点符号。
+    """
+    if title is None:
+        raise NamingInvalidError(f"{kind}不允许为空")
+
+    name = normalize_for_check(title)
+    if not name:
+        raise NamingInvalidError(f"{kind}不允许为空")
+
+    if len(name) > 200:
+        raise NamingInvalidError(f"{kind}过长（最多 200 字符）")
+
+    digits_only = name.replace(" ", "")
+    if digits_only and digits_only.isdigit():
+        raise NamingInvalidError(f"{kind}不允许全部为阿拉伯数字「{name}」")
+
+    bad = sorted({ch for ch in name if ch in _SPECIAL_CHARS})
+    if bad:
+        raise NamingInvalidError(
+            f"{kind}不允许出现特殊字符 {' '.join(bad)}（可以出现标点符号）"
+        )
+
+    return name
 
 
 def _validate(title: str | None, *, kind: str) -> str:

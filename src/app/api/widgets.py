@@ -53,9 +53,15 @@ async def widget_weather(
     if latitude is not None and longitude is not None:
         located = await weather_service.reverse_geocode(latitude, longitude)
         label = (located or {}).get("city") or city or await _fallback_city(session)
+        # v1029：组件第一排要展示「具体地址」（反向地理编码给出）
+        address = (located or {}).get("address") or ""
         return ok(
             await weather_service.current_weather_by_coords(
-                latitude, longitude, city_label=label, force_refresh=refresh
+                latitude,
+                longitude,
+                city_label=label,
+                address_label=address,
+                force_refresh=refresh,
             )
         )
 

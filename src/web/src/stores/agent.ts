@@ -80,6 +80,8 @@ export const useAgentStore = defineStore('agent', () => {
   async function loadSessions(novelId: string): Promise<void> {
     loading.value = true
     error.value = null
+    // v1029：切换小说项目 → 上下文占用清零（剩余比例回到 100%）
+    lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     try {
       sessions.value = await agentApi.listSessions(novelId)
       await loadUsage(novelId)
@@ -131,6 +133,7 @@ export const useAgentStore = defineStore('agent', () => {
     stopStream()
     currentSessionId.value = null
     messages.value = []
+    lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     pendingInterrupt.value = null
     pendingConsult.value = null
     streaming.value = []
@@ -158,12 +161,24 @@ export const useAgentStore = defineStore('agent', () => {
     gateRetryCount.value = 0
     gateG1Skipped.value = false
     gateResults.value = {}
+    // v1029：先清零（→ 剩余 100%），再按该会话最近一次 run 还原真实占用；
+    // 全新会话没有任何 run，还原结果仍是 0，故「新会话回到 100%」自然成立。
+    lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     try {
       const tree: MessageTree = await agentApi.getMessages(sessionId)
       messages.value = tree.items.filter((m) => m.in_active_path)
       activeLeafId.value = tree.active_leaf_id ?? null
     } catch (err) {
       error.value = errorMessage(err)
+    }
+    try {
+      const u = await agentApi.sessionUsage(sessionId)
+      // 用户在拉取期间又切走 → 丢弃过期结果，避免把别的会话用量算进来
+      if (currentSessionId.value === sessionId) {
+        lastUsage.value = { tokens_in: u.tokens_in, tokens_out: u.tokens_out }
+      }
+    } catch {
+      /* 用量读取失败不阻断会话：保持 100% */
     }
   }
 
@@ -190,6 +205,7 @@ export const useAgentStore = defineStore('agent', () => {
     if (currentSessionId.value === id) {
       currentSessionId.value = null
       messages.value = []
+      lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     }
   }
 
@@ -212,7 +228,8 @@ export const useAgentStore = defineStore('agent', () => {
       })
       currentRunId = runId
       running.value = true
-      lastUsage.value = { tokens_in: 0, tokens_out: 0 }
+      // v1029：**不**清零 lastUsage——上下文只增不减，清零会让百分比闪回 100%；
+      // 保留上一次的值直到本次 run 的 usage 事件刷新它。
       startStream(runId)
     } catch (err) {
       error.value = errorMessage(err)
@@ -238,7 +255,7 @@ export const useAgentStore = defineStore('agent', () => {
       })
       currentRunId = runId
       running.value = true
-      lastUsage.value = { tokens_in: 0, tokens_out: 0 }
+      // v1029：同 postMessage，不清零（避免百分比闪回 100%）
       startStream(runId)
     } catch (err) {
       error.value = errorMessage(err)

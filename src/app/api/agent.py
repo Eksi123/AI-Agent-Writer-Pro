@@ -77,6 +77,16 @@ async def get_usage(
     return ok(await agent_service.project_usage(session, novel_id))
 
 
+@router.get("/sessions/{session_id}/usage")
+async def get_session_usage(session_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+    """会话上下文占用（v1029：大模型选择弹窗右侧「剩余上下文百分比」）。
+
+    返回最近一次 run 的输入 token——重新进入历史会话时用它还原占用，
+    否则旧会话会被错误显示为 100% 剩余。
+    """
+    return ok(await agent_service.session_usage(session, session_id))
+
+
 @router.post("/sessions")
 async def create_session(body: AgentSessionCreate, session: AsyncSession = Depends(get_session)) -> dict:
     dto = await agent_service.create_session(

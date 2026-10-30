@@ -31,6 +31,16 @@ _AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 _TIMEOUT = 10.0
 _CACHE_TTL_SEC = 600  # 天气缓存 10 分钟（组件轮询友好）
 
+
+def _client() -> httpx.AsyncClient:
+    """统一构造 HTTP 客户端：**必须开启 follow_redirects**。
+
+    httpx 默认**不**跟随重定向，而 BigDataCloud 反向地理编码已改为
+    `api.bigdatacloud.net` → 307 → `api-bdc.io`；不跟随就会拿到 3xx，
+    `raise_for_status()` 抛错，导致「具体地址」永远为空（v1029 需求 1.2 失效）。
+    """
+    return httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True)
+
 #: WMO 天气代码 → 中文描述与图标（open-meteo weathercode）
 _WMO: dict[int, tuple[str, str]] = {
     0: ("晴", "☀️"),
@@ -99,7 +109,7 @@ async def geocode(city: str) -> dict[str, Any]:
         return cached
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with _client() as client:
             resp = await client.get(
                 _GEOCODE_URL, params={"name": city, "count": 1, "language": "zh", "format": "json"}
             )
@@ -125,8 +135,52 @@ async def geocode(city: str) -> dict[str, Any]:
     return out
 
 
+def _build_address(payload: dict[str, Any], city: str) -> str:
+    """由反向地理编码结果拼「具体地址」（省 + 市 + 区县/街道）。
+
+    v1029：组件第一排「城市（大字号）+ 具体地址（小字号）」中的地址来源。
+    只取 `adminLevel >= 4` 的行政区（跳过国家），并与 `locality` 去重后拼接。
+    """
+    parts: list[str] = []
+
+    admin = ((payload.get("localityInfo") or {}).get("administrative") or [])
+    # BigDataCloud 按 order 从大到小（国 → 省 → 市 → 区）返回
+    ordered = sorted(
+        (item for item in admin if isinstance(item, dict)),
+        key=lambda item: int(item.get("order") or 0),
+    )
+    for item in ordered:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        level = item.get("adminLevel")
+        # adminLevel 2 = 国家；只保留省及以下，地址才「具体」
+        if level is not None and int(level) < 4:
+            continue
+        parts.append(name)
+
+    for extra in ("principalSubdivision", "city", "locality"):
+        name = str(payload.get(extra) or "").strip()
+        if name:
+            parts.append(name)
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for name in parts:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append(name)
+
+    if city and city not in unique:
+        unique.insert(0, city)
+    # 城市已用大字号单独展示，地址里去掉重复的城市名（省 / 区县 / 街道更「具体」）
+    tail = [name for name in unique if name != city] or unique
+    return " ".join(tail[:4])
+
+
 async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any] | None:
-    """坐标 → 城市名（BigDataCloud 免费反向地理编码，中文支持）。
+    """坐标 → 城市名 + 具体地址（BigDataCloud 免费反向地理编码，中文支持）。
 
     失败返回 None（调用方回落 settings.city），不抛异常——定位是增强功能非关键路径。
     """
@@ -135,7 +189,7 @@ async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any] |
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with _client() as client:
             resp = await client.get(
                 "https://api.bigdatacloud.net/data/reverse-geocode-client",
                 params={"latitude": latitude, "longitude": longitude, "localityLanguage": "zh"},
@@ -149,33 +203,101 @@ async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any] |
     city = payload.get("city") or payload.get("locality") or payload.get("principalSubdivision")
     if not city:
         return None
-    out = {"city": str(city), "latitude": latitude, "longitude": longitude}
+    out = {
+        "city": str(city),
+        "address": _build_address(payload, str(city)),
+        "latitude": latitude,
+        "longitude": longitude,
+    }
     _cache_set(key, out)
     return out
 
 
+#: 风力等级（蒲福风级）：(风速上限 km/h, 级别) —— v1029 组件第三排「风速（级别为单位）」
+_WIND_LEVELS = (
+    (1, 0),
+    (6, 1),
+    (12, 2),
+    (20, 3),
+    (29, 4),
+    (39, 5),
+    (50, 6),
+    (62, 7),
+    (75, 8),
+    (89, 9),
+    (103, 10),
+    (118, 11),
+)
+
+
+def wind_level(speed_kmh: float | None) -> int | None:
+    """风速（km/h）→ 蒲福风力等级（0–12）。None 返回 None。"""
+    if speed_kmh is None:
+        return None
+    try:
+        speed = float(speed_kmh)
+    except (TypeError, ValueError):
+        return None
+    for upper, level in _WIND_LEVELS:
+        if speed < upper:
+            return level
+    return 12
+
+
 async def current_weather(city: str, *, force_refresh: bool = False) -> dict[str, Any]:
-    """按城市名取当前天气（geocode → forecast）。"""
+    """按城市名取当前天气（geocode → forecast）。
+
+    v1029：组件第一排要展示「具体地址」。城市名路径先 geocode 拿到坐标，再
+    **反向地理编码**得到与坐标路径一致的精确地址（区/街道）；反向地理编码失败
+    （离线、限流等）时回落 geocode 的 `admin1`（省/州），仍失败则留空——
+    **地址缺失绝不影响天气主数据**。
+    """
     geo = await geocode(city)
+    label = str(geo.get("city") or "").strip()
+
+    located = None
+    try:
+        located = await reverse_geocode(geo["latitude"], geo["longitude"])
+    except Exception as exc:  # noqa: BLE001 - 地址是锦上添花，任何异常都不得阻断天气
+        logger.info("current_weather_address_fallback", city=city, error=str(exc))
+
+    address = str((located or {}).get("address") or "").strip()
+    if not address:
+        address = str(geo.get("admin1") or "").strip()
+    # 省名与城市名重合（直辖市「北京/北京市」等）时不重复展示
+    if address and (address == label or address.startswith(label) or label.startswith(address)):
+        address = ""
+
     return await current_weather_by_coords(
-        geo["latitude"], geo["longitude"], city_label=geo["city"], force_refresh=force_refresh
+        geo["latitude"],
+        geo["longitude"],
+        city_label=label,
+        address_label=address,
+        force_refresh=force_refresh,
     )
 
 
 async def current_weather_by_coords(
-    latitude: float, longitude: float, *, city_label: str = "", force_refresh: bool = False
+    latitude: float,
+    longitude: float,
+    *,
+    city_label: str = "",
+    address_label: str = "",
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """按坐标取当前天气（含空气质量 AQI；AQI 失败不影响天气主数据）。
 
     `force_refresh=True` 时跳过缓存，保证「刷新页面即取实时数据」。
     """
-    key = f"cw:{round(latitude, 2)}:{round(longitude, 2)}"
+    # 缓存键含地址标签：同一坐标可能被「坐标路径（精确地址）」和「城市名路径
+    # （admin1 粗地址）」分别调用，天气数据相同但展示地址不同，分开缓存避免串味。
+    key = f"cw:{round(latitude, 2)}:{round(longitude, 2)}:{address_label}"
     cached = None if force_refresh else _cache_get(key)
     if cached is not None:
         return cached
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with _client() as client:
             resp = await client.get(
                 _FORECAST_URL,
                 params={
@@ -195,14 +317,17 @@ async def current_weather_by_coords(
     current = payload.get("current") or {}
     desc, icon = describe_weathercode(current.get("weather_code"))
     aqi = await air_quality(latitude, longitude, force_refresh=force_refresh)
+    wind_speed = current.get("wind_speed_10m")
     out = {
         "city": city_label,
+        "address": address_label,
         "latitude": latitude,
         "longitude": longitude,
         "temperature": current.get("temperature_2m"),
         "apparent_temperature": current.get("apparent_temperature"),
         "humidity": current.get("relative_humidity_2m"),
-        "wind_speed": current.get("wind_speed_10m"),
+        "wind_speed": wind_speed,
+        "wind_level": wind_level(wind_speed),
         "weather_code": current.get("weather_code"),
         "description": desc,
         "icon": icon,
@@ -244,7 +369,7 @@ async def air_quality(latitude: float, longitude: float, *, force_refresh: bool 
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with _client() as client:
             resp = await client.get(
                 _AIR_QUALITY_URL,
                 params={
@@ -284,7 +409,7 @@ async def forecast(city: str, days: int = 3) -> dict[str, Any]:
         return cached
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with _client() as client:
             resp = await client.get(
                 _FORECAST_URL,
                 params={

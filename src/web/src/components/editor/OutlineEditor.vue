@@ -3,8 +3,9 @@
  * 大纲编辑器：markdown **源码编辑器**（等宽文本框）+ 编辑/预览切换。
  *
  * 用源码编辑而非富文本，是为了保证 `# 卷 / ## 章` 层级格式不被破坏。
- * ★保存经 `PUT /novels/{id}/outline`，后端执行 sync_order_from_outline 回填卷章顺序，
- *   随后调用 validate 把「名称不一致 / 序数与顺序冲突 / 未登记」以警告条提示（不阻断保存）。
+ * ★v1029：大纲降级为「参考资料」（AI 生成正文的重要依据），保存**不再回填卷章顺序**；
+ *   卷章结构由编辑模式右上角的操作条维护（插入卷/章、重命名、删除）。
+ *   保存后仍调用 validate 把「名称不一致 / 序数与顺序差异 / 未登记」以警告条提示（不阻断保存）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -34,9 +35,6 @@ const previewHtml = computed(() => DOMPurify.sanitize(md.render(content.value ||
 
 const warnings = computed(() => validation.value?.issues.filter((i) => i.level === 'warning') ?? [])
 const errors = computed(() => validation.value?.issues.filter((i) => i.level === 'error') ?? [])
-
-/** 保存后顺序回填的提示文案 */
-const syncHint = ref('')
 
 async function load(): Promise<void> {
   if (!project.currentNovelId) return
@@ -70,20 +68,9 @@ async function save(): Promise<void> {
   try {
     const data = await outlineApi.save(project.currentNovelId, content.value)
     savedContent.value = data.content
-    const sync = data.order_sync
-    if (sync) {
-      syncHint.value = t('outline.orderSynced', {
-        volumes: sync.volumes_updated,
-        chapters: sync.chapters_updated,
-      })
-      if (sync.warnings.length) {
-        // 未登记/无匹配的提示交给下方警告条展示
-        validation.value = null
-      }
-    }
+    // v1029：大纲是参考资料，保存不再回填卷章顺序（只读差异提示由校验警告条承载）
     ElMessage.success(t('outline.saved'))
     await validateOnly()
-    // 顺序可能已变，刷新卷章树
     await project.loadVolumes()
     emit('saved')
   } catch (err) {
@@ -113,7 +100,7 @@ watch(() => project.currentNovelId, load)
           <el-radio-button :value="false">{{ t('outline.edit') }}</el-radio-button>
           <el-radio-button :value="true">{{ t('outline.preview') }}</el-radio-button>
         </el-radio-group>
-        <span class="muted text-sm">{{ t('outline.editorHint') }}</span>
+        <!-- v1029：删除「请保持层级：# 为卷（或附录），## 为章…」提示 -->
       </div>
       <div class="row">
         <el-tag v-if="dirty" type="warning" size="small" effect="plain">{{ t('editor.unsaved') }}</el-tag>
@@ -146,7 +133,6 @@ watch(() => project.currentNovelId, load)
 
     <el-alert v-if="validation && !validation.ok && !errors.length" type="info" :closable="false" class="mb8">
       {{ t('outline.validateOk', { volumes: validation.volume_count, chapters: validation.chapter_count }) }}
-      <span v-if="syncHint" class="muted"> · {{ syncHint }}</span>
     </el-alert>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb8" />
@@ -156,7 +142,6 @@ watch(() => project.currentNovelId, load)
       v-model="content"
       class="outline-editor flex-fill"
       spellcheck="false"
-      :placeholder="t('outline.editorHint')"
     />
 
     <div v-if="previewMode" class="scroll-y flex-fill preview">

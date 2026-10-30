@@ -1,13 +1,15 @@
 <script setup lang="ts">
 /**
- * 大模型管理（v1028）：扁平化「一条 = 一个大模型」。
+ * 大模型管理（v1028 扁平化 / v1029 展示调整）：一条 = 一个大模型。
  *
- * 列表：左侧模型名称（加粗大字）+ 名称右边小字灰色显示 超时时长 / Temperature / Max Token；
- *       右侧 测试连接 / 编辑 / 删除 三个按钮。其余多余信息不展示。
- * 弹窗：无顶部标题，填写框整体左移；协议类型只三种（OpenAI Chat Completions /
- *       Anthropic Messages / Google Gemini，默认前者）；Base Url；密钥环境变量名（手动输入）；
- *       API 密钥（保存后写入环境变量，仅显示掩码）；超时时长（10~60s，默认 30）；
- *       Temperature（按协议类型校验范围，不含 0）；Max Token（默认 2048，不限上限）。全部必填。
+ * 列表（v1029）：上方显示模型名称，下方用小字号显示 `Time Out=X  Temperature=X  Max Token=X`；
+ *       右侧 测试连接 / 编辑 / 删除 三个按钮。
+ * 弹窗：无顶部标题；v1029 设置名字号更小、一行展示，输入框收窄（不再挡住右上角 ×）。
+ *       协议类型只三种（OpenAI Chat Completions / Anthropic Messages / Google Gemini）；
+ *       Base Url；密钥环境变量名（可任意命名，仅排除与配置项同名的保留键）；
+ *       API 密钥（保存后写入系统级环境变量，仅显示掩码）；
+ *       Time Out（10~60s，默认 30）；Temperature（按协议类型校验范围，不含 0）；
+ *       Max Token（默认 2048）。全部必填。
  *
  * ★后端仍是 Provider + Model 两级：这里把二者收敛为一条配置——保存 Provider 的同时
  *   维护其**唯一伴随模型**（model_id 必填，否则无法真正调用大模型）。
@@ -67,7 +69,6 @@ const editing = ref<LlmProviderDto | null>(null)
 
 const form = reactive({
   name: '',
-  model_id: '',
   type: 'openai_compatible' as ProviderType,
   base_url: '',
   api_key_env: '',
@@ -93,10 +94,9 @@ const tempError = computed(() => {
   return ''
 })
 
-/** 全部配置必填 */
+/** 全部配置必填（v1029：模型 ID 即名称，不再单独填写） */
 const formError = computed(() => {
   if (!form.name.trim()) return '名称为必填'
-  if (!form.model_id.trim()) return '模型 ID 为必填'
   if (!form.api_key_env.trim()) return '密钥环境变量名为必填'
   if (!editing.value && !form.api_key_value.trim()) return 'API 密钥为必填'
   if (form.timeout_sec == null || form.timeout_sec < 10 || form.timeout_sec > 60) {
@@ -109,8 +109,8 @@ const formError = computed(() => {
 
 function openDialog(p?: LlmProviderDto): void {
   editing.value = p ?? null
+  // v1029：编辑时名称回填（旧数据的名称与模型 ID 本就一致；若不一致以名称为准）
   form.name = p?.name ?? ''
-  form.model_id = p?.models?.[0]?.model_id ?? ''
   form.type = normalizeProtocol(p?.type ?? 'openai_compatible')
   form.base_url = p?.base_url ?? ''
   form.api_key_env = p?.api_key_env ?? ''
@@ -136,8 +136,9 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
+    // v1029：名称就等于模型 ID（不再有独立的「模型 ID」字段）
     const name = form.name.trim()
-    const modelId = form.model_id.trim()
+    const mid = name
     const payload = {
       name,
       type: form.type,
@@ -156,22 +157,22 @@ async function save(): Promise<void> {
       provider = await llmApi.createProvider(payload)
     }
 
-    // 维护唯一伴随模型（model_id 变化时先删旧的）
+    // 维护唯一伴随模型（名称/模型 ID 变化时先删旧的）
     const existing: LlmModelDto[] = provider.models ?? []
     for (const m of existing) {
-      if (m.model_id !== modelId) await llmApi.deleteModel(m.id)
+      if (m.model_id !== mid) await llmApi.deleteModel(m.id)
     }
-    const keep = existing.find((m) => m.model_id === modelId)
+    const keep = existing.find((m) => m.model_id === mid)
     if (keep) {
       await llmApi.updateModel(keep.id, {
-        model_id: modelId,
+        model_id: mid,
         display_name: name,
         is_default: keep.is_default,
       })
     } else {
       await llmApi.createModel({
         provider_id: provider.id,
-        model_id: modelId,
+        model_id: mid,
         display_name: name,
         is_default: existing.length === 0,
       })
@@ -232,14 +233,18 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
     <el-empty v-if="!providers.length" :description="t('aiTools.noProviders')" :image-size="80" />
 
-    <!-- 扁平列表：一条 = 一个大模型 -->
+    <!-- v1029：一条 = 一个大模型；上方模型名称，下方小字参数行 -->
     <div v-for="p in providers" :key="p.id" class="model-row">
       <div class="row-left">
-        <span class="model-name">{{ p.name }}</span>
-        <span class="model-params">{{ paramSummary(p) }}</span>
-        <el-tag v-if="!p.api_key_configured" size="small" type="danger" effect="plain">
-          {{ t('aiTools.apiKeyMissing') }}
-        </el-tag>
+        <div class="model-text">
+          <div class="model-name">
+            {{ p.name }}
+            <el-tag v-if="!p.api_key_configured" size="small" type="danger" effect="plain">
+              {{ t('aiTools.apiKeyMissing') }}
+            </el-tag>
+          </div>
+          <div class="model-params">{{ paramSummary(p) }}</div>
+        </div>
       </div>
       <div class="row-actions">
         <el-button size="small" :loading="testingId === p.id" @click="testProvider(p)">
@@ -252,34 +257,32 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
       </div>
     </div>
 
-    <!-- 配置弹窗：无顶部标题，填写框整体左移 -->
-    <el-dialog v-model="dialogVisible" width="560px" :show-close="true" class="provider-dialog">
-      <el-form :model="form" label-width="118px" label-position="left">
+    <!-- 配置弹窗：无顶部标题；v1029 设置名字号更小、输入框收窄（不再挡住右上角 ×） -->
+    <el-dialog v-model="dialogVisible" width="480px" :show-close="true" class="provider-dialog">
+      <el-form :model="form" label-width="104px" label-position="left" size="small">
         <el-form-item :label="t('aiTools.providerName')" required>
-          <el-input v-model="form.name" maxlength="100" />
-        </el-form-item>
-
-        <el-form-item :label="t('aiTools.modelId')" required>
-          <el-input v-model="form.model_id" :placeholder="t('aiTools.modelIdPlaceholder')" maxlength="120" />
+          <!-- v1029：名称即模型 ID（不再有单独的「模型 ID」输入框） -->
+          <el-input v-model="form.name" class="field" maxlength="100" />
         </el-form-item>
 
         <el-form-item :label="t('aiTools.providerType')" required>
-          <el-select v-model="form.type" class="full" @change="onProtocolChange">
+          <el-select v-model="form.type" class="field" @change="onProtocolChange">
             <el-option v-for="o in PROTOCOLS" :key="o.value" :value="o.value" :label="o.label" />
           </el-select>
         </el-form-item>
 
         <el-form-item :label="t('aiTools.baseUrl')" required>
-          <el-input v-model="form.base_url" maxlength="300" />
+          <el-input v-model="form.base_url" class="field" maxlength="300" />
         </el-form-item>
 
         <el-form-item :label="t('aiTools.apiKeyEnv')" required>
-          <el-input v-model="form.api_key_env" placeholder="如 QWEN_API_KEY" maxlength="80" />
+          <el-input v-model="form.api_key_env" class="field" maxlength="80" />
         </el-form-item>
 
         <el-form-item :label="t('aiTools.apiKeyValue')" :required="!editing">
           <el-input
             v-model="form.api_key_value"
+            class="field"
             type="password"
             show-password
             :placeholder="t('aiTools.apiKeyValuePlaceholder')"
@@ -288,17 +291,17 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
         <el-form-item :label="t('aiTools.timeoutSec')" required>
           <!-- 左右带增减按钮的数字框：默认 30s，最少 10s，最多 60s -->
-          <el-input-number v-model="form.timeout_sec" :min="10" :max="60" :step="1" />
+          <el-input-number v-model="form.timeout_sec" :min="10" :max="60" :step="1" size="small" class="num" />
           <span class="unit muted">s</span>
         </el-form-item>
 
         <el-form-item :label="t('aiTools.temperature')" required>
-          <el-input v-model.number="form.temperature" class="temp-input" type="number" step="0.1" />
+          <el-input v-model.number="form.temperature" class="num" type="number" step="0.1" />
           <span class="hint muted">{{ tempRangeHint }}</span>
         </el-form-item>
 
         <el-form-item :label="t('aiTools.maxTokens')" required>
-          <el-input v-model.number="form.max_tokens" class="temp-input" type="number" :min="1" />
+          <el-input v-model.number="form.max_tokens" class="num" type="number" :min="1" />
         </el-form-item>
       </el-form>
 
@@ -340,21 +343,33 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   align-items: baseline;
   gap: 10px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex: 1;
 }
 
-/* v1028：模型名称加粗、字号大一点 */
+/* v1029：模型名称在上，参数小字在下（两行） */
+.model-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
 .model-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 700;
-  white-space: nowrap;
+  min-width: 0;
 }
 
-/* 名称右边小字灰色显示参数 */
+/* v1029：名称下方小字号显示 Time Out / Temperature / Max Token */
 .model-params {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row-actions {
@@ -364,18 +379,20 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   flex-shrink: 0;
 }
 
-.full {
+/* v1029：弹窗输入框收窄，避免挡住右上角 ×；设置名字号更小 */
+.field {
   width: 100%;
+  max-width: 300px;
+}
+
+.num {
+  width: 110px;
 }
 
 .unit,
 .hint {
   margin-left: 8px;
   font-size: 12px;
-}
-
-.temp-input {
-  width: 150px;
 }
 
 .muted {
@@ -392,5 +409,17 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
 .provider-dialog .el-dialog__body {
   padding-top: 8px;
+  /* v1029：输入框不要长到右上角 × 的位置 */
+  padding-right: 44px;
+}
+
+/* v1029：设置名字号更小（一行展示），控件与设置名间距适中 */
+.provider-dialog .el-form-item__label {
+  font-size: 12px;
+  padding-right: 16px;
+}
+
+.provider-dialog .el-form-item {
+  margin-bottom: 14px;
 }
 </style>

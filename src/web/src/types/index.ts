@@ -136,11 +136,14 @@ export interface OutlineValidate {
   unregistered: Record<string, unknown>[]
 }
 
+/** v1029：大纲保存返回的**只读**差异报告（大纲不再回填 sort_order） */
 export interface OutlineOrderSync {
   volumes_updated: number
   chapters_updated: number
   volume_order: string[]
   warnings: string[]
+  /** 只读标记：true 表示仅报告差异，未改动卷章顺序 */
+  read_only?: boolean
 }
 
 export interface Outline {
@@ -186,6 +189,18 @@ export interface SearchItem {
   title: string
   snippet: string
   score: number
+}
+
+/**
+ * v1029：聊天输入框上方标记的「已添加内容」块（大纲 / 章节 / 本地文件）。
+ * 发送消息时由 AgentPanel 组装进 prompt，大模型需一并处理这些内容。
+ */
+export interface ContextBlock {
+  kind: 'outline' | 'chapter' | 'file'
+  label: string
+  text: string
+  /** 本地文件字节数（用于「所有添加的文件不超过 20M」校验） */
+  bytes?: number
 }
 
 export interface SearchResult {

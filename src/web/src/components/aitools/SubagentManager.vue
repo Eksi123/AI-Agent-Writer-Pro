@@ -34,12 +34,17 @@ const form = reactive({
   name: '',
   description: '',
   system_prompt: '',
-  mode: 'isolated' as 'isolated' | 'fork',
   /** 已勾选的内置工具真实名（read_file/edit_file/ls/grep/glob/web_search） */
   tools: [] as string[],
   /** 已勾选的自建技能名 */
   skills: [] as string[],
 })
+
+/**
+ * v1029：删除[上下文模式]，**默认采用独立上下文**（isolated）。
+ * 子代理用量仍与主 Agent 一起计入 Token（后端 `project_usage` 按 run 汇总）。
+ */
+const SUBAGENT_MODE = 'isolated' as const
 
 /** 弹窗是否编辑内置子代理（内置不可改名） */
 const editingBuiltin = computed(() => Boolean(editing.value?.is_builtin))
@@ -123,7 +128,7 @@ function openDialog(s?: SubagentDto): void {
   form.name = s?.name ?? ''
   form.description = s?.description ?? ''
   form.system_prompt = s?.system_prompt ?? ''
-  form.mode = s?.mode ?? 'isolated'
+  // v1029：不再有[上下文模式]选项，一律按独立上下文（isolated）保存
   form.tools = []
   form.skills = []
   if (s) onSelectionChange(keysOf(s))
@@ -141,7 +146,7 @@ async function save(): Promise<void> {
       name: form.name.trim(),
       description: form.description.trim(),
       system_prompt: form.system_prompt.trim(),
-      mode: form.mode,
+      mode: SUBAGENT_MODE,
       tools: form.tools,
       skills: form.skills.map((n) => `${USER_SKILL_PREFIX}${n}`),
     }
@@ -209,7 +214,9 @@ async function resetDefault(s: SubagentDto): Promise<void> {
     </div>
 
     <div v-for="s in subagents" :key="s.id" class="subagent-card">
-      <div class="card-head">
+      <!-- v1029：左侧文案列（名称 + 描述，描述单行省略）｜右侧操作列（启用/编辑/删除）
+           描述不会越过[启用]所在的右侧操作列 -->
+      <div class="card-text">
         <div class="row">
           <strong class="sa-name">{{ s.name }}</strong>
           <el-tag size="small" :type="s.is_builtin ? 'info' : 'success'" effect="plain">
@@ -217,41 +224,41 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           </el-tag>
         </div>
 
-        <div class="row">
-          <!-- v1028：启用/停用开关 + 文字；顶部提示语改为此处的悬浮说明 -->
-          <el-tooltip :content="t('subagents.enableHint')" placement="top" :show-after="200">
-            <span class="switch-wrap">
-              <el-switch
-                :model-value="s.enabled"
-                size="small"
-                @change="toggleEnabled(s, Boolean($event))"
-              />
-              <span class="switch-label">
-                {{ s.enabled ? t('subagents.enabledLabel') : t('subagents.disabledLabel') }}
-              </span>
-            </span>
-          </el-tooltip>
-
-          <!-- v1028：编辑按钮加外框 -->
-          <el-button size="small" plain @click="openDialog(s)">{{ t('skills.edit') }}</el-button>
-
-          <!-- v1028：恢复出厂 → 恢复默认（仅内置） -->
-          <el-button v-if="s.is_builtin" size="small" text @click="resetDefault(s)">
-            {{ t('subagents.resetDefault') }}
-          </el-button>
-          <el-button v-else size="small" type="danger" plain @click="remove(s)">
-            {{ t('common.delete') }}
-          </el-button>
-        </div>
+        <!-- v1028：只展示职责；v1029：过长用省略号截断（悬停看全文） -->
+        <div class="desc" :title="s.description">{{ s.description }}</div>
       </div>
 
-      <!-- v1028：只展示职责，删除技能展示 -->
-      <div class="desc">{{ s.description }}</div>
+      <div class="card-actions">
+        <!-- v1028：启用/停用开关 + 文字；顶部提示语改为此处的悬浮说明 -->
+        <el-tooltip :content="t('subagents.enableHint')" placement="top" :show-after="200">
+          <span class="switch-wrap">
+            <el-switch
+              :model-value="s.enabled"
+              size="small"
+              @change="toggleEnabled(s, Boolean($event))"
+            />
+            <span class="switch-label">
+              {{ s.enabled ? t('subagents.enabledLabel') : t('subagents.disabledLabel') }}
+            </span>
+          </span>
+        </el-tooltip>
+
+        <!-- v1028：编辑按钮加外框 -->
+        <el-button size="small" plain @click="openDialog(s)">{{ t('skills.edit') }}</el-button>
+
+        <!-- v1028：恢复出厂 → 恢复默认（仅内置） -->
+        <el-button v-if="s.is_builtin" size="small" text @click="resetDefault(s)">
+          {{ t('subagents.resetDefault') }}
+        </el-button>
+        <el-button v-else size="small" type="danger" plain @click="remove(s)">
+          {{ t('common.delete') }}
+        </el-button>
+      </div>
     </div>
 
-    <!-- 弹窗：无顶部标题 -->
-    <el-dialog v-model="dialogVisible" width="620px" class="subagent-dialog">
-      <el-form :model="form" label-width="100px" label-position="left">
+    <!-- 弹窗：无顶部标题；v1029 设置名字号更小、输入框收窄（不挡右上角 ×） -->
+    <el-dialog v-model="dialogVisible" width="560px" class="subagent-dialog">
+      <el-form :model="form" label-width="92px" label-position="left" size="small">
         <el-form-item :label="t('subagents.nameLabel')" required>
           <el-input
             v-model="form.name"
@@ -269,23 +276,18 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           <el-input v-model="form.system_prompt" type="textarea" :rows="6" />
         </el-form-item>
 
-        <el-form-item label="上下文模式">
-          <el-radio-group v-model="form.mode">
-            <el-radio value="isolated">isolated（独立上下文）</el-radio>
-            <el-radio value="fork">fork（继承父上下文，禁用技能）</el-radio>
-          </el-radio-group>
-        </el-form-item>
-
+        <!-- v1029：删除[上下文模式]——默认独立上下文（isolated），Token 与主 Agent 合并计算 -->
         <!-- v1028：可用技能多选（支持全选），来源为写作技能（含内置工具） -->
+        <!-- v1029：选中的技能在输入框内展示，最多显示 6 个（超出折叠为 +N） -->
         <el-form-item :label="t('subagents.skillsLabel')">
           <el-select
             :model-value="selectedKeys"
             multiple
             collapse-tags
             collapse-tags-tooltip
+            :max-collapse-tags="6"
             :placeholder="t('subagents.skillsPlaceholder')"
             class="full"
-            :disabled="form.mode === 'fork'"
             @update:model-value="onSelectionChange"
           >
             <el-option
@@ -302,14 +304,13 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           </el-select>
 
           <div class="select-actions">
-            <el-button size="small" text :disabled="form.mode === 'fork'" @click="toggleAll">
+            <el-button size="small" text @click="toggleAll">
               {{ allSelected ? '取消全选' : t('subagents.selectAll') }}
             </el-button>
             <span v-if="selectedKeys.length" class="muted text-sm">
               已选 {{ selectedKeys.length }} 项
             </span>
           </div>
-          <div v-if="form.mode === 'fork'" class="muted text-sm">fork 模式下技能与工具被禁用</div>
         </el-form-item>
       </el-form>
 
@@ -342,16 +343,25 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   border-radius: 8px;
   padding: 12px 14px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 14px;
 }
 
-.card-head {
+/* v1029：左侧文案列（弹性收缩，描述超长省略） */
+.card-text {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* v1029：右侧操作列（启用开关 + 编辑 + 删除），不被描述挤压 */
+.card-actions {
+  display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .row {
@@ -376,10 +386,14 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   color: var(--text-muted);
 }
 
+/* v1029：描述单行省略，不越过[启用]（右侧操作列） */
 .desc {
   font-size: 13px;
   color: var(--el-text-color-regular);
   line-height: 1.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .full {
@@ -416,5 +430,17 @@ async function resetDefault(s: SubagentDto): Promise<void> {
 
 .subagent-dialog .el-dialog__body {
   padding-top: 8px;
+  /* v1029：输入框不要长到右上角 × 的位置 */
+  padding-right: 44px;
+}
+
+/* v1029：设置名字号更小，控件不挡住右上角 × */
+.subagent-dialog .el-form-item__label {
+  font-size: 12px;
+  padding-right: 16px;
+}
+
+.subagent-dialog .el-dialog__headerbtn {
+  z-index: 2;
 }
 </style>

@@ -16,14 +16,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '@/stores/agent'
 import { useProjectStore } from '@/stores/project'
 import { useReaderStore } from '@/stores/reader'
-import { agentApi, configApi, llmApi, outlineApi } from '@/api'
+import { agentApi, configApi, llmApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import { t } from '@/i18n'
-import type { LlmOverview } from '@/types'
+import type { ContextBlock, LlmOverview } from '@/types'
 import ApprovalCard from './ApprovalCard.vue'
 import ConsultCard from './ConsultCard.vue'
 import PlanTodoList from './PlanTodoList.vue'
 import GateStatusBar from './GateStatusBar.vue'
+import ContextPicker from './ContextPicker.vue'
+import ToolsPicker from './ToolsPicker.vue'
 
 const agent = useAgentStore()
 const project = useProjectStore()
@@ -37,11 +39,25 @@ const overview = ref<LlmOverview | null>(null)
 const modelRef = ref<string>('')
 /** 发送方式三选项弹层 */
 const sendMenu = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
 
 /** v1028：会话记录最多展示 50 条 */
 const MAX_SESSIONS = 50
 const sessionList = computed(() => agent.sessions.slice(0, MAX_SESSIONS))
+
+/**
+ * v1029：输入框随内容自适应上拉，**最多到页面高度的 1/3**。
+ * Element Plus 的 autosize 以「行数」为单位，故按视口高度换算最大行数
+ * （行高与 .chat-input 的 line-height 保持一致）。
+ */
+const INPUT_LINE_HEIGHT = 22
+const maxInputRows = ref(4)
+
+function recalcInputRows(): void {
+  const limit = Math.floor(window.innerHeight / 3 / INPUT_LINE_HEIGHT)
+  maxInputRows.value = Math.max(3, limit)
+}
+
+const inputAutosize = computed(() => ({ minRows: 2, maxRows: maxInputRows.value }))
 
 // ---------------------------------------------------------------------------
 // 头部：会话数量 + 项目 token 使用量
@@ -49,8 +65,10 @@ const sessionList = computed(() => agent.sessions.slice(0, MAX_SESSIONS))
 
 const sessionCountLabel = computed(() => t('agent.sessionCount', { n: agent.usage.session_count }))
 
-/** token 使用量（K 为单位） */
-const tokenLabel = computed(() => `${(agent.usage.tokens_total / 1000).toFixed(1)}K`)
+/** v1029：token 使用量（x.yK Token） */
+const tokenLabel = computed(() =>
+  t('agent.tokenTotal', { n: (agent.usage.tokens_total / 1000).toFixed(1) }),
+)
 
 // ---------------------------------------------------------------------------
 // 上下文使用情况：{当前模型已使用上下文token}/{当前模型的上下文窗口值}
@@ -67,6 +85,26 @@ const contextWindowK = computed(() => {
 
 /** 已使用上下文 = 最近一次模型调用的输入 token（近似当前上下文占用） */
 const contextUsedK = computed(() => Math.max(0, Math.round(agent.lastUsage.tokens_in / 1000)))
+
+/**
+ * v1029（大模型选择弹窗 1.4）：剩余上下文百分比 = 1 − 已占用token ÷ 窗口总容量。
+ * - 无模型 / 窗口未知 → null（不展示，避免误导）；
+ * - 结果夹在 [0, 100]：占用超过窗口时归 0（此时后端压缩机制已介入）；
+ * - 每次模型回复刷新（lastUsage 由 usage 事件更新），新会话回到 100%。
+ */
+const contextRemainingPct = computed<number | null>(() => {
+  const model = selectedModel.value
+  const win = model?.max_context
+  if (!model || !win || win <= 0) return null
+  const used = Math.max(0, agent.lastUsage.tokens_in)
+  const remaining = Math.round((1 - used / win) * 100)
+  return Math.max(0, Math.min(100, remaining))
+})
+
+/** 剩余 <20% → 高亮警示（接近窗口，压缩机制即将/已经介入） */
+const contextLow = computed(
+  () => contextRemainingPct.value !== null && contextRemainingPct.value < 20,
+)
 
 const contextLabel = computed(() =>
   selectedModel.value ? `${contextUsedK.value}K / ${contextWindowK.value}K` : '0K',
@@ -154,11 +192,17 @@ async function loadOverview(): Promise<void> {
 const hasModels = computed(() => (overview.value?.models.length ?? 0) > 0)
 
 onMounted(async () => {
+  // v1029：输入框最大高度 = 视口的 1/3，随窗口尺寸变化重算
+  recalcInputRows()
+  window.addEventListener('resize', recalcInputRows)
   await loadOverview()
   if (project.currentNovelId) await agent.loadSessions(project.currentNovelId)
 })
 
-onBeforeUnmount(() => agent.stopStream())
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', recalcInputRows)
+  agent.stopStream()
+})
 
 watch(
   () => project.currentNovelId,
@@ -355,100 +399,62 @@ function formatToolCall(tc: { name: string; args?: Record<string, unknown> }): s
 }
 
 // ---------------------------------------------------------------------------
-// 「+」添加内容：大纲 / 章节 / 本地文件
+// 「+」添加内容（v1029）：大纲 / 章节 / 本地文件，改由 ContextPicker 统一承载
 // ---------------------------------------------------------------------------
 
-/** 已添加的上下文块（随下一条消息一起发送） */
-interface ContextBlock {
-  kind: 'outline' | 'chapter' | 'file'
-  label: string
-  text: string
-}
+/** 已添加的上下文块（随下一条消息一起发送；发送后释放） */
 const blocks = ref<ContextBlock[]>([])
 const addPopover = ref(false)
 
-const chapterOptions = computed(() =>
-  project.flatChapters.map((fc) => ({
-    id: fc.chapter.id,
-    name: `${fc.volume.title} · ${fc.chapter.title}`,
-  })),
-)
+/** 已添加文件的字节合计（供 ContextPicker 做 20MB 上限校验） */
+const attachedBytes = computed(() => blocks.value.reduce((s, b) => s + (b.bytes ?? 0), 0))
 
-async function addOutline(): Promise<void> {
-  if (!project.currentNovelId) return
-  try {
-    const o = await outlineApi.read(project.currentNovelId)
-    blocks.value = [...blocks.value, { kind: 'outline', label: '大纲', text: o.content }]
-    addPopover.value = false
-    ElMessage.success('已添加大纲')
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  }
-}
-
-async function addChapter(id: string): Promise<void> {
-  const found = project.findChapter(id)
-  const label = found ? `${found.volume.title} · ${found.chapter.title}` : id
-  if (blocks.value.some((b) => b.kind === 'chapter' && b.label === label)) {
+/** ContextPicker 选中一块内容 → 去重后加入 */
+function onPicked(block: ContextBlock): void {
+  const dup = blocks.value.some((b) => b.kind === block.kind && b.label === block.label)
+  if (dup) {
     addPopover.value = false
     return
   }
-  try {
-    const { contentApi } = await import('@/api')
-    const c = await contentApi.read(id)
-    blocks.value = [...blocks.value, { kind: 'chapter', label, text: c.content }]
-    addPopover.value = false
-    ElMessage.success(`已添加「${label}」`)
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  }
-}
-
-/** 本地文件：读取文本后作为上下文（限大模型可理解的文本类文件） */
-const MAX_FILE_CHARS = 40_000
-const ACCEPT_EXT = '.txt,.md,.markdown,.json,.csv,.yaml,.yml,.log,.html,.xml,.py,.js,.ts,.vue,.css'
-
-function pickFile(): void {
-  addPopover.value = false
-  fileInput.value?.click()
-}
-
-async function onFilePicked(e: Event): Promise<void> {
-  const el = e.target as HTMLInputElement
-  const file = el.files?.[0]
-  el.value = ''
-  if (!file) return
-  if (file.size > 2 * 1024 * 1024) {
-    ElMessage.warning('文件过大（>2MB），请选择较小的文本文件')
-    return
-  }
-  try {
-    const text = await file.text()
-    const clipped = text.length > MAX_FILE_CHARS ? `${text.slice(0, MAX_FILE_CHARS)}\n…（已截断）` : text
-    blocks.value = [...blocks.value, { kind: 'file', label: file.name, text: clipped }]
-    ElMessage.success(`已添加「${file.name}」`)
-  } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '读取文件失败')
-  }
+  blocks.value = [...blocks.value, block]
+  ElMessage.success(`已添加「${block.label}」`)
 }
 
 function removeBlock(idx: number): void {
   blocks.value = blocks.value.filter((_, i) => i !== idx)
 }
 
-/** 组装最终消息：上下文块 + 用户输入 */
+/**
+ * 组装最终消息：已选工具（#子代理 / @技能）+ 上下文块 + 用户输入。
+ * v1029：把 `#子代理名` / `@技能名` 与已添加的大纲/章节/文件一并写进消息，
+ * 大模型需要同时处理这些内容并主动使用这些工具。
+ */
 function composeMessage(): string {
-  if (!blocks.value.length) return input.value.trim()
-  const parts = blocks.value.map((b) => `【${b.label}】\n${b.text}`)
-  return `${parts.join('\n\n---\n\n')}\n\n---\n\n【我的问题】\n${input.value.trim()}`
+  const question = input.value.trim()
+  const parts: string[] = []
+
+  if (chips.value.length) {
+    const marks = chips.value
+      .map((c) => (c.kind === 'subagent' ? `#${c.label}` : `@${c.label}`))
+      .join(' ')
+    parts.push(`【本次指定使用的工具】${marks}\n请优先调用以上工具完成本次任务。`)
+  }
+
+  for (const b of blocks.value) {
+    parts.push(`【${b.label}】\n${b.text}`)
+  }
+
+  if (question) parts.push(`【我的问题】\n${question}`)
+  return parts.join('\n\n---\n\n')
 }
 
-watch(blocks, () => {
-  // 上下文块变化不影响输入框；仅用于发送时组装
-})
+/** v1029：当前问答结束后释放文件缓存（上下文块清空） */
+function releaseAttached(): void {
+  blocks.value = []
+}
 
 // ---------------------------------------------------------------------------
-// 「工具」：子代理 / 技能（MCP 服务入口已按 v1028 移除）
+// 「工具」：子代理 / 技能（v1029 由 ToolsPicker 承载目录展示）
 // ---------------------------------------------------------------------------
 
 interface ChipItem {
@@ -458,22 +464,33 @@ interface ChipItem {
 }
 const chips = ref<ChipItem[]>([])
 const toolPopover = ref(false)
-const subagentOptions = ref<{ id: string; name: string }[]>([])
-const skillOptions = ref<{ id: string; name: string }[]>([])
 
-async function loadToolOptions(): Promise<void> {
+/** id → name 映射：把会话已存的选中项回填成 chips（目录列表由 ToolsPicker 自行加载） */
+const toolNames = ref<{ subagents: Map<string, string>; skills: Map<string, string> }>({
+  subagents: new Map(),
+  skills: new Map(),
+})
+
+async function loadToolNames(): Promise<void> {
   try {
     const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
-    subagentOptions.value = subs.filter((s) => s.enabled).map((s) => ({ id: s.id, name: s.name }))
-    // v1028：内置「工具」（read/edit/list/grep/glob/web_search）对主代理恒可用，
-    // 会话级只需勾选自建写作技能
-    skillOptions.value = sks
-      .filter((s) => s.enabled && !s.is_builtin)
-      .map((s) => ({ id: s.id, name: s.name }))
+    toolNames.value = {
+      subagents: new Map(subs.map((s) => [s.id, s.name])),
+      // v1028：内置「工具」对主代理恒可用，会话级只勾选自建写作技能
+      skills: new Map(sks.filter((s) => !s.is_builtin).map((s) => [s.id, s.name])),
+    }
   } catch {
-    /* 选项加载失败不阻断输入 */
+    /* 名称解析失败不阻断输入（chips 会退回显示 id） */
   }
 }
+
+/** ToolsPicker 需要的高亮状态 */
+const selectedSubagentIds = computed(() =>
+  chips.value.filter((c) => c.kind === 'subagent').map((c) => c.id),
+)
+const selectedSkillIds = computed(() =>
+  chips.value.filter((c) => c.kind === 'skill').map((c) => c.id),
+)
 
 watch(
   () => agent.currentSession,
@@ -482,20 +499,19 @@ watch(
       chips.value = []
       return
     }
-    await loadToolOptions()
+    await loadToolNames()
     const items: ChipItem[] = []
     for (const id of sess.subagent_ids) {
-      const found = subagentOptions.value.find((s) => s.id === id)
-      if (found) items.push({ kind: 'subagent', id, label: found.name })
+      items.push({ kind: 'subagent', id, label: toolNames.value.subagents.get(id) ?? id })
     }
     for (const id of sess.skill_ids) {
-      const found = skillOptions.value.find((s) => s.id === id)
-      if (found) items.push({ kind: 'skill', id, label: found.name })
+      items.push({ kind: 'skill', id, label: toolNames.value.skills.get(id) ?? id })
     }
     chips.value = items
   },
 )
 
+/** v1029：选中子代理/技能 → chips 展示 `#名` / `@名`，并持久化到会话（后端据此装配 agent） */
 async function toggleChip(kind: ChipItem['kind'], id: string, label: string): Promise<void> {
   const exists = chips.value.some((c) => c.kind === kind && c.id === id)
   chips.value = exists
@@ -508,8 +524,8 @@ async function persistChips(): Promise<void> {
   if (!agent.currentSessionId) return
   try {
     await agentApi.updateContext(agent.currentSessionId, {
-      subagent_ids: chips.value.filter((c) => c.kind === 'subagent').map((c) => c.id),
-      skill_ids: chips.value.filter((c) => c.kind === 'skill').map((c) => c.id),
+      subagent_ids: selectedSubagentIds.value,
+      skill_ids: selectedSkillIds.value,
     })
   } catch (err) {
     ElMessage.error(errorMessage(err))
@@ -553,12 +569,12 @@ async function generateCurrentChapter(): Promise<void> {
   await agent.generateChapter(chapterId, activeChapterTitle.value, modelRef.value || undefined)
 }
 
-/** 回车/点击发送：把上下文块合并进 input，再走正常发送或运行中三选项 */
+/** 回车/点击发送：把已选工具与上下文块合并进 input，再走正常发送或运行中三选项 */
 function onSubmit(): void {
   if (!project.currentNovelId) return
-  if (blocks.value.length && input.value.trim()) {
+  // v1029：已添加的大纲/章节/本地文件、已选的 #子代理 / @技能 与用户输入合并成一条消息
+  if ((blocks.value.length || chips.value.length) && input.value.trim()) {
     input.value = composeMessage()
-    blocks.value = []
   }
   if (!input.value.trim()) return
   // 运行中 → 弹出三选项（停止并发送 / 通过消息引导发送 / 添加到队列）
@@ -569,15 +585,28 @@ function onSubmit(): void {
   if (!canSend.value) return
   void send()
 }
+
+/**
+ * v1029：当前问答结束后释放文件缓存。
+ * `agent.running` 由 true → false 表示本轮 run 收尾（run.end / 缓冲丢失 / 取消），
+ * 此时把已添加的大纲、章节、本地文件内容从内存中释放（不再随下一条消息携带）。
+ */
+watch(
+  () => agent.running,
+  (running, wasRunning) => {
+    if (wasRunning && !running) releaseAttached()
+  },
+)
 </script>
 
 <template>
   <div class="agent-panel">
     <!-- 头部：当前会话数量 + 当前小说项目 token 使用量（v1028 删除「AI助手」与 + 号） -->
     <div class="panel-head">
-      <span class="head-stat">
+      <!-- v1029：会话数换成「层叠文档」icon（原对话气泡留给 token 统计区分度） -->
+      <span class="head-stat" :title="t('agent.sessionListTitle')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
-          <path d="M12 3C6.8 3 2.6 6.6 2.6 11c0 2.5 1.3 4.7 3.4 6.2-.2 1-.8 2.3-1.8 3.2-.2.2-.1.6.2.7 1.7.4 3.6-.2 4.9-1 1-.2 1.9-.3 2.7-.3 5.2 0 9.4-3.6 9.4-8S17.2 3 12 3z" />
+          <path d="M12 3 3 7.5 12 12l9-4.5L12 3zM5 11.2 3 12.2l9 4.5 9-4.5-2-1-7 3.5-7-3.5zM5 15.4 3 16.4l9 4.5 9-4.5-2-1-7 3.5-7-3.5z" />
         </svg>
         {{ sessionCountLabel }}
       </span>
@@ -594,14 +623,7 @@ function onSubmit(): void {
       </el-button>
     </div>
 
-    <!-- 无模型引导 -->
-    <el-alert
-      v-if="!hasModels"
-      type="warning"
-      :closable="false"
-      class="model-alert"
-      :title="t('agent.noModelsHint')"
-    />
+    <!-- v1029：删除「尚未配置大模型…」提示——未配置或未选择大模型时不需要提示 -->
 
     <!-- 运行状态条 -->
     <div v-if="agent.running || agent.activeSubagents.length || agent.gateStage" class="status-bar">
@@ -753,7 +775,7 @@ function onSubmit(): void {
         </el-tag>
       </div>
 
-      <!-- 已选工具（子代理/技能） -->
+      <!-- 已选工具（v1029：子代理显示 #名，技能显示 @名） -->
       <div v-if="chips.length" class="chips-row">
         <el-tag
           v-for="c in chips"
@@ -763,7 +785,7 @@ function onSubmit(): void {
           :type="c.kind === 'subagent' ? 'primary' : 'success'"
           @close="removeChip(c.kind, c.id)"
         >
-          {{ c.label }}
+          {{ c.kind === 'subagent' ? `#${c.label}` : `@${c.label}` }}
         </el-tag>
       </div>
 
@@ -774,10 +796,11 @@ function onSubmit(): void {
       </div>
 
       <div class="input-box" :class="{ focused: false }">
+        <!-- v1029：随输入自适应上拉，最多到页面高度的 1/3 -->
         <el-input
           v-model="input"
           type="textarea"
-          :rows="2"
+          :autosize="inputAutosize"
           resize="none"
           :disabled="!project.currentNovelId"
           :placeholder="project.currentNovelId ? t('agent.inputPlaceholder') : t('agent.noNovel')"
@@ -787,90 +810,53 @@ function onSubmit(): void {
 
         <!-- 输入框内工具条：+ / 工具 / Model / 上下文使用情况 / 发送箭头 -->
         <div class="input-bar">
-          <!-- +：添加大纲、章节、本地文件 -->
-          <el-popover v-model:visible="addPopover" placement="top-start" :width="260" trigger="click">
+          <!-- ＋：v1029 添加文件页（搜索框 + 小说项目大纲或文章 + 本地文件 + 最近打开的章节） -->
+          <el-popover
+            v-model:visible="addPopover"
+            placement="top-start"
+            :width="300"
+            trigger="click"
+            popper-class="agent-pop"
+          >
             <template #reference>
               <button class="bar-btn" :disabled="!project.currentNovelId" :title="t('agent.addContext')">＋</button>
             </template>
-            <div class="picker">
-              <div class="picker-label">{{ t('agent.ctxOutline') }}</div>
-              <el-button size="small" text :disabled="!project.currentNovelId" @click="addOutline">
-                ＋ {{ t('agent.ctxOutline') }}
-              </el-button>
-
-              <div class="picker-label">{{ t('agent.ctxChapters') }}</div>
-              <el-button
-                size="small"
-                text
-                :disabled="!reader.activeChapterId"
-                @click="addChapter(reader.activeChapterId!)"
-              >
-                ＋ {{ t('agent.ctxCurrentChapter') }}
-              </el-button>
-              <el-select
-                size="small"
-                :placeholder="t('agent.ctxChapters')"
-                class="picker-select"
-                @change="(v: string) => addChapter(v)"
-              >
-                <el-option v-for="c in chapterOptions" :key="c.id" :value="c.id" :label="c.name" />
-              </el-select>
-
-              <div class="picker-label">{{ t('agent.ctxLocalFile') }}</div>
-              <el-button size="small" text @click="pickFile">＋ {{ t('agent.ctxLocalFile') }}</el-button>
-              <div class="muted text-sm picker-hint">支持文本类文件（txt/md/json/csv/yaml…）</div>
-            </div>
+            <ContextPicker
+              :attached-bytes="attachedBytes"
+              @add="onPicked"
+              @close="addPopover = false"
+            />
           </el-popover>
 
-          <!-- 工具：子代理 / 技能 -->
-          <el-popover v-model:visible="toolPopover" placement="top-start" :width="280" trigger="click">
+          <!-- 工具：v1029 只展示 [写作子代理] / [写作技能] 两个入口，没有内容时不显示 -->
+          <el-popover
+            v-model:visible="toolPopover"
+            placement="top-start"
+            :width="280"
+            trigger="click"
+            popper-class="agent-pop"
+          >
             <template #reference>
               <button class="bar-btn" :disabled="!project.currentNovelId">{{ t('agent.tools') }}</button>
             </template>
-            <div class="picker">
-              <div class="picker-label">{{ t('agent.toolsSubagents') }}</div>
-              <div class="tag-wrap">
-                <el-tag
-                  v-for="s in subagentOptions"
-                  :key="s.id"
-                  size="small"
-                  class="picker-tag"
-                  :type="chips.some((c) => c.kind === 'subagent' && c.id === s.id) ? 'primary' : 'info'"
-                  @click="toggleChip('subagent', s.id, s.name)"
-                >
-                  {{ s.name }}
-                </el-tag>
-                <span v-if="!subagentOptions.length" class="muted text-sm">暂无可用子代理</span>
-              </div>
-
-              <div class="picker-label">{{ t('agent.toolsSkills') }}</div>
-              <div class="tag-wrap">
-                <el-tag
-                  v-for="s in skillOptions"
-                  :key="s.id"
-                  size="small"
-                  class="picker-tag"
-                  :type="chips.some((c) => c.kind === 'skill' && c.id === s.id) ? 'success' : 'info'"
-                  @click="toggleChip('skill', s.id, s.name)"
-                >
-                  {{ s.name }}
-                </el-tag>
-                <span v-if="!skillOptions.length" class="muted text-sm">暂无可用技能</span>
-              </div>
-            </div>
+            <ToolsPicker
+              :selected-subagent-ids="selectedSubagentIds"
+              :selected-skill-ids="selectedSkillIds"
+              @toggle="toggleChip"
+              @close="toolPopover = false"
+            />
           </el-popover>
 
-          <!-- Model：未选中或无模型 → Model Off -->
+          <!-- Model（v1029）：左侧无 icon、Model Off 不用斜体；
+               弹窗内**不显示** Model Off 选项；无模型时在弹窗里提示「尚未配置大模型」；
+               点击某模型名 → 收起弹窗，按钮文案变为该模型名称 -->
           <el-dropdown trigger="click" placement="top-start" @command="(v: string) => (modelRef = v)">
             <button class="bar-btn model-btn" :class="{ off: !selectedModel }">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-                <path d="M12 2a3 3 0 0 1 3 3v1h2a2 2 0 0 1 2 2v2h1a3 3 0 0 1 0 6h-1v2a2 2 0 0 1-2 2h-2v1a3 3 0 0 1-6 0v-1H7a2 2 0 0 1-2-2v-2H4a3 3 0 0 1 0-6h1V8a2 2 0 0 1 2-2h2V5a3 3 0 0 1 3-3z" />
-              </svg>
               {{ selectedModel ? selectedModel.display_name : t('agent.modelOff') }}
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item v-if="!overview?.models.length" disabled>
+                <el-dropdown-item v-if="!hasModels" disabled>
                   {{ t('agent.noModelsHint') }}
                 </el-dropdown-item>
                 <el-dropdown-item
@@ -882,13 +868,21 @@ function onSubmit(): void {
                   {{ m.display_name }}{{ m.is_default ? ' ★' : '' }}
                   <span class="muted text-sm"> · {{ Math.round(m.max_context / 1000) }}K</span>
                 </el-dropdown-item>
-                <el-dropdown-item divided command="">Model Off</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
 
-          <!-- 上下文使用情况：{已使用}/{窗口}，K 为单位 -->
-          <span class="bar-ctx" :title="t('agent.contextUsage')">{{ contextLabel }}</span>
+          <!-- v1029（1.4）：Model Off 右侧显示「剩余上下文百分比」= 1 − 已占用 ÷ 窗口。
+               每次模型回复刷新；新会话回到 100%；<20% 时高亮警示。
+               未选模型 / 窗口未知时不展示。详细用量放进 title。 -->
+          <span
+            v-if="contextRemainingPct !== null"
+            class="bar-ctx"
+            :class="{ 'is-low': contextLow }"
+            :title="`${t('agent.contextUsage')}：${contextLabel}`"
+          >
+            {{ t('agent.contextRemaining', { n: contextRemainingPct }) }}
+          </span>
 
           <div class="bar-spacer" />
 
@@ -956,14 +950,6 @@ function onSubmit(): void {
         </div>
       </div>
     </div>
-
-    <input
-      ref="fileInput"
-      type="file"
-      :accept="ACCEPT_EXT"
-      class="hidden-file"
-      @change="onFilePicked"
-    />
   </div>
 </template>
 
@@ -996,10 +982,6 @@ function onSubmit(): void {
 
 .head-spacer {
   flex: 1;
-}
-
-.model-alert {
-  margin: 8px 12px 0;
 }
 
 .status-bar {
@@ -1248,6 +1230,8 @@ function onSubmit(): void {
   background: transparent;
   padding: 8px 10px 4px;
   font-size: 13px;
+  /* v1029：行高固定，配合 autosize 的最大行数换算「最多到页面高度的 1/3」 */
+  line-height: 22px;
 }
 
 .input-bar {
@@ -1289,9 +1273,9 @@ function onSubmit(): void {
   text-overflow: ellipsis;
 }
 
+/* v1029：Model Off 不用斜体，仅以弱化色区分「未选择模型」 */
 .model-btn.off {
   color: var(--text-muted);
-  font-style: italic;
 }
 
 .bar-ctx {
@@ -1299,6 +1283,12 @@ function onSubmit(): void {
   color: var(--text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* v1029（1.4）：剩余上下文 <20% → 警示色，提示压缩机制即将/已经介入 */
+.bar-ctx.is-low {
+  color: var(--el-color-danger, #f56c6c);
+  font-weight: 600;
 }
 
 .bar-spacer {
@@ -1355,40 +1345,6 @@ function onSubmit(): void {
 .send-menu-item:hover {
   background: var(--bg-hover);
   color: var(--el-color-primary);
-}
-
-.picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.picker-label {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  margin-top: 2px;
-}
-
-.picker-select {
-  width: 100%;
-}
-
-.picker-hint {
-  line-height: 1.5;
-}
-
-.tag-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.picker-tag {
-  cursor: pointer;
-}
-
-.hidden-file {
-  display: none;
 }
 
 .muted {

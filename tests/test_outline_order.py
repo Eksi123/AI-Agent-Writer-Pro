@@ -129,7 +129,7 @@ def test_normalize_title_distinguishes_different_names():
 
 
 # ---------------------------------------------------------------------------
-# sync_order_from_outline（卷章顺序唯一写入口）
+# outline_order_diff（★v1029：大纲降级为参考资料，只读差异报告，不再回填 sort_order）
 # ---------------------------------------------------------------------------
 
 
@@ -167,29 +167,30 @@ async def _build_three_chapters(client, novel_id, volume_id):
 
 
 @pytest.mark.asyncio
-async def test_sync_order_reflects_outline_sequence(client, novel_id, volume_id):
-    """调换大纲卷/章先后 → sort_order 按新顺序回填。"""
+async def test_outline_save_reports_diff_without_reordering(client, novel_id, volume_id):
+    """★v1029：调换大纲顺序 → 只产出差异报告，卷章 sort_order **不**被改写。"""
     vol2_id, chs = await _build_three_chapters(client, novel_id, volume_id)
 
-    # 初始顺序（创建先后）：卷1 内 拾荒(1) 废铁(2)，卷2 内 第一艘(1)
     await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": OUTLINE_V1})
     vols = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
     v1 = next(v for v in vols if v["id"] == volume_id)
     assert [c["sort_order"] for c in v1["chapters"]] == [1, 2]
 
-    # 调换大纲顺序
+    # 调换大纲顺序：报告差异，但结构不动
     resp = await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": OUTLINE_REORDERED})
     assert resp.status_code == 200
     sync = resp.json()["data"]["order_sync"]
-    assert sync["volume_order"] == ["星港夜航", "荒原初醒"], "卷顺序应按大纲回填"
+    assert sync["read_only"] is True
+    assert sync["volume_order"] == ["星港夜航", "荒原初醒"], "差异报告按大纲小节先后给出"
+    assert sync["volumes_updated"] == 2, "两卷顺序与大纲不同 → 报告 2 处差异"
 
     vols = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
-    # 卷层面：星港夜航 现在 sort_order=1，荒原初醒=2
-    assert {v["title"]: v["sort_order"] for v in vols} == {"星港夜航": 1, "荒原初醒": 2}
-    # 卷1 内章顺序被调换：废铁(1) 拾荒(2)
+    # ★卷层面顺序保持原样（大纲不再回填）
+    assert {v["title"]: v["sort_order"] for v in vols} == {"荒原初醒": 1, "星港夜航": 2}
+    # ★卷1 内章顺序也保持原样
     v1 = next(v for v in vols if v["id"] == volume_id)
     order = {c["title"]: c["sort_order"] for c in v1["chapters"]}
-    assert order == {"废铁镇的钟声": 1, "拾荒少年的清晨": 2}
+    assert order == {"拾荒少年的清晨": 1, "废铁镇的钟声": 2}
 
 
 @pytest.mark.asyncio
@@ -310,7 +311,10 @@ async def test_outline_read_write_roundtrip(client, novel_id):
     new_content = "# 第一卷 新卷\n## 第一章 新章\n- 简介：新内容。\n"
     resp = await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": new_content})
     assert resp.status_code == 200
-    assert resp.json()["data"]["order_synced"] is True
+    data = resp.json()["data"]
+    # ★v1029：大纲是参考资料，保存不再回填卷章顺序，只给只读差异报告
+    assert data["order_synced"] is False
+    assert data["order_sync"]["read_only"] is True
 
     got = (await client.get(f"/api/v1/novels/{novel_id}/outline")).json()["data"]
     assert got["content"] == new_content

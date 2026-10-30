@@ -6,8 +6,8 @@
 时间: 2026-10-27
 说明: 卷 / 章 CRUD（手册「六 → 路由树 · 卷章」）。
 
-    ★**无 reorder / move 接口**：卷章顺序是大纲派生值（铁律 10 / 手册「四」）。
-    前端卷章树只读渲染 `sort_order`，顺序调整一律回到大纲节点。
+    ★**无 reorder / move 接口**：v1029 起位置编辑的唯一入口是「插入」——
+    `POST` 带 `ordinal` 即插入到该位置（其后各项自动顺延 +1）。
 """
 
 from __future__ import annotations
@@ -38,8 +38,13 @@ async def list_volumes(novel_id: str, session: AsyncSession = Depends(get_sessio
 async def create_volume(
     novel_id: str, body: VolumeCreate, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """新建卷：显式命名（违规 42201），追加到末尾。"""
-    dto = await volumes.create_volume(session, novel_id, title=body.title, summary=body.summary)
+    """新建卷：显式命名（违规 42201）。
+
+    v1029：传 `ordinal` → 插入到该位置（其后各卷顺延 +1）；不传 → 追加到末尾。
+    """
+    dto = await volumes.create_volume(
+        session, novel_id, title=body.title, summary=body.summary, ordinal=body.ordinal
+    )
     await session.commit()
     return ok(dto)
 
@@ -77,8 +82,13 @@ async def list_chapters(vol_id: str, session: AsyncSession = Depends(get_session
 async def create_chapter(
     vol_id: str, body: ChapterCreate, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """新建章：显式命名（违规 42201），追加到卷末尾。"""
-    dto = await volumes.create_chapter(session, vol_id, title=body.title, content=body.content)
+    """新建章：显式命名（违规 42201）。
+
+    v1029：传 `ordinal` → 插入到卷内该位置（其后各章顺延 +1）；不传 → 追加到卷末尾。
+    """
+    dto = await volumes.create_chapter(
+        session, vol_id, title=body.title, content=body.content, ordinal=body.ordinal
+    )
     await session.commit()
     return ok(dto)
 
@@ -87,9 +97,16 @@ async def create_chapter(
 async def update_chapter(
     chapter_id: str, body: ChapterUpdate, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """改章名 / 状态（draft|finalized）。定稿触发一次修订快照。"""
+    """改章名 / 状态（draft|finalized）。定稿触发一次修订快照。
+
+    v1029：重命名弹窗同时含卷名，`volume_title` 有变更时重命名该章所属的卷。
+    """
     dto = await volumes.update_chapter_meta(
-        session, chapter_id, title=body.title, status=body.status
+        session,
+        chapter_id,
+        title=body.title,
+        status=body.status,
+        volume_title=body.volume_title,
     )
     await session.commit()
     return ok(dto)

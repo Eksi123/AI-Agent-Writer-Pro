@@ -8,12 +8,17 @@
 
     手册约束：
     - **短 ID 永不变**（`v{vol_id}` / `c{chapter_id}`），文件名与目录名含 ID；
-    - **顺序只按创建先后追加**（`sort_order = max+1`），★无重排接口、无跨卷移动；
-      顺序的唯一派生写入口是 `sync_order_from_outline`（M4）；
     - 显式命名（42201）；
     - 正文写入乐观锁：`base_version` 不符 → 409 / `40901` 并回传最新内容；
     - 修订快照触发：手动保存 / Agent 写章前 / 章节定稿；**自动保存不快照**；
     - 删除卷级联删除其下章节文件。
+
+    ★v1029 顺序模型变更（大纲降级为「参考资料」而非结构约束）：
+    - `sort_order` 由本服务直接维护：不传 `ordinal` → 追加到末尾（`max+1`）；
+      传 `ordinal` → 插入到该位置，**其后各项自动顺延 +1**（往前/往后插入卷章）；
+    - 删除章后卷内章重新连续编号（1..N）；**某卷下章节删空后该卷一并删除**，卷层同样重新连续编号；
+    - 仍不提供跨卷移动 / 任意拖拽重排：插入即唯一的位置编辑入口；
+    - 大纲保存不再回填 `sort_order`（见 `services/story.py`），大纲仅作 AI 创作的参考来源。
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.errors import NotFoundError, VersionConflictError
+from app.core.errors import BadRequestError, NotFoundError, VersionConflictError
 from app.core.logging import get_logger
 from app.core.paths import chapter_file, volume_dir
 from app.db.base import short_id, utcnow
@@ -85,13 +90,54 @@ async def list_volumes(session: AsyncSession, project_id: str) -> list[dict[str,
     return result
 
 
+# ---------------------------------------------------------------------------
+# v1029：序号（位置）编辑 —— 插入即唯一的位置编辑入口
+# ---------------------------------------------------------------------------
+
+
+def _validate_ordinal(ordinal: int | None, count: int, *, kind: str) -> int | None:
+    """校验插入序号：正整数且 1..count+1（count+1 = 追加到末尾）。
+
+    不传 ordinal → None（保持旧行为：追加末尾）。违规抛 400。
+    """
+    if ordinal is None:
+        return None
+    if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 1:
+        raise BadRequestError(f"{kind}序号必须是正整数")
+    if ordinal > count + 1:
+        raise BadRequestError(f"{kind}序号超出范围（当前共 {count} 个，允许 1~{count + 1}）")
+    return ordinal
+
+
+def _shift_ordinal(items: list[tuple[Any, int]], position: int) -> None:
+    """把 `position` 及之后的项顺延 +1。`items` 为 `(可写字典, 当前sort_order)` 列表。"""
+    for obj, order in items:
+        if order >= position:
+            obj["sort_order"] = order + 1
+
+
 async def create_volume(
-    session: AsyncSession, project_id: str, *, title: str, summary: str = ""
+    session: AsyncSession,
+    project_id: str,
+    *,
+    title: str,
+    summary: str = "",
+    ordinal: int | None = None,
 ) -> dict[str, Any]:
-    """新建卷：**显式命名**，追加到末尾（`sort_order = max+1`）。"""
+    """新建卷：**显式命名**。
+
+    - 不传 `ordinal` → 追加到末尾（`sort_order = max+1`，兼容旧行为）；
+    - 传 `ordinal`（v1029 往前/往后插入）→ 插入到该位置，其后各卷顺延 +1。
+    """
     await novels.get_novel(session, project_id)
     clean = validate_volume_title(title)
     volumes = files.read_volumes(project_id)
+
+    position = _validate_ordinal(ordinal, len(volumes), kind="卷")
+    if position is not None:
+        _shift_ordinal(
+            [(v, int(v.get("sort_order") or 0)) for v in volumes], position
+        )
 
     vol_id = short_id({str(v.get("id")) for v in volumes})
     now = utcnow()
@@ -99,7 +145,7 @@ async def create_volume(
         "id": vol_id,
         "title": clean,
         "summary": summary or "",
-        "sort_order": files.next_volume_sort(volumes),
+        "sort_order": position if position is not None else files.next_volume_sort(volumes),
         "created_at": now,
         "updated_at": now,
     }
@@ -112,7 +158,7 @@ async def create_volume(
         "volume.create",
         entity_type="volume",
         entity_id=f"{project_id}:{vol_id}",
-        detail={"title": clean, "sort_order": vol["sort_order"]},
+        detail={"title": clean, "sort_order": vol["sort_order"], "inserted_at": position},
         commit=True,
     )
     logger.info("volume_created", project_id=project_id, volume_id=vol_id, title=clean)
@@ -152,7 +198,10 @@ async def update_volume(
 
 
 async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
-    """删除卷：**级联删除其下章节文件**（前端二次确认列出章名与字数）。"""
+    """删除卷：**级联删除其下章节文件**（前端二次确认列出章名与字数）。
+
+    v1029：删除后其余卷重新连续编号（1..N）。
+    """
     project_id, volumes, vol = _locate_volume(vol_id)
     guard = WorkspaceGuard(project_id)
 
@@ -169,8 +218,9 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
     if vdir.exists():
         guard.delete(f"chapters/v{vol_id}")
 
-    volumes = [v for v in volumes if str(v.get("id")) != vol_id]
-    files.write_volumes(project_id, volumes)
+    remaining = [v for v in volumes if str(v.get("id")) != vol_id]
+    _renumber_volumes(remaining)
+    files.write_volumes(project_id, remaining)
 
     await novels.refresh_project_index(session, project_id)
     await audit.record(
@@ -185,6 +235,16 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
         "volume_deleted", project_id=project_id, volume_id=vol_id, chapters=len(removed_files)
     )
     return {"id": vol_id, "deleted": True, "chapters_deleted": len(removed_files)}
+
+
+def _renumber_volumes(volumes: list[dict[str, Any]]) -> None:
+    """按当前 `sort_order` 次序把卷重新连续编号为 1..N（原地修改）。"""
+    ordered = sorted(
+        volumes,
+        key=lambda v: (int(v.get("sort_order") or 0), str(v.get("created_at") or "")),
+    )
+    for i, vol in enumerate(ordered, start=1):
+        vol["sort_order"] = i
 
 
 def _locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
@@ -238,16 +298,34 @@ async def list_chapters(session: AsyncSession, project_id: str, vol_id: str) -> 
 
 
 async def create_chapter(
-    session: AsyncSession, vol_id: str, *, title: str, content: str = ""
+    session: AsyncSession,
+    vol_id: str,
+    *,
+    title: str,
+    content: str = "",
+    ordinal: int | None = None,
 ) -> dict[str, Any]:
-    """新建章：**显式命名**，追加到卷末尾（`sort_order = max+1`）。"""
+    """新建章：**显式命名**。
+
+    - 不传 `ordinal` → 追加到卷末尾（`sort_order = max+1`，兼容旧行为）；
+    - 传 `ordinal`（v1029 往前/往后插入章节）→ 插入到该位置，其后各章顺延 +1。
+    """
     project_id, _volumes, vol = _locate_volume(vol_id)
     clean = validate_chapter_title(title)
 
     existing = await list_chapters(session, project_id, vol_id)
+    position = _validate_ordinal(ordinal, len(existing), kind="章")
+
     taken = {c["id"] for c in existing}
     chapter_id = short_id(taken)
-    sort_order = max((c["sort_order"] for c in existing), default=0) + 1
+
+    if position is not None:
+        for ch in existing:
+            if ch["sort_order"] >= position:
+                _shift_chapter_meta(project_id, vol_id, str(ch["id"]), ch["sort_order"] + 1)
+        sort_order = position
+    else:
+        sort_order = max((c["sort_order"] for c in existing), default=0) + 1
 
     now = utcnow()
     meta = {
@@ -268,11 +346,31 @@ async def create_chapter(
         "chapter.create",
         entity_type="chapter",
         entity_id=f"{project_id}:{chapter_id}",
-        detail={"title": clean, "volume_id": vol_id, "sort_order": sort_order},
+        detail={
+            "title": clean,
+            "volume_id": vol_id,
+            "sort_order": sort_order,
+            "inserted_at": position,
+        },
         commit=True,
     )
     logger.info("chapter_created", project_id=project_id, chapter_id=chapter_id, title=clean)
     return _chapter_dto(meta, chapter_id, vol_id)
+
+
+def _shift_chapter_meta(project_id: str, vol_id: str, chapter_id: str, new_sort: int) -> None:
+    """只改某章 frontmatter 的 `sort_order`（保留正文，不递增 version、不写快照）。"""
+    meta, content = files.read_chapter(project_id, vol_id, chapter_id)
+    meta["sort_order"] = new_sort
+    files.write_chapter(project_id, vol_id, chapter_id, meta, content)
+
+
+def _renumber_chapters(project_id: str, vol_id: str, keep: list[dict[str, Any]]) -> None:
+    """按当前 `sort_order` 次序把卷内章重新连续编号为 1..N。"""
+    ordered = sorted(keep, key=lambda c: (int(c.get("sort_order") or 0), str(c.get("id"))))
+    for i, ch in enumerate(ordered, start=1):
+        if int(ch.get("sort_order") or 0) != i:
+            _shift_chapter_meta(project_id, vol_id, str(ch["id"]), i)
 
 
 def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
@@ -306,10 +404,14 @@ async def update_chapter_meta(
     *,
     title: str | None = None,
     status: str | None = None,
+    volume_title: str | None = None,
 ) -> dict[str, Any]:
     """改章名 / 状态（draft|finalized）。**不改 ID、文件名、sort_order**。
 
     定稿（status → finalized）会触发一次修订快照（手册「五」触发时机）。
+
+    v1029：重命名弹窗同时含「章名 + 卷名」（卷名默认填当前章所属卷名，默认不修改）；
+    `volume_title` 有变更时**重命名该章所属的卷**（章仍留在原卷）。
     """
     project_id, vol_id, meta, content = _locate_chapter(chapter_id)
     changes: dict[str, Any] = {}
@@ -319,6 +421,17 @@ async def update_chapter_meta(
         if clean != meta.get("title"):
             changes["title"] = {"from": meta.get("title"), "to": clean}
             meta["title"] = clean
+
+    if volume_title is not None:
+        _project_id, volumes, vol = _locate_volume(vol_id)
+        clean_vol = validate_volume_title(volume_title)
+        if clean_vol != (vol.get("title") or ""):
+            changes["volume_title"] = {"from": vol.get("title"), "to": clean_vol}
+            vol["title"] = clean_vol
+            vol["updated_at"] = utcnow()
+            files.write_volumes(project_id, volumes)
+
+    chapter_changed = "title" in changes
 
     finalize = False
     if status is not None:
@@ -330,6 +443,7 @@ async def update_chapter_meta(
             changes["status"] = {"from": meta.get("status"), "to": status}
             finalize = status == "finalized" and meta.get("status") != "finalized"
             meta["status"] = status
+            chapter_changed = True
 
     if not changes:
         return _chapter_dto(meta, chapter_id, vol_id)
@@ -337,8 +451,9 @@ async def update_chapter_meta(
     if finalize:
         await _snapshot(session, project_id, chapter_id, meta, content, source="manual")
 
-    meta["updated_at"] = utcnow()
-    files.write_chapter(project_id, vol_id, chapter_id, meta, content)
+    if chapter_changed:
+        meta["updated_at"] = utcnow()
+        files.write_chapter(project_id, vol_id, chapter_id, meta, content)
 
     await audit.record(
         session,
@@ -352,7 +467,12 @@ async def update_chapter_meta(
 
 
 async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, Any]:
-    """删除章文件。★不提供跨卷移动——换卷需新建同名章复制正文再删旧章。"""
+    """删除章文件。★不提供跨卷移动——换卷需新建同名章复制正文再删旧章。
+
+    v1029：
+    - 删除后卷内其余章重新连续编号（1..N）；
+    - **某一卷下所有章节都删除后，该卷一并删除**（卷层同样重新连续编号）。
+    """
     project_id, vol_id, meta, _content = _locate_chapter(chapter_id)
     guard = WorkspaceGuard(project_id)
     rel = f"chapters/v{vol_id}/c{chapter_id}.md"
@@ -367,16 +487,34 @@ async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, An
     for r in rows:
         await session.delete(r)
 
+    volume_deleted = False
+    siblings = await list_chapters(session, project_id, vol_id)
+    if not siblings:
+        # ★卷下章节删空 → 卷也不存在
+        await delete_volume(session, vol_id)
+        volume_deleted = True
+    else:
+        _renumber_chapters(project_id, vol_id, siblings)
+
     await novels.refresh_project_index(session, project_id)
     await audit.record(
         session,
         "chapter.delete",
         entity_type="chapter",
         entity_id=f"{project_id}:{chapter_id}",
-        detail={"title": meta.get("title"), "volume_id": vol_id},
+        detail={
+            "title": meta.get("title"),
+            "volume_id": vol_id,
+            "volume_deleted": volume_deleted,
+        },
         commit=True,
     )
-    return {"id": chapter_id, "deleted": True}
+    return {
+        "id": chapter_id,
+        "deleted": True,
+        "volume_id": vol_id,
+        "volume_deleted": volume_deleted,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -604,9 +742,10 @@ async def restore_revision(
 
 
 def assert_no_manual_reorder() -> None:
-    """★设计守卫：本模块**不提供**任何手工重排 / 跨卷移动能力。
+    """★设计守卫：本模块**不提供**任何拖拽重排 / 跨卷移动能力。
 
-    顺序只能由 `sync_order_from_outline` 从大纲派生（见手册「四」）。
+    v1029：位置编辑的唯一入口是「插入」（`create_volume` / `create_chapter` 的
+    `ordinal` 参数，插入后其后各项自动顺延）；仍无 reorder / move 接口。
     该函数供测试断言「无 reorder/move 入口」时调用，也作为文档化契约。
     """
     forbidden = {"reorder_volumes", "reorder_chapters", "move_chapter", "move_volume"}

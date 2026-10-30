@@ -5,7 +5,7 @@
 作者: xionggaoqing
 时间: 2026-10-27
 说明: `FileChangeNotifyMiddleware`：`awrap_tool_call`（工具成功后）发 SSE `file.changed`
-    并触发派生索引同步；**变更目标为大纲文件时额外触发 `sync_order_from_outline`**。
+    并触发派生索引同步（★v1029：大纲是参考资料，不再回填卷章 sort_order）。
 
     虚拟路径形如 `/projects/{pid}/chapters/v{vol}/c{ch}.md`，前端据此热更新正文/目录树。
 """
@@ -97,22 +97,8 @@ class FileChangeNotifyMiddleware(AgentMiddleware):
 
             async with session_scope() as db:
                 if change.get("is_outline"):
-                    # ★大纲变更：回填卷章 sort_order（唯一写入口）
-                    try:
-                        from app.services import story as story_service
-
-                        summary = story_service.sync_order_from_outline(project_id)
-                        logger.info(
-                            "agent_outline_order_synced",
-                            project_id=project_id,
-                            volumes_updated=summary.get("volumes_updated"),
-                            chapters_updated=summary.get("chapters_updated"),
-                        )
-                    except Exception as exc:
-                        logger.warning("agent_outline_sync_failed", project_id=project_id, error=str(exc))
-                    # 大纲是检索源之一，需重建索引
+                    # ★v1029：大纲是参考资料，不再回填卷章 sort_order；只重建检索索引
                     await search_service.reindex_project(db, project_id)
-                    # 正文顺序变了，列表 DTO 需刷新
                     await novels_service.refresh_project_index(db, project_id)
                 elif change.get("chapter_id"):
                     await novels_service.refresh_project_index(db, project_id)

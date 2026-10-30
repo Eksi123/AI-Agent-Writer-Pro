@@ -50,6 +50,8 @@ const backendHint = computed(() => {
     </div>
 
     <div class="row">
+      <!-- v1029：编辑模式主页面右上方的卷章结构操作条（与左上角浮层目录不在同一层，互不遮挡） -->
+      <slot name="actions" />
       <AutosaveIndicator v-if="reader.mode === 'edit'" />
 
       <!-- v1028：AI写作助手（未展开）= 聊天框 icon + 文字，悬浮出功能提示 -->

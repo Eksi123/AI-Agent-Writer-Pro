@@ -6,11 +6,11 @@
 时间: 2026-10-27
 说明: 大纲读写与校验服务。
 
-    ★`sync_order_from_outline` 是卷章 `sort_order` 的**唯一写入口**（手册「四」/ 铁律 10）：
-    - 触发点：① `PUT /novels/{id}/outline` 保存成功后；② Agent 改大纲时经 FileChangeNotify（M3）；
-    - 规则：按卷节 H1 先后写 volumes.yaml 的 sort_order（1..N）；按各卷节下章简介 H2 先后写
-      对应章 frontmatter 的 sort_order（卷内 1..N）；匹配以归一化「卷名+章名完全一致」为准；
-    - 不做：不改 ID / 文件名、不移动章节文件、不支持跨卷移动、不产生修订快照、不递增 version。
+    ★v1029：大纲是**参考资料**而非结构约束——它是 AI 生成正文的重要来源
+    （「参考大纲第X卷第X章的内容简介生成对应章节」），但**不再回填卷章 `sort_order`**。
+    卷章结构与顺序由 `services/volumes.py` 直接维护（插入即顺延、删空即删卷）。
+    `sync_order_from_outline` 保留为**只读校验/诊断**入口（报告大纲与实际结构的差异，
+    不再写盘），供「大纲校验」与 Agent 改大纲后的提示使用。
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.core.paths import outline_filename
 from app.db.base import utcnow
@@ -73,7 +72,7 @@ async def read_outline(session: AsyncSession, project_id: str) -> dict[str, Any]
 async def write_outline(
     session: AsyncSession, project_id: str, content: str
 ) -> dict[str, Any]:
-    """保存大纲，成功后执行 `sync_order_from_outline` 回填卷章顺序。"""
+    """保存大纲。★v1029：大纲不再回填卷章顺序，只产出只读差异报告（`order_sync`）。"""
     from app.services import novels
 
     novel = await novels.get_novel(session, project_id)
@@ -89,7 +88,7 @@ async def write_outline(
         meta["updated_at"] = utcnow()
         files.write_novel_meta(project_id, meta)
 
-    sync = sync_order_from_outline(project_id, content)
+    sync = outline_order_diff(project_id, content)
 
     novel.updated_at = utcnow()
     await session.flush()
@@ -101,8 +100,6 @@ async def write_outline(
         detail={
             "path": rel,
             "word_count": files.count_words(content),
-            "volumes_reordered": sync["volumes_updated"],
-            "chapters_reordered": sync["chapters_updated"],
             "volume_order": sync["volume_order"],
             "warnings": sync["warnings"][:20],
         },
@@ -116,16 +113,20 @@ async def write_outline(
         "filename": rel.rsplit("/", 1)[-1],
         "content": content,
         "word_count": files.count_words(content),
-        "order_synced": True,
+        # v1029：大纲不再回填顺序，只返回只读差异报告
+        "order_synced": False,
         "order_sync": sync,
     }
 
 
-def sync_order_from_outline(project_id: str, outline_text: str | None = None) -> dict[str, Any]:
-    """★按大纲小节先后回填 `sort_order`（卷章顺序的唯一写入口）。
+def outline_order_diff(project_id: str, outline_text: str | None = None) -> dict[str, Any]:
+    """★v1029：**只读**比对大纲小节先后与卷章实际 `sort_order` 的差异。
 
-    只改 `sort_order`：不改 ID、不改文件名、不移动文件、不写修订快照、不递增 `version`。
-    大纲中未出现的卷/章保持原值并追加在该卷末尾（出「未在大纲中登记」警告）。
+    大纲降级为参考资料后不再写盘——本函数只产出差异报告（`volume_order` /
+    `volumes_updated` / `chapters_updated` 表示「若按大纲会有多少处不同」）与警告，
+    供「大纲校验」与 Agent 改大纲后的提示使用。
+
+    返回结构与旧 `sync_order_from_outline` 保持一致，便于前端沿用。
     """
     if outline_text is None:
         guard = WorkspaceGuard(project_id)
@@ -135,10 +136,10 @@ def sync_order_from_outline(project_id: str, outline_text: str | None = None) ->
     parsed: OutlineParseResult = parse_outline(outline_text)
     warnings: list[str] = list(parsed.warnings)
 
-    volumes_updated, chapters_updated = 0, 0
+    volumes_differ, chapters_differ = 0, 0
     volume_order: list[str] = []
 
-    # ---- 卷顺序 ----
+    # ---- 卷顺序差异 ----
     volumes = files.read_volumes(project_id)
     if volumes:
         by_norm = {normalize_title(str(v.get("title") or "")): v for v in volumes}
@@ -154,23 +155,19 @@ def sync_order_from_outline(project_id: str, outline_text: str | None = None) ->
             claimed.add(str(vol.get("id")))
             volume_order.append(str(vol.get("title")))
             if int(vol.get("sort_order") or 0) != next_sort:
-                vol["sort_order"] = next_sort
-                volumes_updated += 1
+                volumes_differ += 1
             next_sort += 1
 
-        # 大纲未登记的卷：保持相对次序，追加到末尾
-        leftovers = [v for v in volumes if str(v.get("id")) not in claimed]
-        leftovers.sort(key=lambda v: int(v.get("sort_order") or 0))
-        for vol in leftovers:
-            warnings.append(f"卷「{vol.get('title')}」未在大纲中登记，已追加到末尾")
+        for vol in sorted(
+            (v for v in volumes if str(v.get("id")) not in claimed),
+            key=lambda v: int(v.get("sort_order") or 0),
+        ):
+            warnings.append(f"卷「{vol.get('title')}」未在大纲中登记（大纲仅作参考，不影响卷章结构）")
             if int(vol.get("sort_order") or 0) != next_sort:
-                vol["sort_order"] = next_sort
-                volumes_updated += 1
+                volumes_differ += 1
             next_sort += 1
 
-        files.write_volumes(project_id, volumes)
-
-    # ---- 章顺序（卷内 1..N）----
+    # ---- 章顺序差异（卷内 1..N）----
     for sec in parsed.volumes:
         vol = _find_vol_by_norm(volumes, sec.normalized)
         if vol is None:
@@ -198,30 +195,39 @@ def sync_order_from_outline(project_id: str, outline_text: str | None = None) ->
             cid, meta = hit
             claimed_ch.add(cid)
             if int(meta.get("sort_order") or 0) != next_sort:
-                meta["sort_order"] = next_sort
-                chapters_updated += 1
-                _write_meta_only(project_id, vol_id, cid, meta)
+                chapters_differ += 1
             next_sort += 1
 
         for cid, meta in chapter_metas:
             if cid in claimed_ch:
                 continue
-            warnings.append(f"章「{meta.get('title')}」未在大纲中登记，已追加到卷末尾")
+            warnings.append(
+                f"章「{meta.get('title')}」未在大纲中登记（大纲仅作参考，不影响卷章结构）"
+            )
             if int(meta.get("sort_order") or 0) != next_sort:
-                meta["sort_order"] = next_sort
-                chapters_updated += 1
-                _write_meta_only(project_id, vol_id, cid, meta)
+                chapters_differ += 1
             next_sort += 1
 
     result = {
-        "volumes_updated": volumes_updated,
-        "chapters_updated": chapters_updated,
+        "volumes_updated": volumes_differ,
+        "chapters_updated": chapters_differ,
         "volume_order": volume_order,
         "warnings": warnings,
+        "read_only": True,
     }
-    if volumes_updated or chapters_updated:
-        logger.info("order_synced", project_id=project_id, **{k: result[k] for k in ("volumes_updated", "chapters_updated")})
+    if volumes_differ or chapters_differ:
+        logger.info(
+            "outline_order_diff",
+            project_id=project_id,
+            volumes=volumes_differ,
+            chapters=chapters_differ,
+        )
     return result
+
+
+def sync_order_from_outline(project_id: str, outline_text: str | None = None) -> dict[str, Any]:
+    """兼容别名：v1029 起大纲不再回填 `sort_order`，只返回只读差异报告。"""
+    return outline_order_diff(project_id, outline_text)
 
 
 def _find_vol_by_norm(volumes: list[dict[str, Any]], normalized: str) -> dict[str, Any] | None:
@@ -229,17 +235,6 @@ def _find_vol_by_norm(volumes: list[dict[str, Any]], normalized: str) -> dict[st
         if normalize_title(str(v.get("title") or "")) == normalized:
             return v
     return None
-
-
-def _write_meta_only(project_id: str, vol_id: str, chapter_id: str, meta: dict[str, Any]) -> None:
-    """只改 frontmatter（顺序回填）：保留正文不变，**不递增 version、不写快照**。"""
-    from app.core.paths import chapter_file
-
-    path = chapter_file(project_id, vol_id, chapter_id)
-    if not path.exists():
-        raise NotFoundError(f"章节文件不存在：{path}")
-    _meta, content = files.read_chapter(project_id, vol_id, chapter_id)
-    files.write_chapter(project_id, vol_id, chapter_id, meta, content)
 
 
 # ---------------------------------------------------------------------------

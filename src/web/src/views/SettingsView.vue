@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * 通用设置页（v1028 重构）：
+ * 通用设置页（v1028 重构 / v1029 调整）：
  *   外观：主题（深色 / 浅色 / 护眼）、正文字号、字体
  *   编辑：自动保存间隔（10~60 秒）
  * 已删除：主题色、阅读页宽、动态组件设置、AI 工具入口、运行状态。
+ * v1029：去掉「外观」「编辑」两条分界线；功能设置名与设置控件之间拉开间距。
  * 左上角仅返回箭头；「保存」与「恢复默认设置」位于所有设置项下方。
  */
 import { onMounted, reactive, ref } from 'vue'
@@ -117,9 +118,8 @@ function back(): void {
     </div>
 
     <div class="settings-body scroll-y">
+      <!-- v1029：去掉「外观」「编辑」两条分界线；设置名与设置项之间拉开间距 -->
       <el-form :model="form" label-width="150px" class="form">
-        <el-divider content-position="left">{{ t('settings.appearance') }}</el-divider>
-
         <el-form-item :label="t('settings.theme')">
           <el-radio-group v-model="form.theme" @change="preview">
             <el-radio value="light">{{ t('settings.themeLight') }}</el-radio>
@@ -164,8 +164,6 @@ function back(): void {
             星海拾荒人 · 预览
           </div>
         </el-form-item>
-
-        <el-divider content-position="left">{{ t('settings.editing') }}</el-divider>
 
         <el-form-item :label="t('settings.autosaveInterval')">
           <!-- v1028：最少 10s，最多 60s -->
@@ -221,6 +219,15 @@ function back(): void {
 
 .form {
   max-width: 720px;
+}
+
+/* v1029：功能设置名与功能设置控件之间拉开距离（默认 12px 太挤） */
+.form :deep(.el-form-item__label) {
+  padding-right: 32px;
+}
+
+.form :deep(.el-form-item) {
+  margin-bottom: 24px;
 }
 
 .font-slider {

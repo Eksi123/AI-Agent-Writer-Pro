@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * 左上角动态组件 · 生肖宠物（v1028）：
- * 十二种生肖对应十二时辰（每 2 小时一段），**页面加载时按当前时辰确定一次**，
- * 之后不随时间变化——只有刷新页面才会切换生肖（「如果不刷新就不变」）。
+ * 左上角动态组件 · 生肖宠物（v1028 生肖 / v1029 排布）：
+ * - 十二种生肖对应十二时辰（每 2 小时一段），**页面加载时按当前时辰确定一次**，
+ *   之后不随时间变化——只有刷新页面才会切换生肖（「如果不刷新就不变」）。
+ * - v1029：不再显示生肖名（「狗」）与时辰名（「戌时」）；头像上移，
+ *   下方显示**年月日 + 星期几**。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 interface Zodiac {
   /** 生肖名 */
@@ -33,6 +35,8 @@ const ZODIAC_BY_INDEX: Zodiac[] = [
   { name: '猪', emoji: '🐷', hour: '亥时', range: '21:00-23:00' },
 ]
 
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+
 /** 由小时数求时辰序号（23 点与 0 点同属子时 → index 0） */
 function zodiacIndexOf(hour: number): number {
   return Math.floor(((hour + 1) % 24) / 2)
@@ -40,30 +44,52 @@ function zodiacIndexOf(hour: number): number {
 
 /** ★只在组件创建（= 页面刷新）时取一次，之后不再变化 */
 const current = ref<Zodiac>(ZODIAC_BY_INDEX[zodiacIndexOf(new Date().getHours())])
+const now = ref(new Date())
+
+let timer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   current.value = ZODIAC_BY_INDEX[zodiacIndexOf(new Date().getHours())]
+  now.value = new Date()
+  // 日期每天要跨零点，兜底每分钟校正一次（生肖仍只在刷新时变）
+  timer = setInterval(() => {
+    now.value = new Date()
+  }, 60 * 1000)
 })
 
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+})
+
+/** v1029：头像下方第一行 —— 年月日 */
+const dateLabel = computed(
+  () => `${now.value.getFullYear()}年${now.value.getMonth() + 1}月${now.value.getDate()}日`,
+)
+
+/** v1029：头像下方第二行 —— 星期几 */
+const weekdayLabel = computed(() => WEEKDAYS[now.value.getDay()])
+
+/** 生肖与时辰信息收进 title（v1029：界面上不再展示「狗」「戌时」文字） */
 const tooltip = computed(() => `${current.value.hour} · ${current.value.name}（${current.value.range}）`)
 </script>
 
 <template>
-  <div class="zodiac-pet" :title="tooltip" aria-label="生肖宠物">
+  <div class="zodiac-pet" :title="tooltip" aria-label="生肖宠物与日期">
     <span class="zodiac-emoji">{{ current.emoji }}</span>
-    <div class="zodiac-text">
-      <div class="zodiac-name">{{ current.name }}</div>
-      <div class="zodiac-hour muted">{{ current.hour }}</div>
-    </div>
+    <div class="zodiac-date">{{ dateLabel }}</div>
+    <div class="zodiac-week muted">{{ weekdayLabel }}</div>
   </div>
 </template>
 
 <style scoped>
+/* v1029：头像上移（居中），下方两行日期文字 */
 .zodiac-pet {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   flex-shrink: 0;
+  line-height: 1.25;
 }
 
 .zodiac-emoji {
@@ -80,19 +106,15 @@ const tooltip = computed(() => `${current.value.hour} · ${current.value.name}�
   60% { transform: translateY(0) rotate(3deg); }
 }
 
-.zodiac-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.3;
-}
-
-.zodiac-name {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.zodiac-hour {
+.zodiac-date {
   font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.zodiac-week {
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .muted {

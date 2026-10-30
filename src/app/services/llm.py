@@ -6,7 +6,8 @@
 时间: 2026-10-27
 说明: LLM Provider / Model 管理服务（手册「三、(1) services」+「二、(1) 密钥安全」）。
 
-    - 密钥**只写 `.env`**（`core.security.set_env_key`，白名单 + 原子写 + 备份），DB 只存 `api_key_env`；
+    - 密钥存在**系统级环境变量**（v1029：`core.system_env.system_env_set`，用户作用域，无需管理员/root），
+      DB 只存 `api_key_env`；读取时回落 `.env` 以兼容历史密钥；
     - 对外返回一律掩码（`sk-****abcd`），绝不回显明文；
     - 连接测试用极小请求（1 token），失败给可读错误；
     - Provider/Model 变更后触发配置重载（`config_version += 1` 使 Agent 工厂缓存失效）。
@@ -29,7 +30,7 @@ from app.agent.llm.factory import (
 from app.core.config import get_settings, reload_settings
 from app.core.errors import BadRequestError, LlmProviderError, NotFoundError
 from app.core.logging import get_logger
-from app.core.security import get_api_key, is_whitelisted_key, mask, set_env_key
+from app.core.security import get_api_key, is_valid_secret_key_name, mask
 from app.db.base import new_id, utcnow
 from app.db.models import LlmModel, LlmProvider
 from app.services import audit
@@ -46,7 +47,7 @@ PROVIDER_TYPES = (
     "openrouter",
 )
 
-#: 常用环境变量名建议（前端下拉；均为白名单键）
+#: 常用环境变量名建议（★v1029：名称可任意取，这里只是常见厂商的命名参考）
 SUGGESTED_KEY_ENVS = (
     "OPENAI_API_KEY",
     "DASHSCOPE_API_KEY",
@@ -196,8 +197,8 @@ async def create_provider(
     if api_key_value:
         env_name = env_name or _derive_env_name(name)
         _write_secret(session, env_name, api_key_value)
-    if env_name and not is_whitelisted_key(env_name):
-        raise BadRequestError(f"环境变量名 {env_name} 不在密钥白名单内（须以 _API_KEY/_KEY/_TOKEN 结尾）")
+    if env_name and not is_valid_secret_key_name(env_name):
+        raise BadRequestError(_env_name_error(env_name))
 
     row = LlmProvider(
         id=new_id(),
@@ -287,19 +288,25 @@ async def update_provider(
 
     if clear_api_key and row.api_key_env:
         changes["api_key_env"] = {"from": row.api_key_env, "to": None}
+        # ★v1029：密钥存在系统级环境变量，清除时一并删除（仅当没有别的 Provider 共用该变量名）
+        await _forget_secret(session, row.api_key_env, except_provider_id=row.id)
         row.api_key_env = None
     elif api_key_value:
         env_name = (api_key_env or "").strip() or row.api_key_env or _derive_env_name(row.name)
-        if not is_whitelisted_key(env_name):
-            raise BadRequestError(f"环境变量名 {env_name} 不在密钥白名单内")
+        if not is_valid_secret_key_name(env_name):
+            raise BadRequestError(_env_name_error(env_name))
+        old_env = row.api_key_env
         _write_secret(session, env_name, api_key_value)
-        changes["api_key_env"] = {"from": row.api_key_env, "to": env_name}
+        changes["api_key_env"] = {"from": old_env, "to": env_name}
         changes["api_key"] = {"masked": mask(api_key_value)}
         row.api_key_env = env_name
+        # ★v1029：换了新变量名并写入新密钥后，旧变量名成为孤儿，清理掉（仍受共用保护）
+        if old_env and old_env != env_name:
+            await _forget_secret(session, old_env, except_provider_id=row.id)
     elif api_key_env is not None:
         env_name = api_key_env.strip() or None
-        if env_name and not is_whitelisted_key(env_name):
-            raise BadRequestError(f"环境变量名 {env_name} 不在密钥白名单内")
+        if env_name and not is_valid_secret_key_name(env_name):
+            raise BadRequestError(_env_name_error(env_name))
         if env_name != row.api_key_env:
             changes["api_key_env"] = {"from": row.api_key_env, "to": env_name}
             row.api_key_env = env_name
@@ -360,6 +367,10 @@ async def delete_provider(session: AsyncSession, provider_id: str) -> dict[str, 
     if row is None:
         raise NotFoundError(f"Provider 不存在：{provider_id}")
 
+    # ★v1029：删除 Provider 时清理其系统级密钥变量（仅当没有别的 Provider 共用该变量名），
+    # 避免密钥残留在系统环境里。必须在 session.delete(row) 之前取到变量名。
+    orphan_env = (row.api_key_env or "").strip() or None
+
     models = (
         (await session.execute(select(LlmModel).where(LlmModel.provider_id == provider_id))).scalars().all()
     )
@@ -367,6 +378,9 @@ async def delete_provider(session: AsyncSession, provider_id: str) -> dict[str, 
         await session.delete(m)
     await session.delete(row)
     await session.flush()
+
+    if orphan_env:
+        await _forget_secret(session, orphan_env)
 
     await audit.record(
         session,
@@ -685,25 +699,81 @@ def _provider_key_overview() -> dict[str, bool]:
 
 
 def _derive_env_name(name: str) -> str:
-    """由 Provider 名派生环境变量名（大写 + 下划线 + `_API_KEY` 后缀，符合白名单）。"""
+    """由 Provider 名派生环境变量名（大写 + 下划线 + `_API_KEY` 后缀）。
+
+    v1029：密钥变量名可任意命名，这里只是「用户没填时」的默认值；
+    派生结果若与应用配置键冲突则回落到 `CUSTOM_API_KEY`。
+    """
     import re
 
     slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper() or "CUSTOM"
     candidate = f"{slug}_API_KEY"
-    if is_whitelisted_key(candidate):
+    if is_valid_secret_key_name(candidate):
         return candidate
     return "CUSTOM_API_KEY"
 
 
+def _env_name_error(env_name: str) -> str:
+    """v1029：密钥环境变量名非法时的可读提示（名称本身可任意取，只挡非法字符与应用配置键）。"""
+    if not (env_name or "").strip():
+        return "密钥环境变量名为必填"
+    return (
+        f"环境变量名「{env_name}」不可用：名称可任意取，但需以字母或下划线开头、"
+        "只含字母/数字/下划线，且不能与应用配置项（如 APP_PORT）重名"
+    )
+
+
 def _write_secret(session: AsyncSession, env_name: str, value: str) -> None:
-    """密钥写回 `.env`（白名单 + 原子写 + 备份）；审计只记键名与掩码，**绝不记明文**。"""
-    if not is_whitelisted_key(env_name):
-        raise BadRequestError(f"环境变量名 {env_name} 不在密钥白名单内")
+    """密钥写入**系统级环境变量**（v1029；用户作用域，无需管理员/root）。
+
+    - Windows：`HKCU\\Environment`（`setx`，重启后仍生效）；
+    - macOS/Linux：`~/.ai-writer-pro/env.json`（0600）+ 派生 shell 文件供 profile `source`；
+    - 同时写回本进程 `os.environ`，应用无需重启即可用新密钥。
+
+    审计只记键名与掩码，**绝不记明文**。
+    """
+    if not is_valid_secret_key_name(env_name):
+        raise BadRequestError(_env_name_error(env_name))
+    from app.core.system_env import system_env_set
+
+    if not system_env_set(env_name, value):
+        raise BadRequestError(
+            f"写入系统级环境变量失败：{env_name}（Windows 需 HKCU 注册表可写；"
+            "Linux/macOS 需 HOME 目录可写）"
+        )
+    logger.info("llm_api_key_written", env_name=env_name, masked=mask(value), store="system_env")
+
+
+async def _forget_secret(
+    session: AsyncSession, env_name: str | None, *, except_provider_id: str | None = None
+) -> None:
+    """v1029：删除系统级密钥变量（清除密钥 / 改环境变量名 / 删 Provider 时调用）。
+
+    ★多个 Provider 可能共用同一个变量名（如两家都用 `OPENAI_API_KEY`），
+    因此**仅当没有其它 Provider 仍引用该变量名时**才真正删除，避免误删他人密钥。
+    失败不阻断主流程（记警告即可）——密钥残留不影响功能，只是清理不彻底。
+    """
+    name = (env_name or "").strip()
+    if not name:
+        return
+
+    stmt = select(LlmProvider.id).where(LlmProvider.api_key_env == name)
+    if except_provider_id:
+        stmt = stmt.where(LlmProvider.id != except_provider_id)
+    still_used = (await session.execute(stmt)).scalars().first() is not None
+    if still_used:
+        logger.info("llm_api_key_kept_shared", env_name=name)
+        return
+
+    from app.core.system_env import system_env_delete
+
     try:
-        set_env_key(env_name, value)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-    logger.info("llm_api_key_written", env_name=env_name, masked=mask(value))
+        removed = system_env_delete(name)
+    except Exception as exc:  # 清理失败不阻断主流程
+        logger.warning("llm_api_key_delete_failed", env_name=name, error=str(exc))
+        return
+    if removed:
+        logger.info("llm_api_key_deleted", env_name=name, store="system_env")
 
 
 async def _clear_other_defaults(session: AsyncSession, keep_pk: str | None) -> None:

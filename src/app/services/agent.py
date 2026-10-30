@@ -25,7 +25,7 @@ from app.agent.memory import load_tree, set_active_leaf
 from app.core.errors import ApiError, ErrorCode, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession, Message, Novel, ProjectIndex, ToolCallLog
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel, ProjectIndex, ToolCallLog
 from app.db.session import session_scope
 from app.services import audit
 
@@ -71,7 +71,14 @@ def summarize_session_title(content: str, *, max_len: int = 30) -> str:
 
 
 async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
-    """项目级用量（v1028：AI 会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。"""
+    """项目级用量（v1028：AI 会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。
+
+    ★v1029：token 以 `agent_runs` 为准而非 `messages`——子代理默认走**独立上下文**，
+    其消息不进主消息树，但运行级 `tokens_in/out` 已把子代理用量累计进去
+    （见 `agent/loop/streaming.py` 对带 namespace 的 chunk 同样累加 usage），
+    因此按 run 汇总才满足「和主 Agent 一起算 Token 消耗」。
+    `run.tokens_in` 是收尾时整体赋值（非累加），逐 run 求和不会重复计数。
+    """
     sessions = (
         (await db.execute(select(AgentSession).where(AgentSession.project_id == project_id))).scalars().all()
     )
@@ -81,8 +88,8 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
     if session_ids:
         rows = (
             await db.execute(
-                select(func.sum(Message.tokens_in), func.sum(Message.tokens_out)).where(
-                    Message.session_id.in_(session_ids)
+                select(func.sum(AgentRun.tokens_in), func.sum(AgentRun.tokens_out)).where(
+                    AgentRun.session_id.in_(session_ids)
                 )
             )
         ).first()
@@ -94,6 +101,32 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "tokens_total": tokens_in + tokens_out,
+    }
+
+
+async def session_usage(db: AsyncSession, session_id: str) -> dict[str, Any]:
+    """会话级上下文占用（v1029：大模型选择弹窗右侧「剩余上下文百分比」）。
+
+    取**最近一次** run 的 `tokens_in` 作为当前上下文占用——它正是该次模型调用的输入
+    token（system prompt + 历史消息 + 工具结果），是最贴近「窗口已用多少」的度量。
+    历史消息累计和跨会话求和都会高估，故一律只看最后一次。
+
+    没有任何 run 时返回 0（前端显示 100% 剩余）。
+    """
+    row = (
+        await db.execute(
+            select(AgentRun.tokens_in, AgentRun.tokens_out)
+            .where(AgentRun.session_id == session_id)
+            .order_by(AgentRun.started_at.desc(), AgentRun.id.desc())
+            .limit(1)
+        )
+    ).first()
+    tokens_in = int(row[0] or 0) if row else 0
+    tokens_out = int(row[1] or 0) if row else 0
+    return {
+        "session_id": session_id,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
     }
 
 

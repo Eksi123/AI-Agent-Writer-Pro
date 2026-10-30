@@ -6,7 +6,9 @@
 时间: 2026-10-27
 说明: 大纲读写与校验（手册「六 → 路由树 · 大纲」）。
 
-    ★`PUT /novels/{id}/outline` 成功后执行 `sync_order_from_outline` 回填卷章 `sort_order`。
+    ★v1029：大纲是**参考资料**而非结构约束——`PUT /novels/{id}/outline` 只保存内容并
+    返回只读差异报告（`order_sync.read_only = true`），不再回填卷章 `sort_order`。
+    卷章结构与顺序由 `services/volumes.py` 维护（插入卷章时按 ordinal 顺延、删空即删卷）。
     检索与摘要重建见 `api/story.py`。
 """
 
@@ -33,7 +35,7 @@ async def get_outline(novel_id: str, session: AsyncSession = Depends(get_session
 async def put_outline(
     novel_id: str, body: OutlineIn, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """写大纲；成功后回填卷章顺序（`sync_order_from_outline`）。"""
+    """写大纲；★v1029 只保存内容 + 返回只读差异报告，不再回填卷章顺序。"""
     dto = await story.write_outline(session, novel_id, body.content)
     await session.commit()
     return ok(dto)

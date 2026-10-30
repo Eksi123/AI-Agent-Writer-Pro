@@ -1,6 +1,6 @@
 /**
  * 各模块 API 接口封装，与后端路由树（手册「六」）一一对应。
- * ★卷章无任何 reorder / move 接口：顺序是大纲派生值（铁律 10）。
+ * ★卷章无 reorder / move 接口：v1029 起位置编辑走「插入」（create 带 ordinal，其后各项顺延）。
  */
 import { del, get, http, patch, post, put } from './http'
 import type {
@@ -79,14 +79,15 @@ export const progressApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 卷（★只读顺序，无重排接口）
+// 卷（★v1029：无拖拽重排，但支持按 ordinal 插入到指定位置）
 // ---------------------------------------------------------------------------
 
 export const volumesApi = {
   list: (novelId: string) => get<Volume[]>(`/novels/${novelId}/volumes`),
 
-  create: (novelId: string, title: string, summary = '') =>
-    post<Volume>(`/novels/${novelId}/volumes`, { title, summary }),
+  /** ordinal 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1） */
+  create: (novelId: string, title: string, summary = '', ordinal?: number) =>
+    post<Volume>(`/novels/${novelId}/volumes`, { title, summary, ordinal }),
 
   update: (volId: string, payload: { title?: string; summary?: string }) =>
     patch<Volume>(`/volumes/${volId}`, payload),
@@ -96,19 +97,26 @@ export const volumesApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 章（★只读顺序，无重排 / 无跨卷移动）
+// 章（★v1029：无跨卷移动，支持按 ordinal 插入；删空卷 → 卷一并删除）
 // ---------------------------------------------------------------------------
 
 export const chaptersApi = {
   list: (volId: string) => get<Chapter[]>(`/volumes/${volId}/chapters`),
 
-  create: (volId: string, title: string, content = '') =>
-    post<Chapter>(`/volumes/${volId}/chapters`, { title, content }),
+  /** ordinal 缺省 = 追加卷末尾；传值 = 插入到该位置（其后各章顺延 +1） */
+  create: (volId: string, title: string, content = '', ordinal?: number) =>
+    post<Chapter>(`/volumes/${volId}/chapters`, { title, content, ordinal }),
 
-  update: (chapterId: string, payload: { title?: string; status?: 'draft' | 'finalized' }) =>
-    patch<Chapter>(`/chapters/${chapterId}`, payload),
+  /** v1029：重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改） */
+  update: (
+    chapterId: string,
+    payload: { title?: string; status?: 'draft' | 'finalized'; volume_title?: string },
+  ) => patch<Chapter>(`/chapters/${chapterId}`, payload),
 
-  remove: (chapterId: string) => del<{ id: string; deleted: boolean }>(`/chapters/${chapterId}`),
+  remove: (chapterId: string) =>
+    del<{ id: string; deleted: boolean; volume_id?: string; volume_deleted?: boolean }>(
+      `/chapters/${chapterId}`,
+    ),
 }
 
 // ---------------------------------------------------------------------------
@@ -156,13 +164,13 @@ export const contentApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 大纲（★顺序的唯一写入口：PUT 成功后后端回填卷章 sort_order）
+// 大纲（★v1029：参考资料，保存只返回只读差异报告，不再回填卷章 sort_order）
 // ---------------------------------------------------------------------------
 
 export const outlineApi = {
   read: (novelId: string) => get<Outline>(`/novels/${novelId}/outline`),
 
-  /** 保存大纲；后端执行 sync_order_from_outline 回填卷章顺序 */
+  /** 保存大纲；后端返回 order_sync（read_only 差异报告），不改卷章顺序 */
   save: (novelId: string, content: string) => put<Outline>(`/novels/${novelId}/outline`, { content }),
 
   validate: (novelId: string) => get<OutlineValidate>(`/novels/${novelId}/outline/validate`),
@@ -362,12 +370,16 @@ export const configApi = {
 
 export interface WeatherDto {
   city: string
+  /** v1029：具体地址（反向地理编码得到，可为空）——第一排城市右侧小字 */
+  address?: string | null
   latitude: number
   longitude: number
   temperature: number | null
   apparent_temperature: number | null
   humidity: number | null
   wind_speed: number | null
+  /** v1029：蒲福风力等级（0–12），组件以「级」为单位展示风速 */
+  wind_level?: number | null
   weather_code: number | null
   description: string
   icon: string
@@ -411,6 +423,12 @@ export const agentApi = {
     get<{ project_id: string; session_count: number; tokens_in: number; tokens_out: number; tokens_total: number }>(
       '/agent/usage',
       { params: { novel_id: novelId } },
+    ),
+
+  /** v1029：会话上下文占用（最近一次 run 的输入 token） */
+  sessionUsage: (sessionId: string) =>
+    get<{ session_id: string; tokens_in: number; tokens_out: number }>(
+      `/agent/sessions/${sessionId}/usage`,
     ),
 
   createSession: (payload: { novel_id: string; title?: string; model_ref?: string }) =>

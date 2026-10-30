@@ -210,6 +210,15 @@ async function saveNow(): Promise<void> {
   else if (okSaved) emit('autosaved')
 }
 
+/** v1029：标记定稿 / 取消定稿（原【卷章】页签的入口收敛到此） */
+async function toggleFinalize(): Promise<void> {
+  try {
+    await editorStore.setStatus(editorStore.status === 'finalized' ? 'draft' : 'finalized')
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+  }
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
@@ -265,6 +274,15 @@ defineExpose({ saveNow })
       </span>
 
       <div class="flex-fill" />
+      <!-- v1029：卷章页签移除后，定稿入口收敛到正文工具栏 -->
+      <el-button
+        size="small"
+        :type="editorStore.status === 'finalized' ? 'success' : 'default'"
+        :plain="editorStore.status !== 'finalized'"
+        @click="toggleFinalize"
+      >
+        {{ editorStore.status === 'finalized' ? t('editor.unfinalize') : t('editor.finalize') }}
+      </el-button>
       <el-button size="small" type="primary" :loading="editorStore.saving" @click="saveNow">
         {{ t('common.save') }}
       </el-button>

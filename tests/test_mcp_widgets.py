@@ -210,6 +210,109 @@ class TestWeatherService:
         assert weather.describe_weathercode(None)[0] == "未知"
         assert weather.describe_weathercode(12345)[0].startswith("代码")
 
+    def test_wind_level_scale(self):
+        """v1029：组件风速以蒲福风力「级」为单位。"""
+        assert weather.wind_level(None) is None
+        assert weather.wind_level(0.5) == 0
+        assert weather.wind_level(8.2) == 2
+        assert weather.wind_level(30) == 5
+        assert weather.wind_level(130) == 12
+
+    async def test_current_weather_includes_wind_level(self, fake_http):
+        """v1029：天气数据带风力等级字段。"""
+        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 30, "time": "t"}}
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
+        }
+        data = await weather.current_weather_by_coords(30.25, 120.17, city_label="杭州")
+        assert data["wind_level"] == 2
+
+    async def test_reverse_geocode_builds_address(self, fake_http):
+        """v1029：反向地理编码给出「具体地址」（跳过国家、去掉与城市重复的片段）。"""
+        fake_http.registry["bigdatacloud"] = {
+            "city": "杭州市",
+            "locality": "西湖区",
+            "principalSubdivision": "浙江省",
+            "localityInfo": {
+                "administrative": [
+                    {"name": "中国", "adminLevel": 2, "order": 1},
+                    {"name": "浙江省", "adminLevel": 4, "order": 2},
+                    {"name": "杭州市", "adminLevel": 6, "order": 3},
+                    {"name": "西湖区", "adminLevel": 8, "order": 4},
+                ]
+            },
+        }
+        result = await weather.reverse_geocode(30.25, 120.17)
+        assert result is not None
+        assert result["city"] == "杭州市"
+        assert result["address"] == "浙江省 西湖区"
+        assert "中国" not in result["address"]
+
+    async def test_client_follows_redirects(self):
+        """★回归：BigDataCloud 已改为 307 跳转到 api-bdc.io。
+
+        httpx 默认**不**跟随重定向，若 `_client()` 丢了 `follow_redirects=True`，
+        `raise_for_status()` 会因 3xx 抛错 → 「具体地址」永远为空（v1029 需求 1.2 静默失效）。
+        """
+        client = weather._client()
+        try:
+            assert client.follow_redirects is True
+        finally:
+            await client.aclose()
+
+    async def test_current_weather_by_city_has_address(self, fake_http):
+        """v1029：城市名路径也要有「具体地址」（反向地理编码 geocode 出的坐标）。"""
+        fake_http.registry["geocoding-api"] = {
+            "results": [{"name": "杭州", "admin1": "浙江省", "latitude": 30.25, "longitude": 120.17}]
+        }
+        fake_http.registry["bigdatacloud"] = {
+            "city": "杭州市",
+            "principalSubdivision": "浙江省",
+            "locality": "西湖区",
+        }
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
+        }
+        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+
+        data = await weather.current_weather("杭州")
+        assert data["city"] == "杭州"
+        assert "西湖区" in data["address"]
+
+    async def test_current_weather_address_failure_does_not_break(self, fake_http):
+        """地址是锦上添花：反向地理编码挂了也**必须**返回天气主数据（回落 admin1）。"""
+        import httpx
+
+        fake_http.registry["geocoding-api"] = {
+            "results": [{"name": "杭州", "admin1": "浙江省", "latitude": 30.25, "longitude": 120.17}]
+        }
+        fake_http.registry["bigdatacloud"] = httpx.ConnectError("offline")
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
+        }
+        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+
+        data = await weather.current_weather("杭州")
+        assert data["temperature"] == 20
+        assert data["address"] == "浙江省"  # admin1 回落
+
+    async def test_current_weather_dedups_municipality_address(self, fake_http):
+        """直辖市：省名与城市名重合（北京/北京市）→ 地址不重复展示城市名。"""
+        import httpx
+
+        fake_http.registry["geocoding-api"] = {
+            "results": [{"name": "北京", "admin1": "北京市", "latitude": 39.9, "longitude": 116.4}]
+        }
+        fake_http.registry["bigdatacloud"] = httpx.ConnectError("offline")
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 18, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
+        }
+        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+
+        data = await weather.current_weather("北京")
+        assert data["city"] == "北京"
+        assert data["address"] == ""
+
 
 # ---------------------------------------------------------------------------
 # stdio 白名单
@@ -394,6 +497,18 @@ class TestWidgetsApi:
         resp = await client.get("/api/v1/widgets/weather", params={"latitude": 30.1, "longitude": 120.2})
         data = resp.json()["data"]
         assert data["city"] == "定位城"
+
+    async def test_weather_by_coords_carries_address(self, client, fake_http):
+        """v1029：组件天气数据带反向地理编码得到的具体地址。"""
+        fake_http.registry["bigdatacloud"] = {"city": "定位城", "principalSubdivision": "某省", "locality": "某区"}
+        fake_http.registry["api.open-meteo.com"] = {
+            "current": {"temperature_2m": 18, "weather_code": 0, "wind_speed_10m": 15, "time": "t"}
+        }
+        resp = await client.get("/api/v1/widgets/weather", params={"latitude": 30.1, "longitude": 120.2})
+        data = resp.json()["data"]
+        assert data["city"] == "定位城"
+        assert data["address"] == "某省 某区"
+        assert data["wind_level"] == 3
 
     async def test_weather_falls_back_to_settings_city(self, client, fake_http):
         """无坐标无城市 → 回落通用设置的回落城市。"""

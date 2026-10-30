@@ -158,9 +158,9 @@ async function remove(s: SkillDto): Promise<void> {
       <div v-if="!s.is_builtin && s.description" class="desc">{{ s.description }}</div>
     </div>
 
-    <!-- 新建/编辑弹窗：无顶部标题 -->
-    <el-dialog v-model="dialogVisible" width="640px" class="skill-dialog">
-      <el-form :model="form" label-width="90px" label-position="left">
+    <!-- 新建/编辑弹窗：无顶部标题；v1029 设置名字号更小、弹窗收窄（不挡右上角 ×） -->
+    <el-dialog v-model="dialogVisible" width="560px" class="skill-dialog">
+      <el-form :model="form" label-width="82px" label-position="left" size="small">
         <el-form-item :label="t('skills.nameLabel')" required>
           <el-input v-model="form.name" :disabled="!!editing" maxlength="64" />
         </el-form-item>
@@ -266,5 +266,13 @@ async function remove(s: SkillDto): Promise<void> {
 
 .skill-dialog .el-dialog__body {
   padding-top: 8px;
+  /* v1029：输入框不要长到右上角 × 的位置 */
+  padding-right: 44px;
+}
+
+/* v1029：设置名字号更小 */
+.skill-dialog .el-form-item__label {
+  font-size: 12px;
+  padding-right: 16px;
 }
 </style>

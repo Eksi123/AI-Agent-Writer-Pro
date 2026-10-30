@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
- * 左侧栏（v1028）：新建小说 + 项目列表。
+ * 左侧栏（v1028 / v1029）：新建小说 + 项目列表。
  *   - 无项目时**不展示任何提示**；
  *   - 有项目时默认选中上次打开的项目（localStorage 记忆）；
- *   - 一行一个项目：书籍 icon + 书名 + 右侧 ··· （重命名 / 删除 / 导出）；
- *   - 悬浮卡片：作者 → 题材 → 简介（无作者与题材时只展示简介）。
+ *   - 一行一个项目：书籍 icon + 书名 + 小字题材标签 + 右侧 ··· （重命名 / 删除 / 导出）；
+ *   - v1029：悬浮框只展示简介，且展示在项目**下方**；
+ *   - v1029：新建弹窗书名左上角带 *，输入框无提示词，题材改为勾选标签（1–3 个）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useProjectStore } from '@/stores/project'
-import { t } from '@/i18n'
+import { GENRE_OPTIONS, t } from '@/i18n'
 import { errorMessage } from '@/api/http'
+import { dropRecentByNovel } from '@/utils/recent'
 import type { Novel } from '@/types'
 import WeatherWidget from './WeatherWidget.vue'
 
@@ -23,11 +25,26 @@ const emit = defineEmits<{
 const store = useProjectStore()
 const dialogVisible = ref(false)
 const creating = ref(false)
-const form = reactive({ title: '', author_name: '', genre: '', synopsis: '' })
+const form = reactive({ title: '', author_name: '', synopsis: '' })
+/** v1029：题材改为勾选标签（最少 1 个、最多 3 个），存储为「、」连接的字符串 */
+const genreTags = ref<string[]>([])
 /** 书名规则悬浮提示可见性（v1028：原 placeholder 收进悬浮弹窗） */
 const ruleHintVisible = ref(false)
 
+const GENRE_MAX = 3
+const genreOptions = GENRE_OPTIONS
+
 const sortedNovels = computed(() => store.novels)
+
+/** v1029：项目行书名右侧的小字题材标签 */
+function genreTagList(novel: Novel): string[] {
+  const raw = (novel.genre || '').trim()
+  if (!raw) return []
+  return raw
+    .split(/[、,，/\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
 
 /** localStorage 记忆的上次打开项目 */
 const LAST_NOVEL_KEY = 'aiwriter:lastNovelId'
@@ -67,14 +84,40 @@ function validateTitle(raw: string): string {
 
 const titleError = computed(() => validateTitle(form.title))
 
+/** v1029：题材勾选数量校验（最少 1 个、最多 3 个） */
+const genreError = computed(() => {
+  if (!genreTags.value.length) return t('novel.genreRequired')
+  if (genreTags.value.length > GENRE_MAX) return t('novel.genreTooMany')
+  return ''
+})
+
+/** v1029：勾选题材标签（已选则取消；未选且未达上限则加入，达上限给出提示） */
+function toggleGenre(genre: string): void {
+  const idx = genreTags.value.indexOf(genre)
+  if (idx >= 0) {
+    genreTags.value.splice(idx, 1)
+    return
+  }
+  if (genreTags.value.length >= GENRE_MAX) {
+    ElMessage.warning(t('novel.genreTooMany'))
+    return
+  }
+  genreTags.value.push(genre)
+}
+
 async function submitCreate(): Promise<void> {
   if (titleError.value) {
     ElMessage.warning(titleError.value)
     return
   }
-  // v1028：简介必填
+  // v1029：简介必填
   if (!form.synopsis.trim()) {
-    ElMessage.warning('简介为必填项')
+    ElMessage.warning(t('common.required'))
+    return
+  }
+  // v1029：题材至少勾选一个、最多三个
+  if (genreError.value) {
+    ElMessage.warning(genreError.value)
     return
   }
   creating.value = true
@@ -83,12 +126,13 @@ async function submitCreate(): Promise<void> {
     const novel = await store.createNovel({
       title: form.title.trim(),
       author_name: author || undefined,
-      genre: form.genre || undefined,
+      genre: genreTags.value.join('、'),
       synopsis: form.synopsis.trim(),
     })
     ElMessage.success(t('novel.created', { title: novel.title }))
     dialogVisible.value = false
-    Object.assign(form, { title: '', author_name: '', genre: '', synopsis: '' })
+    Object.assign(form, { title: '', author_name: '', synopsis: '' })
+    genreTags.value = []
     await store.selectNovel(novel.id)
     rememberNovel(novel.id)
   } catch (err) {
@@ -129,6 +173,8 @@ async function onDelete(novel: Novel): Promise<void> {
     })
     await store.deleteNovel(novel.id)
     if (localStorage.getItem(LAST_NOVEL_KEY) === novel.id) localStorage.removeItem(LAST_NOVEL_KEY)
+    // v1029：项目删除后清理其「最近打开的章节」记录
+    dropRecentByNovel(novel.id)
     ElMessage.success(t('novel.deleted'))
     // 删除当前项目后回落到列表首个
     if (store.novels.length && !store.currentNovelId) {
@@ -139,11 +185,6 @@ async function onDelete(novel: Novel): Promise<void> {
     if (err === 'cancel' || err === 'close') return
     ElMessage.error(errorMessage(err))
   }
-}
-
-/** 悬浮卡片：作者 / 题材 / 简介（无作者与题材时只展示简介） */
-function hasAuthorOrGenre(novel: Novel): boolean {
-  return Boolean(novel.author_name?.trim() || novel.genre?.trim())
 }
 </script>
 
@@ -160,27 +201,18 @@ function hasAuthorOrGenre(novel: Novel): boolean {
 
     <!-- v1028：无项目时不展示任何提示 -->
     <div class="sidebar-body scroll-y">
+      <!-- v1029：悬浮只展示简介，且展示在项目**下面** -->
       <el-tooltip
         v-for="novel in sortedNovels"
         :key="novel.id"
-        placement="right"
+        placement="bottom-start"
         :show-after="320"
-        :offset="12"
+        :offset="6"
         popper-class="novel-hover-card"
-        :disabled="!hasAuthorOrGenre(novel) && !novel.synopsis"
+        :disabled="!novel.synopsis"
       >
         <template #content>
           <div class="hover-card">
-            <template v-if="hasAuthorOrGenre(novel)">
-              <div v-if="novel.author_name" class="hc-row">
-                <span class="hc-label">{{ t('sidebar.author') }}</span>
-                <span class="hc-value">{{ novel.author_name }}</span>
-              </div>
-              <div v-if="novel.genre" class="hc-row">
-                <span class="hc-label">{{ t('sidebar.genre') }}</span>
-                <span class="hc-value">{{ novel.genre }}</span>
-              </div>
-            </template>
             <div v-if="novel.synopsis" class="hc-synopsis">{{ novel.synopsis }}</div>
           </div>
         </template>
@@ -196,7 +228,13 @@ function hasAuthorOrGenre(novel: Novel): boolean {
               <path d="M6 2h9a3 3 0 0 1 3 3v16a2 2 0 0 0-2-2H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm0 18h10v1a1 1 0 0 1-1 1H6a2 2 0 0 1 0-2zm3-15h5v2H9V5z" />
             </svg>
           </span>
-          <span class="novel-title">{{ novel.title }}</span>
+          <span class="novel-meta">
+            <span class="novel-title">{{ novel.title }}</span>
+            <!-- v1029：书名右侧小字题材标签 -->
+            <span v-if="genreTagList(novel).length" class="novel-genres">
+              <span v-for="g in genreTagList(novel)" :key="g" class="genre-tag">{{ g }}</span>
+            </span>
+          </span>
 
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => {
             if (cmd === 'rename') onRename(novel)
@@ -221,10 +259,10 @@ function hasAuthorOrGenre(novel: Novel): boolean {
       <el-button text @click="emit('open-ai-tools')">{{ t('sidebar.aiTools') }}</el-button>
     </div>
 
-    <!-- 新建小说弹窗（v1028：书名必填提示进输入框，规则收进悬浮弹窗；简介必填） -->
+    <!-- 新建小说弹窗（v1029：书名左上角 *，输入框无提示词，题材改勾选标签） -->
     <el-dialog v-model="dialogVisible" :title="t('novel.createTitle')" width="480px">
       <el-form :model="form" label-width="72px">
-        <el-form-item>
+        <el-form-item required>
           <template #label>
             <span class="label-with-hint">
               <el-popover
@@ -245,12 +283,8 @@ function hasAuthorOrGenre(novel: Novel): boolean {
               {{ t('novel.titleLabel') }}
             </span>
           </template>
-          <el-input
-            v-model="form.title"
-            :placeholder="t('novel.titlePlaceholder')"
-            maxlength="200"
-            show-word-limit
-          />
+          <!-- v1029：输入框不要任何内容（无 placeholder、无字数计数） -->
+          <el-input v-model="form.title" maxlength="200" />
           <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
         </el-form-item>
 
@@ -258,17 +292,28 @@ function hasAuthorOrGenre(novel: Novel): boolean {
           <el-input v-model="form.author_name" maxlength="100" />
         </el-form-item>
 
-        <el-form-item :label="t('novel.genreLabel')">
-          <el-input v-model="form.genre" maxlength="50" />
+        <!-- v1029：题材 = 勾选标签（最少 1 个，最多 3 个） -->
+        <el-form-item>
+          <template #label>
+            <span class="label-with-hint">
+              <span class="label-main">{{ t('novel.genreLabel') }}</span>
+              <span class="label-hint">{{ t('novel.genreHint') }}</span>
+            </span>
+          </template>
+          <div class="genre-group">
+            <el-check-tag
+              v-for="g in genreOptions"
+              :key="g"
+              :checked="genreTags.includes(g)"
+              @change="() => toggleGenre(g)"
+            >
+              {{ g }}
+            </el-check-tag>
+          </div>
         </el-form-item>
 
         <el-form-item :label="t('novel.synopsisLabel')" required>
-          <el-input
-            v-model="form.synopsis"
-            type="textarea"
-            :rows="3"
-            :placeholder="t('novel.synopsisPlaceholder')"
-          />
+          <el-input v-model="form.synopsis" type="textarea" :rows="3" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -276,7 +321,7 @@ function hasAuthorOrGenre(novel: Novel): boolean {
         <el-button
           type="primary"
           :loading="creating"
-          :disabled="!!titleError || !form.synopsis.trim()"
+          :disabled="!!titleError || !form.synopsis.trim() || !!genreError"
           @click="submitCreate"
         >
           {{ t('common.create') }}
@@ -333,12 +378,38 @@ function hasAuthorOrGenre(novel: Novel): boolean {
   color: var(--el-color-primary);
 }
 
-.novel-title {
+/* v1029：书名 + 右侧小字题材标签（整体占据弹性空间，过长省略） */
+.novel-meta {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.novel-title {
+  flex-shrink: 1;
   min-width: 0;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.novel-genres {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.genre-tag {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 7px;
+  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--el-color-primary) 12%, transparent);
   white-space: nowrap;
 }
 
@@ -400,6 +471,21 @@ function hasAuthorOrGenre(novel: Novel): boolean {
   font-size: 12px;
   line-height: 1.5;
   color: var(--el-color-danger);
+}
+
+/* v1029：题材勾选标签组 */
+.genre-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.label-with-hint .label-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 4px;
 }
 </style>
 

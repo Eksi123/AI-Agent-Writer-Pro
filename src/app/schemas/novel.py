@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 项目 / 卷章 / 大纲 DTO（手册「六 → 路由树 · 项目/卷章/大纲」）。
 
-    ★卷章无 reorder / move 的 DTO：顺序是大纲派生值（铁律 10）。
+    ★卷章无 reorder / move 的 DTO：v1029 起位置编辑走「插入」（`ordinal`），仍无拖拽重排。
     ★`ContentIn` 必带 `base_version`（乐观锁，不符 409/40901）。
 
     响应统一由 `core.response.ok()` 包成 `{code,message,data}`，此处只定义 `data` 部分。
@@ -79,6 +79,8 @@ class ReadingProgressOut(BaseModel):
 class VolumeCreate(BaseModel):
     title: str = Field(max_length=200)
     summary: str = ""
+    #: v1029：插入位置（1..N+1，正整数）；不传则追加到末尾
+    ordinal: int | None = Field(default=None, ge=1, description="插入位置序号；缺省追加末尾")
 
 
 class VolumeUpdate(BaseModel):
@@ -101,11 +103,15 @@ class VolumeOut(BaseModel):
 class ChapterCreate(BaseModel):
     title: str = Field(max_length=200)
     content: str = ""
+    #: v1029：插入位置（1..N+1，正整数）；不传则追加到卷末尾
+    ordinal: int | None = Field(default=None, ge=1, description="插入位置序号；缺省追加末尾")
 
 
 class ChapterUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     status: Literal["draft", "finalized"] | None = None
+    #: v1029：重命名弹窗同时给出卷名（默认不变）；变更时重命名该章所属的卷
+    volume_title: str | None = Field(default=None, max_length=200)
 
 
 class ChapterOut(BaseModel):
@@ -206,7 +212,7 @@ class OutlineOut(BaseModel):
     filename: str
     content: str
     word_count: int = 0
-    #: 保存成功后由 sync_order_from_outline 回填的顺序（M4 生效；M1 为空）
+    #: v1029：只读差异报告（大纲不再回填 sort_order）；read_only=True 标记
     order_synced: bool = False
 
 
