@@ -203,6 +203,14 @@ export interface ContextBlock {
   text: string
   /** 本地文件字节数（用于「所有添加的文件不超过 20M」校验） */
   bytes?: number
+  /** v1030续(6)：选区润色块携带的章节 id（供大模型定位并写回） */
+  chapterId?: string
+  /** v1030续(6)：选中文本在章节中的所在范围说明（如「第3-5段（全章共42段）」） */
+  rangeLabel?: string
+  /** v1030续(6)：选区前文（帮助模型衔接，≤600 字） */
+  before?: string
+  /** v1030续(6)：选区后文（帮助模型衔接，≤600 字） */
+  after?: string
 }
 
 export interface SearchResult {

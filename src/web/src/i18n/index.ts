@@ -52,10 +52,15 @@ export const zh = {
     titleRuleHint: '书籍名称不允许为空，不允许全部为阿拉伯数字，不允许出现#$%等特殊字符，可以出现标点符号',
     authorLabel: '作者',
     genreLabel: '题材',
-    /** v1029：题材改为勾选标签，最少 1 个、最多 3 个 */
-    genreHint: '最少选择 1 个，最多选择 3 个',
+    /** v1031：题材「最少 1 最多 3」改为隐藏逻辑，界面不再展示提示文案 */
     genreRequired: '请至少选择一个题材',
     genreTooMany: '题材最多只能选择 3 个',
+    /** v1030续：题材末尾的「+」新增自定义题材（最多 5 个字，仅本次弹窗有效，提交后不保留） */
+    genreAddTitle: '自定义题材',
+    genreAddLabel: '题材名',
+    genreAddHint: '最多 5 个字；仅本次新建/编辑有效，保存小说后不再保留',
+    genreAddOk: '题材「{name}」已添加',
+    genreAddFailed: '题材添加失败：{reason}',
     synopsisLabel: '简介',
     /** v1029：简介输入框内不再有任何提示词 */
     synopsisPlaceholder: '',
@@ -125,6 +130,19 @@ export const zh = {
     ordinalLabel: '卷序号',
     chapterOrdinalLabel: '章节序号',
     ordinalHint: '正整数，不可与已有{kind}序号重复；1 = 插到最前面',
+    /** v1030续：卷序号按插入位置自动填好，其后各卷自动顺延 */
+    ordinalAutoHint: '已按插入位置自动填好；该位置及其后的卷会自动顺延 +1',
+    /** v1030续：插入卷必须带上第一章（★不支持空卷） */
+    firstChapterLabel: '第一章章节名',
+    firstChapterRequired: '请填写第一章的章节名（不支持空卷）',
+    noEmptyVolumeHint: '插入卷时一并创建它的第一章，避免出现空卷',
+    /** v1030续：章节序号自动增减，界面上不再填写 */
+    chapterOrdinalAutoHint: '章节序号自动推算：该章及其后的章节自动顺延 +1',
+    /** v1030续：大纲节点只支持往后插入卷 */
+    insertVolumeOutlineAfterOnly: '大纲在最前面，只能往后插入小说卷',
+    /** v1030续：插入章节必须先定位到某一章 */
+    insertChapterNeedsChapter: '请先在目录中打开一个章节，再插入章节',
+    volumeInsertedWithChapter: '已在第 {ordinal} 位插入卷「{title}」，第一章「{chapter}」',
     renameDialogTitle: '重命名',
     /** v1029：重命名弹窗同时含卷名（默认填当前卷名 = 不修改） */
     renameVolumeHint: '默认不修改卷名',
@@ -289,8 +307,8 @@ export const zh = {
     panelTooltip: '来试试AI写作功能吧，它可以实现创作小说、润色大纲、检验剧情、剧情汇总等等功能',
     expand: '展开 AI 写作助手',
     collapse: '收起 AI 会话框',
-    /** v1029：右栏可向左拉伸（最多到主页面的 1/3） */
-    resizeHint: '按住拖动可调整会话框宽度（最宽到主页面的 1/3）',
+    /** v1030续：右栏可向左拉伸，拉宽后会话框铺满右侧屏幕（中栏自适应收窄） */
+    resizeHint: '按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）',
     /** v1029：头部展示当前会话数量 + 当前小说项目 token 使用量（无模型提示已删除） */
     sessionCount: '{n}个会话',
     /** v1029：头部 token 用量带单位（x.yK Token） */
@@ -312,10 +330,19 @@ export const zh = {
     send: '发送',
     stop: '停止',
     running: 'AI 正在思考…',
-    /** v1028：运行中点击发送 → 三种处理方式（参考 copilot） */
-    sendAnyway: '停止并发送',
-    steer: '通过消息引导发送',
+    /** v1030续(2)：运行中发送消息的三种模式（模仿主流大模型 / AI Agent） */
+    sendAnyway: '停止后发送',
+    steer: '添加为引导',
     queue: '添加到队列',
+    /** 三种模式的悬浮说明 */
+    sendAnywayHint: '立即停止当前工作，转而处理这条新消息',
+    steerHint: '不打断当前工作，在下一步执行前插入这条消息作为引导',
+    queueHint: '等当前工作处理完，再自动处理这条消息',
+    steered: '已添加为引导，AI 会在下一步执行前看到它',
+    queued: '已添加到队列，当前回答结束后自动发送',
+    /** v1030续(4)：报错卡片 */
+    errorFoot: '本次回复已中断',
+    errorDismiss: '知道了',
     regenerate: '重新生成',
     copyMessage: '复制',
     usage: '用量：入 {in} / 出 {out} tokens',
@@ -377,27 +404,6 @@ export const zh = {
 export type I18nKey = string
 
 type Dict = Record<string, unknown>
-
-/**
- * v1029：可勾选的题材标签（新建小说弹窗）。最多勾选 3 个、最少 1 个。
- * 与后端 `novel.yaml` 的 `genre`（字符串）对应——多选用「、」连接存储，单值直接存。
- */
-export const GENRE_OPTIONS: readonly string[] = [
-  '玄幻',
-  '仙侠',
-  '武侠',
-  '都市',
-  '架空历史',
-  '奇幻',
-  '科幻',
-  '悬疑',
-  '游戏',
-  '军事',
-  '历史',
-  '现实',
-  '言情',
-  '同人',
-]
 
 /** 简单插值：t('novel.created', { title: 'x' }) → 小说「x」创建成功 */
 export function t(key: string, vars?: Record<string, string | number>): string {

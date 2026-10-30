@@ -32,6 +32,11 @@ const error = ref<string | null>(null)
 
 const dirty = computed(() => content.value !== savedContent.value)
 
+/** v1031：脏状态同步到 editor store（工具栏保存 icon 据此置灰/恢复） */
+watch(dirty, (v) => {
+  editorStore.dirtyOutline = v
+}, { immediate: true })
+
 const warnings = computed(() => validation.value?.issues.filter((i) => i.level === 'warning') ?? [])
 const errors = computed(() => validation.value?.issues.filter((i) => i.level === 'error') ?? [])
 
@@ -101,10 +106,7 @@ watch(() => project.currentNovelId, load)
 
 <template>
   <div class="outline-editor-pane" @keydown="onKeydown">
-    <!-- v1030：删除[编辑]/[预览]切换与工具栏保存按钮（保存已移到上方工具栏 icon） -->
-    <div v-if="dirty" class="row dirty-row">
-      <el-tag type="warning" size="small" effect="plain">{{ t('editor.unsaved') }}</el-tag>
-    </div>
+    <!-- v1031：删除「有未保存的修改」提示条（待保存状态改由工具栏保存 icon 置灰表达） -->
 
     <!-- 校验警告条（不阻断保存） -->
     <el-alert v-if="errors.length" type="error" :closable="false" class="mb8">
@@ -149,10 +151,6 @@ watch(() => project.currentNovelId, load)
   height: 100%;
   min-height: 0;
   padding: 12px 16px;
-}
-
-.dirty-row {
-  margin-bottom: 8px;
 }
 
 .mb8 {

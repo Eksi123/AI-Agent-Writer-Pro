@@ -19,7 +19,8 @@ import { useReaderStore } from '@/stores/reader'
 import { agentApi, configApi, llmApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import { t } from '@/i18n'
-import type { ContextBlock, LlmOverview } from '@/types'
+import { describeAgentError, type AgentErrorInfo } from '@/utils/agentErrors'
+import type { AgentMessageDto, ContextBlock, LlmOverview } from '@/types'
 import ApprovalCard from './ApprovalCard.vue'
 import ConsultCard from './ConsultCard.vue'
 import PlanTodoList from './PlanTodoList.vue'
@@ -132,6 +133,22 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     streaming: false,
     createdAt: m.created_at,
   }))
+  // v1030续(1)：乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
+  // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
+  const pending = agent.pendingUserMessage
+  if (pending) {
+    const lastUser = [...persisted].reverse().find((m) => m.role === 'user')
+    if (lastUser?.content !== pending) {
+      persisted.push({
+        key: 'pending-user',
+        role: 'user',
+        content: pending,
+        toolCalls: [],
+        streaming: false,
+        createdAt: null,
+      })
+    }
+  }
   const live: DisplayMessage[] = agent.streaming.map((s) => ({
     key: s.messageId,
     role: s.messageId.startsWith('tool:') ? 'tool' : 'assistant',
@@ -269,9 +286,35 @@ async function removeSession(id: string): Promise<void> {
   }
 }
 
-function exportSession(): void {
-  const sess = agent.currentSession
+/**
+ * 导出会话为 Markdown。
+ * v1030续：入口从会话内右上角移到会话记录列表的 ···，因此支持按 id 导出——
+ * 未打开的会话先拉取它的消息树再导出。
+ */
+async function exportSessionById(id: string): Promise<void> {
+  const sess = agent.sessions.find((s) => s.id === id)
   if (!sess) return
+  let items: AgentMessageDto[] = agent.messages
+  if (agent.currentSessionId !== id) {
+    try {
+      const tree = await agentApi.getMessages(id)
+      items = tree.items.filter((m) => m.in_active_path)
+    } catch (err) {
+      ElMessage.error(errorMessage(err))
+      return
+    }
+  }
+  if (!items.length) {
+    ElMessage.warning('该会话还没有消息，无法导出')
+    return
+  }
+  downloadSessionMarkdown(sess, items)
+}
+
+function downloadSessionMarkdown(
+  sess: { title: string; project_title?: string | null; project_id: string },
+  items: readonly AgentMessageDto[],
+): void {
   const lines: string[] = [
     `# 会话记录 · ${sess.title}`,
     '',
@@ -281,7 +324,7 @@ function exportSession(): void {
     '---',
     '',
   ]
-  for (const msg of agent.messages) {
+  for (const msg of items) {
     const who = msg.role === 'user' ? '我' : msg.role === 'assistant' ? 'AI' : msg.role
     lines.push(`### ${who}`, '')
     if (msg.tool_calls?.length) {
@@ -318,6 +361,27 @@ function exportSession(): void {
 // ---------------------------------------------------------------------------
 
 const canSend = computed(() => input.value.trim().length > 0 && !!project.currentNovelId)
+
+/**
+ * v1030续(4)：Agent / 大模型运行报错时，给出**中文提示 + 应该怎么做**（灰色异常态）。
+ * 由 store 里的 {error, errorCode} 归一而来，避免直接把英文/原始 message 抛给用户。
+ */
+const errorInfo = computed<AgentErrorInfo | null>(() =>
+  agent.error ? describeAgentError(agent.errorCode, agent.error) : null,
+)
+
+/** 用户手动关掉报错卡片（例如已修好配置，准备重试） */
+function dismissError(): void {
+  agent.clearError()
+}
+
+/**
+ * v1031：输入提示改到空态文案下方展示（小字），输入框 placeholder 只保留兜底提示：
+ * 无小说项目 → 「还没有小说项目哦~」；有项目无会话 → 空（提示已在空态区展示）。
+ */
+const inputPlaceholderText = computed(() =>
+  project.currentNovelId ? (agent.currentSessionId ? t('agent.inputPlaceholder') : '') : t('agent.noNovel'),
+)
 
 async function send(): Promise<void> {
   const content = input.value.trim()
@@ -359,7 +423,7 @@ async function steerSend(): Promise<void> {
   try {
     await agent.steerCurrentRun(content)
     input.value = ''
-    ElMessage.success('已把引导内容发送给正在思考的 AI')
+    ElMessage.success(t('agent.steered'))
   } catch (err) {
     ElMessage.error(errorMessage(err))
   }
@@ -372,7 +436,7 @@ function queueSend(): void {
   if (!content) return
   agent.queueMessage(content, modelRef.value || undefined)
   input.value = ''
-  ElMessage.success('已添加到队列，当前回答结束后自动发送')
+  ElMessage.success(t('agent.queued'))
 }
 
 async function onStop(): Promise<void> {
@@ -406,12 +470,37 @@ function formatToolCall(tc: { name: string; args?: Record<string, unknown> }): s
 const blocks = ref<ContextBlock[]>([])
 const addPopover = ref(false)
 
+/**
+ * v1031：正文选区[AI润色]加入的上下文块（限定 AI 修改范围）。
+ * 与「添加文件」同形制展示/发送；本轮问答结束后一并释放。
+ * v1030续(6)：块内带上「所在章节 + 段落范围 + 前后文」，让大模型知道这段文本
+ * 在文章中的位置，从而只针对该范围润色修改。
+ */
+const selectionBlocks = computed<ContextBlock[]>(() =>
+  agent.pendingSelectionBlocks.map((b) => ({
+    kind: 'chapter' as const,
+    label: b.label,
+    text: b.text,
+    chapterId: b.chapterId,
+    rangeLabel: b.rangeLabel,
+    before: b.before,
+    after: b.after,
+  })),
+)
+
+/** 输入框上方展示的全部上下文块 = 添加文件 + 选区润色块 */
+const allBlocks = computed<ContextBlock[]>(() => [...selectionBlocks.value, ...blocks.value])
+
+function removeSelectionBlock(index: number): void {
+  agent.removePendingSelection(index)
+}
+
 /** 已添加文件的字节合计（供 ContextPicker 做 20MB 上限校验） */
 const attachedBytes = computed(() => blocks.value.reduce((s, b) => s + (b.bytes ?? 0), 0))
 
 /** ContextPicker 选中一块内容 → 去重后加入 */
 function onPicked(block: ContextBlock): void {
-  const dup = blocks.value.some((b) => b.kind === block.kind && b.label === block.label)
+  const dup = allBlocks.value.some((b) => b.kind === block.kind && b.label === block.label)
   if (dup) {
     addPopover.value = false
     return
@@ -428,6 +517,8 @@ function removeBlock(idx: number): void {
  * 组装最终消息：已选工具（#子代理 / @技能）+ 上下文块 + 用户输入。
  * v1029：把 `#子代理名` / `@技能名` 与已添加的大纲/章节/文件一并写进消息，
  * 大模型需要同时处理这些内容并主动使用这些工具。
+ * v1030续(6)：选区润色块额外带上「所在章节 / 段落范围 / 前后文」与写回要求，
+ * 让大模型知道这段文本在文章中的所在范围然后修改。
  */
 function composeMessage(): string {
   const question = input.value.trim()
@@ -440,7 +531,25 @@ function composeMessage(): string {
     parts.push(`【本次指定使用的工具】${marks}\n请优先调用以上工具完成本次任务。`)
   }
 
-  for (const b of blocks.value) {
+  for (const b of allBlocks.value) {
+    if (b.rangeLabel && b.chapterId) {
+      // 选区润色块：位置 + 前后文 + 修改要求
+      const lines = [
+        `【选中待润色文本】${b.label}`,
+        `所在章节 id：${b.chapterId}`,
+        `所在范围：${b.rangeLabel}`,
+      ]
+      if (b.before) lines.push('', '（选区前文，仅供衔接，请勿修改）', b.before)
+      lines.push('', '（选中文本原文，只允许修改这一段）', b.text)
+      if (b.after) lines.push('', '（选区后文，仅供衔接，请勿修改）', b.after)
+      lines.push(
+        '',
+        '请按我的要求润色以上选中文本：只输出修改后的这一段（不要输出前文/后文），' +
+          '完成后把修改结果写回该章节对应位置（写回前会先存快照，可回滚）。',
+      )
+      parts.push(lines.join('\n'))
+      continue
+    }
     parts.push(`【${b.label}】\n${b.text}`)
   }
 
@@ -448,9 +557,10 @@ function composeMessage(): string {
   return parts.join('\n\n---\n\n')
 }
 
-/** v1029：当前问答结束后释放文件缓存（上下文块清空） */
+/** v1029：当前问答结束后释放文件缓存（上下文块清空）；v1031：选区润色块一并释放 */
 function releaseAttached(): void {
   blocks.value = []
+  agent.clearPendingSelections()
 }
 
 // ---------------------------------------------------------------------------
@@ -573,7 +683,8 @@ async function generateCurrentChapter(): Promise<void> {
 function onSubmit(): void {
   if (!project.currentNovelId) return
   // v1029：已添加的大纲/章节/本地文件、已选的 #子代理 / @技能 与用户输入合并成一条消息
-  if ((blocks.value.length || chips.value.length) && input.value.trim()) {
+  // v1031：选区[AI润色]块同样合并（限定 AI 修改范围）
+  if ((allBlocks.value.length || chips.value.length) && input.value.trim()) {
     input.value = composeMessage()
   }
   if (!input.value.trim()) return
@@ -618,27 +729,10 @@ watch(
         {{ tokenLabel }}
       </span>
       <div class="head-spacer" />
-      <el-button v-if="agent.currentSession" text size="small" @click="newSession">
-        {{ t('agent.newSession') }}
-      </el-button>
     </div>
 
-    <!-- v1029：删除「尚未配置大模型…」提示——未配置或未选择大模型时不需要提示 -->
-
-    <!-- 运行状态条 -->
-    <div v-if="agent.running || agent.activeSubagents.length || agent.gateStage" class="status-bar">
-      <span v-if="agent.running" class="dot-pulse" />
-      <span v-if="agent.running">{{ t('agent.running') }}</span>
-      <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
-        {{ t('agent.subagentLane') }}: {{ sa }}
-      </el-tag>
-      <el-tag v-if="agent.gateStage" size="small" type="warning">
-        {{ t('agent.gateStage') }}: {{ agent.gateStage }}
-      </el-tag>
-      <el-button v-if="agent.running" size="small" type="danger" text @click="onStop">
-        {{ t('agent.stop') }}
-      </el-button>
-    </div>
+    <!-- v1029：删除「尚未配置大模型…」提示——未配置或未选择大模型时不需要提示
+         v1030续：头部不再放[新建会话]；运行状态条（AI 正在思考… / 停止）移入会话内部 -->
 
     <!-- ============ 无小说项目 ============ -->
     <div v-if="!project.currentNovel" class="panel-body center-body">
@@ -648,12 +742,25 @@ watch(
     <!-- ============ 会话记录列表 ============ -->
     <div v-else-if="!agent.currentSessionId" class="panel-body scroll-y">
       <div v-if="!sessionList.length" class="center-body">
-        <div class="empty-tip">{{ t('agent.noSession') }}</div>
+        <!-- v1031：无会话时输入提示以小字展示在空态文案下方（输入框不再显示该提示） -->
+        <div class="empty-hint-group">
+          <div class="empty-tip">{{ t('agent.noSession') }}</div>
+          <div class="empty-input-hint">{{ t('agent.inputPlaceholder') }}</div>
+        </div>
       </div>
       <template v-else>
-        <div class="list-head">
-          <span class="muted text-sm">{{ t('agent.sessionListTitle') }}</span>
-          <span class="muted text-sm">{{ sessionList.length }}/{{ MAX_SESSIONS }}</span>
+        <!-- v1030续(3)：删除「会话记录 2/50」这一行——会话数量已在最上方头部展示 -->
+        <!-- v1030续(4)：会话列表态下的报错同样给出中文提示与处置建议（灰色） -->
+        <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
+          <div class="msg-content error-content">
+            <div class="error-title">{{ errorInfo.title }}</div>
+            <div class="error-advice">{{ errorInfo.advice }}</div>
+          </div>
+          <div class="msg-foot">
+            <el-button text size="small" class="msg-copy" @click="dismissError">
+              {{ t('agent.errorDismiss') }}
+            </el-button>
+          </div>
         </div>
         <div
           v-for="s in sessionList"
@@ -667,12 +774,14 @@ watch(
           </div>
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => {
             if (cmd === 'rename') renameSession(s.id, s.title)
+            else if (cmd === 'export') exportSessionById(s.id)
             else if (cmd === 'delete') removeSession(s.id)
           }">
             <span class="session-more" @click.stop>···</span>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="rename">{{ t('agent.renameSession') }}</el-dropdown-item>
+                <el-dropdown-item command="export">{{ t('agent.exportSession') }}</el-dropdown-item>
                 <el-dropdown-item command="delete">{{ t('agent.deleteSession') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -683,6 +792,8 @@ watch(
 
     <!-- ============ 会话对话 ============ -->
     <template v-else>
+      <!-- v1030续(1)：会话内只保留「返回 + 会话标题」，右上角的[新建会话]与[···]已删除
+           （重命名 / 导出 / 删除改由会话记录列表的 ··· 提供；新会话回到列表直接发消息即可开启） -->
       <div class="chat-head">
         <el-button text size="small" class="back-btn" @click="backToList">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -690,26 +801,10 @@ watch(
           </svg>
         </el-button>
         <span class="chat-title">{{ agent.currentSession?.title }}</span>
-        <el-dropdown trigger="click" placement="bottom-end">
-          <el-button text size="small">⋯</el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="renameSession(agent.currentSession!.id, agent.currentSession!.title)">
-                {{ t('agent.renameSession') }}
-              </el-dropdown-item>
-              <el-dropdown-item :disabled="!agent.messages.length" @click="exportSession">
-                {{ t('agent.exportSession') }}
-              </el-dropdown-item>
-              <el-dropdown-item divided @click="removeSession(agent.currentSession!.id)">
-                {{ t('agent.deleteSession') }}
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
       </div>
 
       <div ref="messageHost" class="panel-body scroll-y">
-        <div v-if="!displayMessages.length" class="center-body">
+        <div v-if="!displayMessages.length && !agent.running" class="center-body">
           <div class="empty-tip">{{ t('agent.noSession') }}</div>
         </div>
 
@@ -744,6 +839,47 @@ watch(
           </div>
         </div>
 
+        <!-- v1030续(1)：「AI 正在思考… / 停止」放进会话内部（模仿主流 AI Agent），
+             不再占用会话框最上方一整行 -->
+        <div
+          v-if="agent.running || agent.activeSubagents.length || agent.gateStage"
+          class="status-inline"
+        >
+          <span v-if="agent.running" class="dot-pulse" />
+          <span v-if="agent.running" class="status-text">{{ t('agent.running') }}</span>
+          <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
+            {{ t('agent.subagentLane') }}: {{ sa }}
+          </el-tag>
+          <el-tag v-if="agent.gateStage" size="small" type="warning">
+            {{ t('agent.gateStage') }}: {{ agent.gateStage }}
+          </el-tag>
+          <el-button
+            v-if="agent.running"
+            size="small"
+            type="danger"
+            text
+            class="status-stop"
+            @click="onStop"
+          >
+            {{ t('agent.stop') }}
+          </el-button>
+        </div>
+
+        <!-- v1030续(4)：Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
+             整块灰色（代表异常不可用），像一条助手消息一样留在会话里 -->
+        <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
+          <div class="msg-content error-content">
+            <div class="error-title">{{ errorInfo.title }}</div>
+            <div class="error-advice">{{ errorInfo.advice }}</div>
+          </div>
+          <div class="msg-foot">
+            <span class="msg-time">{{ t('agent.errorFoot') }}</span>
+            <el-button text size="small" class="msg-copy" @click="dismissError">
+              {{ t('agent.errorDismiss') }}
+            </el-button>
+          </div>
+        </div>
+
         <PlanTodoList v-if="agent.todos.length" :todos="agent.todos" />
 
         <GateStatusBar
@@ -761,15 +897,15 @@ watch(
 
     <!-- ============ 输入区（copilot 形制） ============ -->
     <div class="panel-input">
-      <!-- 已添加的上下文块 -->
-      <div v-if="blocks.length" class="blocks-row">
+      <!-- 已添加的上下文块（v1031：含正文选区[AI润色]加入的限定范围块） -->
+      <div v-if="allBlocks.length" class="blocks-row">
         <el-tag
-          v-for="(b, i) in blocks"
-          :key="`${b.kind}-${i}`"
+          v-for="(b, i) in allBlocks"
+          :key="`${b.kind}-${b.label}-${i}`"
           size="small"
           closable
           :type="b.kind === 'outline' ? 'warning' : b.kind === 'chapter' ? 'success' : 'info'"
-          @close="removeBlock(i)"
+          @close="i < selectionBlocks.length ? removeSelectionBlock(i) : removeBlock(i - selectionBlocks.length)"
         >
           {{ b.label }}
         </el-tag>
@@ -803,7 +939,7 @@ watch(
           :autosize="inputAutosize"
           resize="none"
           :disabled="!project.currentNovelId"
-          :placeholder="project.currentNovelId ? t('agent.inputPlaceholder') : t('agent.noNovel')"
+          :placeholder="inputPlaceholderText"
           class="chat-input"
           @keydown.enter.exact.prevent="onSubmit"
         />
@@ -914,12 +1050,13 @@ watch(
             </el-button>
           </el-tooltip>
 
-          <!-- 发送箭头；运行中变为 ↵ 并给三种选项 -->
+          <!-- 发送箭头；运行中变为 ↵ 并给三种选项
+               v1030续(2)：停止后发送 / 添加到队列 / 添加为引导（每项带一句说明，模仿主流 Agent） -->
           <el-popover
             v-if="agent.running"
             v-model:visible="sendMenu"
             placement="top-end"
-            :width="190"
+            :width="250"
             trigger="click"
           >
             <template #reference>
@@ -932,9 +1069,18 @@ watch(
               </button>
             </template>
             <div class="send-menu">
-              <button class="send-menu-item" @click="stopAndSend">{{ t('agent.sendAnyway') }}</button>
-              <button class="send-menu-item" @click="steerSend">{{ t('agent.steer') }}</button>
-              <button class="send-menu-item" @click="queueSend">{{ t('agent.queue') }}</button>
+              <button class="send-menu-item" @click="stopAndSend">
+                <span class="smi-name">{{ t('agent.sendAnyway') }}</span>
+                <span class="smi-hint">{{ t('agent.sendAnywayHint') }}</span>
+              </button>
+              <button class="send-menu-item" @click="queueSend">
+                <span class="smi-name">{{ t('agent.queue') }}</span>
+                <span class="smi-hint">{{ t('agent.queueHint') }}</span>
+              </button>
+              <button class="send-menu-item" @click="steerSend">
+                <span class="smi-name">{{ t('agent.steer') }}</span>
+                <span class="smi-hint">{{ t('agent.steerHint') }}</span>
+              </button>
             </div>
           </el-popover>
 
@@ -986,16 +1132,23 @@ watch(
   flex: 1;
 }
 
-.status-bar {
+/* v1030续(1)：运行状态条移入会话内部（原 .status-bar 顶部整行已删除） */
+.status-inline {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 4px 2px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  border-bottom: 1px dashed var(--border);
-  flex-shrink: 0;
   flex-wrap: wrap;
+}
+
+.status-text {
+  color: var(--el-text-color-secondary);
+}
+
+.status-stop {
+  margin-left: auto;
 }
 
 .dot-pulse {
@@ -1009,6 +1162,31 @@ watch(
 @keyframes pulse {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
+}
+
+/* v1030续(4)：报错卡片——中文提示 + 处置建议，整块灰色（异常不可用） */
+.msg-error .error-content {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  border-radius: 8px;
+  padding: 8px 10px;
+  /* 灰色代表异常不可用 */
+  color: var(--text-muted);
+  max-width: 100%;
+}
+
+.error-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.error-advice {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  opacity: 0.9;
 }
 
 /* ---- 主体 ---- */
@@ -1036,15 +1214,24 @@ watch(
   line-height: 1.8;
 }
 
-/* ---- 会话记录列表 ---- */
-.list-head {
+/* v1031：空态文案 + 输入提示（小字）垂直居中组合 */
+.empty-hint-group {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  padding: 2px 4px 6px;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  padding: 0 16px;
 }
 
+.empty-input-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.7;
+  opacity: 0.85;
+}
+
+/* ---- 会话记录列表 ---- */
 .session-item {
   display: flex;
   align-items: center;
@@ -1333,19 +1520,40 @@ watch(
   flex-direction: column;
 }
 
+/* v1030续(2)：每种发送模式 = 名称 + 一句说明（模仿主流大模型 / Agent） */
 .send-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   border: none;
   background: transparent;
   text-align: left;
   padding: 7px 8px;
-  font-size: 12px;
-  color: var(--text);
   cursor: pointer;
   border-radius: 4px;
 }
 
+.send-menu-item + .send-menu-item {
+  border-top: 1px solid var(--border);
+}
+
+.smi-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.smi-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .send-menu-item:hover {
   background: var(--bg-hover);
+}
+
+.send-menu-item:hover .smi-name {
   color: var(--el-color-primary);
 }
 

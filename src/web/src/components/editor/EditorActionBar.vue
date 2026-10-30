@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /**
- * 编辑模式 · 主页面右上角的卷章结构操作条（v1029 需求 5-(1.4)~(1.7)）。
+ * 编辑模式 · 工具栏上的卷章结构操作条（v1029 引入，v1030续 重写插入逻辑）。
  *
- * 六个入口（前四个为 icon 按钮，光标停留显示功能说明）：
- *   [往前插入小说卷] [往后插入小说卷] [往前插入小说章节] [往后插入小说章节] [重命名] [删除]
+ * v1030续 插入规则：
+ * - **大纲节点**：大纲在最前头 → 只支持「往后插入卷」（新卷落在第 1 位，原有各卷顺延 +1），
+ *   不支持插入章节、不支持往前插入；
+ * - **章节节点**：支持往前 / 往后插入「卷」与「章节」；
+ *   · 插入卷 → 填「卷序号（自动算好，可改）+ 卷名 + 第一章章节名」，★不允许产生空卷；
+ *   · 插入章节 → 只填「章节名」，章节序号由插入方向自动推算；
+ * - 序号自动增减：插入到第 k 位 → 第 k 位及其后各项 +1；删除 → 其后各项重新连续编号（后端保证）。
  *
- * - 插入弹窗：必填「序号 + 名称」。序号为正整数且落在 1..N+1（★位置语义：插入到该位置，
- *   其后各项自动顺延重编号）；名称与书名同规则（非空 / 非全阿拉伯数字 / 不含 #$% 等特殊字符）。
- *   弹窗内输入框**不带提示词**。
- * - 重命名弹窗：含「章名 + 卷名」，卷名默认填当前章所属卷名（即默认不修改卷名）。
+ * 其余入口：
+ * - 重命名弹窗：含「章名 + 卷名」，卷名默认填当前章所属卷名（即默认不修改卷名）；
  * - 删除：二次确认；删的是当前章，**该卷章节删空后卷一并删除**（后端保证）。
  *   当前处于大纲节点时不允许删除（大纲是整本书的创作参考）。
  */
@@ -39,9 +42,10 @@ const current = computed<{ volume: Volume; chapter: Chapter; index: number } | n
   return null
 })
 
-/** 插入章的目标卷：当前章所属卷 → 否则第一个卷 */
-const targetVolume = computed<Volume | null>(() => current.value?.volume ?? volumes.value[0] ?? null)
+/** 插入章的目标卷 = 当前章所属卷（大纲节点上没有「当前章」，故不支持插入章节） */
+const targetVolume = computed<Volume | null>(() => current.value?.volume ?? null)
 
+/** 是否停在大纲节点（大纲或尚未打开任何章节） */
 const onOutline = computed(() => reader.activeOutline || !reader.activeChapterId)
 
 // ---------------------------------------------------------------------------
@@ -55,7 +59,8 @@ const dialogVisible = ref(false)
 const submitting = ref(false)
 const kind = ref<InsertKind>('volume')
 const dir = ref<InsertDir>('before')
-const form = ref({ ordinal: '', title: '' })
+/** volume：ordinal=卷序号、title=卷名、firstChapter=第一章章节名；chapter：只用 title */
+const form = ref({ ordinal: '', title: '', firstChapter: '' })
 
 const dialogTitle = computed(() => {
   if (kind.value === 'volume') {
@@ -68,35 +73,58 @@ const dialogTitle = computed(() => {
     : t('volumeChapter.insertAfterChapter')
 })
 
-/** 当前已有数量（卷总数 / 目标卷内章总数） */
-const count = computed(() =>
-  kind.value === 'volume' ? volumes.value.length : (targetVolume.value?.chapters.length ?? 0),
-)
+/** 卷总数（插入卷时的序号上限 = N+1） */
+const volumeCount = computed(() => volumes.value.length)
 
-/** 默认序号：往前 = 当前项序号；往后 = 当前项序号 + 1（无当前项则追加末尾） */
-function defaultOrdinal(k: InsertKind, d: InsertDir): number {
-  const total = k === 'volume' ? volumes.value.length : (targetVolume.value?.chapters.length ?? 0)
-  if (k === 'volume') {
-    const at = current.value ? current.value.volume.sort_order : total
-    return d === 'before' ? Math.max(1, at) : Math.min(total + 1, at + 1)
-  }
-  const at = current.value ? current.value.chapter.sort_order : total
+/**
+ * 自动推算「插入卷」的落位序号：
+ * - 大纲节点 → 大纲在最前头，往后插入即落在第 1 位；
+ * - 章节节点 → 往前 = 当前卷序号，往后 = 当前卷序号 + 1。
+ */
+function volumeOrdinalFor(d: InsertDir): number {
+  if (onOutline.value) return 1
+  const vol = current.value?.volume
+  if (!vol) return volumeCount.value + 1
+  const at = vol.sort_order > 0 ? vol.sort_order : volumeCount.value
+  return d === 'before' ? Math.max(1, at) : Math.min(volumeCount.value + 1, at + 1)
+}
+
+/**
+ * 自动推算「插入章节」的落位序号（★界面上不让用户填，按插入方向直接算）：
+ * 往前 = 当前章序号，往后 = 当前章序号 + 1。
+ */
+function chapterOrdinalFor(d: InsertDir): number | null {
+  const cur = current.value
+  if (!cur) return null
+  const total = cur.volume.chapters.length
+  const at = cur.chapter.sort_order > 0 ? cur.chapter.sort_order : cur.index + 1
   return d === 'before' ? Math.max(1, at) : Math.min(total + 1, at + 1)
 }
 
 function openInsert(k: InsertKind, d: InsertDir): void {
-  if (k === 'chapter' && !targetVolume.value) {
-    ElMessage.warning(t('volumeChapter.editNoTarget'))
+  if (k === 'chapter' && (!targetVolume.value || !current.value)) {
+    ElMessage.warning(t('volumeChapter.insertChapterNeedsChapter'))
+    return
+  }
+  if (k === 'volume' && onOutline.value && d === 'before') {
+    // 大纲在最前头，不存在「往前插入卷」
+    ElMessage.warning(t('volumeChapter.insertVolumeOutlineAfterOnly'))
     return
   }
   kind.value = k
   dir.value = d
-  form.value = { ordinal: String(defaultOrdinal(k, d)), title: '' }
+  form.value = {
+    ordinal: k === 'volume' ? String(volumeOrdinalFor(d)) : '',
+    title: '',
+    firstChapter: '',
+  }
   dialogVisible.value = true
 }
 
 const ordinalError = computed(() =>
-  validateOrdinal(form.value.ordinal, count.value, kind.value === 'volume' ? '卷序号' : '章节序号'),
+  kind.value === 'volume'
+    ? validateOrdinal(form.value.ordinal, volumeCount.value, '卷序号')
+    : '',
 )
 
 const titleError = computed(() => {
@@ -105,21 +133,41 @@ const titleError = computed(() => {
   return kind.value === 'volume' ? validateVolumeName(raw) : validateChapterName(raw)
 })
 
-const canSubmit = computed(() => !ordinalError.value && !titleError.value && !submitting.value)
+/** v1030续：插入卷必须同时给出第一章章节名（★不支持空卷） */
+const firstChapterError = computed(() => {
+  if (kind.value !== 'volume') return ''
+  const raw = form.value.firstChapter
+  if (!raw.trim()) return t('volumeChapter.firstChapterRequired')
+  return validateChapterName(raw)
+})
+
+const canSubmit = computed(
+  () => !ordinalError.value && !titleError.value && !firstChapterError.value && !submitting.value,
+)
 
 async function submitInsert(): Promise<void> {
   if (!canSubmit.value) return
-  const ordinal = Number.parseInt(form.value.ordinal.trim(), 10)
   const title = form.value.title.trim()
   submitting.value = true
   try {
     if (kind.value === 'volume') {
       if (!project.currentNovelId) return
-      const vol = await project.createVolume(title, '', ordinal)
-      ElMessage.success(t('volumeChapter.volumeInserted', { ordinal: vol.sort_order, title: vol.title }))
+      const ordinal = Number.parseInt(form.value.ordinal.trim(), 10)
+      const vol = await project.createVolume(title, '', ordinal, form.value.firstChapter.trim())
+      // 新卷的第一章：直接打开它，便于接着写
+      const firstCh = vol.chapters?.[0]
+      if (firstCh) reader.openChapter(firstCh.id)
+      ElMessage.success(
+        t('volumeChapter.volumeInsertedWithChapter', {
+          ordinal: vol.sort_order,
+          title: vol.title,
+          chapter: firstCh?.title ?? form.value.firstChapter.trim(),
+        }),
+      )
     } else {
       const vol = targetVolume.value
-      if (!vol) return
+      const ordinal = chapterOrdinalFor(dir.value)
+      if (!vol || ordinal == null) return
       const ch = await chaptersApi.create(vol.id, title, '', ordinal)
       await project.loadVolumes()
       ElMessage.success(t('volumeChapter.chapterInserted', { ordinal: ch.sort_order, title: ch.title }))
@@ -233,8 +281,12 @@ async function onDelete(): Promise<void> {
 
 <template>
   <div class="editor-actions">
-    <!-- 往前插入小说卷 -->
-    <el-tooltip :content="t('volumeChapter.insertBeforeVolume')" placement="bottom">
+    <!-- 往前插入小说卷（v1030续：大纲节点不支持，只有定位到章节时可用） -->
+    <el-tooltip
+      v-if="!onOutline"
+      :content="t('volumeChapter.insertBeforeVolume')"
+      placement="bottom"
+    >
       <button class="act-btn" @click="openInsert('volume', 'before')">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
           <path d="M4 5h16v2H4V5zm0 4h7v2H4V9zm0 4h7v2H4v-2zm0 4h16v2H4v-2zm11-8h2v3h3v2h-3v3h-2v-3h-3v-2h3V9z" />
@@ -242,7 +294,7 @@ async function onDelete(): Promise<void> {
       </button>
     </el-tooltip>
 
-    <!-- 往后插入小说卷 -->
+    <!-- 往后插入小说卷（大纲节点也支持：大纲在最前头，往后插入即成为第一卷） -->
     <el-tooltip :content="t('volumeChapter.insertAfterVolume')" placement="bottom">
       <button class="act-btn" @click="openInsert('volume', 'after')">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -251,25 +303,28 @@ async function onDelete(): Promise<void> {
       </button>
     </el-tooltip>
 
-    <span class="act-sep" />
+    <!-- v1030续：插入章节只在定位到某一章时可用 -->
+    <template v-if="!onOutline">
+      <span class="act-sep" />
 
-    <!-- 往前插入小说章节 -->
-    <el-tooltip :content="t('volumeChapter.insertBeforeChapter')" placement="bottom">
-      <button class="act-btn" :disabled="!targetVolume" @click="openInsert('chapter', 'before')">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-          <path d="M3 5h11v2H3V5zm0 4h8v2H3V9zm0 8h11v2H3v-2zm0-4h8v2H3v-2zm12 0h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z" />
-        </svg>
-      </button>
-    </el-tooltip>
+      <!-- 往前插入小说章节 -->
+      <el-tooltip :content="t('volumeChapter.insertBeforeChapter')" placement="bottom">
+        <button class="act-btn" :disabled="!targetVolume" @click="openInsert('chapter', 'before')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M3 5h11v2H3V5zm0 4h8v2H3V9zm0 8h11v2H3v-2zm0-4h8v2H3v-2zm12 0h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3z" />
+          </svg>
+        </button>
+      </el-tooltip>
 
-    <!-- 往后插入小说章节 -->
-    <el-tooltip :content="t('volumeChapter.insertAfterChapter')" placement="bottom">
-      <button class="act-btn" :disabled="!targetVolume" @click="openInsert('chapter', 'after')">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-          <path d="M3 5h11v2H3V5zm0 4h11v2H3V9zm0 4h8v2H3v-2zm12 0h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3zM3 17h8v2H3v-2z" />
-        </svg>
-      </button>
-    </el-tooltip>
+      <!-- 往后插入小说章节 -->
+      <el-tooltip :content="t('volumeChapter.insertAfterChapter')" placement="bottom">
+        <button class="act-btn" :disabled="!targetVolume" @click="openInsert('chapter', 'after')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M3 5h11v2H3V5zm0 4h11v2H3V9zm0 4h8v2H3v-2zm12 0h2v3h3v2h-3v3h-2v-3h-3v-2h3v-3zM3 17h8v2H3v-2z" />
+          </svg>
+        </button>
+      </el-tooltip>
+    </template>
 
     <span class="act-sep" />
 
@@ -291,33 +346,45 @@ async function onDelete(): Promise<void> {
       </button>
     </el-tooltip>
 
-    <!-- ============ 插入弹窗（序号 + 名称，输入框无提示词） ============ -->
+    <!-- ============ 插入弹窗（输入框无提示词） ============ -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
-      <el-form label-width="86px" @submit.prevent>
-        <el-form-item
-          :label="kind === 'volume' ? t('volumeChapter.ordinalLabel') : t('volumeChapter.chapterOrdinalLabel')"
-          required
-        >
-          <el-input v-model="form.ordinal" class="ordinal-input" />
-          <div v-if="ordinalError" class="field-error">{{ ordinalError }}</div>
-          <div v-else class="field-hint">
-            {{ t('volumeChapter.ordinalHint', { kind: kind === 'volume' ? '卷' : '章' }) }}
+      <el-form label-width="96px" @submit.prevent>
+        <!-- 插入卷：卷序号（自动算好，可改）+ 卷名 + 第一章章节名 -->
+        <template v-if="kind === 'volume'">
+          <el-form-item :label="t('volumeChapter.ordinalLabel')" required>
+            <el-input v-model="form.ordinal" class="ordinal-input" />
+            <div v-if="ordinalError" class="field-error">{{ ordinalError }}</div>
+            <div v-else class="field-hint">{{ t('volumeChapter.ordinalAutoHint') }}</div>
+          </el-form-item>
+
+          <el-form-item :label="t('volumeChapter.volumeTitleLabel')" required>
+            <el-input v-model="form.title" maxlength="200" />
+            <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
+          </el-form-item>
+
+          <el-form-item :label="t('volumeChapter.firstChapterLabel')" required>
+            <el-input v-model="form.firstChapter" maxlength="200" />
+            <div v-if="firstChapterError" class="field-error">{{ firstChapterError }}</div>
+            <div v-else class="field-hint">{{ t('volumeChapter.noEmptyVolumeHint') }}</div>
+          </el-form-item>
+        </template>
+
+        <!-- 插入章节：只填章节名，序号自动增减 -->
+        <template v-else>
+          <el-form-item :label="t('volumeChapter.chapterTitleLabel')" required>
+            <el-input v-model="form.title" maxlength="200" />
+            <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
+          </el-form-item>
+
+          <div v-if="targetVolume" class="muted text-sm target-hint">
+            {{ t('volumeChapter.volumeTitleLabel') }}：{{
+              formatVolumeTitle(targetVolume.title, targetVolume.sort_order, 0)
+            }}
           </div>
-        </el-form-item>
-
-        <el-form-item
-          :label="kind === 'volume' ? t('volumeChapter.volumeTitleLabel') : t('volumeChapter.chapterTitleLabel')"
-          required
-        >
-          <el-input v-model="form.title" maxlength="200" />
-          <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
-        </el-form-item>
-
-        <div v-if="kind === 'chapter' && targetVolume" class="muted text-sm target-hint">
-          {{ t('volumeChapter.volumeTitleLabel') }}：{{
-            formatVolumeTitle(targetVolume.title, targetVolume.sort_order, 0)
-          }}
-        </div>
+          <div class="muted text-sm target-hint">
+            {{ t('volumeChapter.chapterOrdinalAutoHint') }}
+          </div>
+        </template>
       </el-form>
 
       <template #footer>
@@ -330,7 +397,7 @@ async function onDelete(): Promise<void> {
 
     <!-- ============ 重命名弹窗（章名 + 卷名） ============ -->
     <el-dialog v-model="renameVisible" :title="t('volumeChapter.renameDialogTitle')" width="440px">
-      <el-form label-width="86px" @submit.prevent>
+      <el-form label-width="96px" @submit.prevent>
         <el-form-item :label="t('volumeChapter.chapterTitleLabel')" required>
           <el-input v-model="renameForm.chapter" maxlength="200" />
           <div v-if="renameChapterError" class="field-error">{{ renameChapterError }}</div>
@@ -418,6 +485,7 @@ async function onDelete(): Promise<void> {
 }
 
 .target-hint {
-  padding-left: 86px;
+  padding-left: 96px;
+  line-height: 1.7;
 }
 </style>

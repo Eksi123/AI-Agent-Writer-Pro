@@ -29,6 +29,12 @@ export const useEditorStore = defineStore('editor', () => {
    */
   const saveRequestTick = ref(0)
 
+  /**
+   * v1031：大纲编辑器的脏状态（正文用 dirty）。
+   * 工具栏保存 icon 据此置灰——没有任何待保存内容时不可点击。
+   */
+  const dirtyOutline = ref(false)
+
   function requestSave(): void {
     saveRequestTick.value += 1
   }
@@ -147,6 +153,7 @@ export const useEditorStore = defineStore('editor', () => {
     conflict.value = null
     revisions.value = []
     error.value = null
+    dirtyOutline.value = false
   }
 
   return {
@@ -164,6 +171,7 @@ export const useEditorStore = defineStore('editor', () => {
     revisions,
     hasConflict,
     saveRequestTick,
+    dirtyOutline,
     requestSave,
     openChapter,
     markDirty,

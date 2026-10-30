@@ -85,9 +85,23 @@ export const progressApi = {
 export const volumesApi = {
   list: (novelId: string) => get<Volume[]>(`/novels/${novelId}/volumes`),
 
-  /** ordinal 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1） */
-  create: (novelId: string, title: string, summary = '', ordinal?: number) =>
-    post<Volume>(`/novels/${novelId}/volumes`, { title, summary, ordinal }),
+  /**
+   * ordinal 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
+   * v1030续：`firstChapterTitle` = 随卷一并创建的第一章名（★不支持空卷）。
+   */
+  create: (
+    novelId: string,
+    title: string,
+    summary = '',
+    ordinal?: number,
+    firstChapterTitle?: string,
+  ) =>
+    post<Volume>(`/novels/${novelId}/volumes`, {
+      title,
+      summary,
+      ordinal,
+      first_chapter_title: firstChapterTitle,
+    }),
 
   update: (volId: string, payload: { title?: string; summary?: string }) =>
     patch<Volume>(`/volumes/${volId}`, payload),

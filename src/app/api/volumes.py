@@ -41,9 +41,15 @@ async def create_volume(
     """新建卷：显式命名（违规 42201）。
 
     v1029：传 `ordinal` → 插入到该位置（其后各卷顺延 +1）；不传 → 追加到末尾。
+    v1030续：传 `first_chapter_title` → 随卷一并创建第一章（★不支持空卷）。
     """
     dto = await volumes.create_volume(
-        session, novel_id, title=body.title, summary=body.summary, ordinal=body.ordinal
+        session,
+        novel_id,
+        title=body.title,
+        summary=body.summary,
+        ordinal=body.ordinal,
+        first_chapter_title=body.first_chapter_title,
     )
     await session.commit()
     return ok(dto)

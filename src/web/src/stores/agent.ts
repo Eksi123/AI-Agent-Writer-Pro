@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Agent store（M3）：会话列表、消息树、流式运行状态、中断卡片。
  *
  * - 会话按小说项目隔离（右侧栏只显示当前项目）；
@@ -9,7 +9,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { agentApi } from '@/api'
-import { errorMessage } from '@/api/http'
+import { ApiError, errorMessage } from '@/api/http'
 import { SseClient, type SseEnvelope } from '@/api/sse'
 import type { AgentMessageDto, AgentRunDto, AgentSessionDto, MessageTree } from '@/types'
 
@@ -40,6 +40,22 @@ export interface PendingConsult {
   gateStage?: string
 }
 
+/**
+ * v1030续(6)：正文选区[AI润色]加入的「选中文本块」。
+ * 除文本本身外，还带上章节 id、所在段落范围与前后文，让大模型知道这段文本
+ * 在文章中的位置，从而只针对该范围润色并写回。
+ * ★label = `章节名_节选X`（X 为同一章内已加入的选区序号，正整数），保持标签简短。
+ */
+export interface PendingSelectionBlock {
+  label: string
+  text: string
+  chapterId?: string
+  chapterTitle?: string
+  rangeLabel?: string
+  before?: string
+  after?: string
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const sessions = ref<AgentSessionDto[]>([])
   const currentSessionId = ref<string | null>(null)
@@ -52,6 +68,36 @@ export const useAgentStore = defineStore('agent', () => {
   const running = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  /**
+   * v1030续(1)：刚发出的用户消息（乐观回显）。
+   * 主流 AI Agent 的行为是「发出去就立刻出现在会话里」，而后端消息树要等 run 收尾才刷新，
+   * 因此先本地回显，`refreshMessages()` 拿到真实消息后自动置空替换。
+   */
+  const pendingUserMessage = ref<string | null>(null)
+  /**
+   * v1030续：错误码（与后端 ErrorCode 对齐）。
+   * 会话框据此给出**中文提示 + 用户该怎么做**，并以灰色（异常不可用）呈现。
+   */
+  const errorCode = ref<number | null>(null)
+
+  /** 统一记录错误：中文文案 + 错误码（供会话框给出处置建议） */
+  function setError(err: unknown, fallback?: string): void {
+    error.value = errorMessage(err, fallback)
+    errorCode.value = err instanceof ApiError ? err.code : null
+  }
+
+  /** 直接写入错误（用于 SSE 传输层等非 ApiError 场景） */
+  function setRawError(message: string, code: number | null = null): void {
+    error.value = message
+    errorCode.value = code
+  }
+
+  /** 新一轮请求/运行开始前清空上一条错误 */
+  function clearError(): void {
+    error.value = null
+    errorCode.value = null
+  }
+
   /** file.changed 通知（工作台监听后热更新） */
   const fileChanged = ref<{ path: string; chapterId: string | null; kind: string; at: number } | null>(null)
   /** 计划待办（plan.update） */
@@ -69,6 +115,35 @@ export const useAgentStore = defineStore('agent', () => {
   const usage = ref<{ session_count: number; tokens_total: number }>({ session_count: 0, tokens_total: 0 })
   /** v1028：运行中「添加到队列」的待发消息（run.end 后自动发送首条） */
   const queued = ref<{ content: string; modelRef?: string }[]>([])
+  /**
+   * v1031 / v1030续(6)：正文编辑器悬浮[AI润色]按钮加入的「选中文本块」。
+   * 与「添加文件」同形制：随下一条消息一起发送，限定 AI 的修改范围；本轮问答结束后释放。
+   * `chapterId` 让大模型知道这段文本属于哪一章（可定位并写回）；`rangeLabel` 说明所在行范围。
+   */
+  const pendingSelectionBlocks = ref<PendingSelectionBlock[]>([])
+
+  function attachSelection(block: PendingSelectionBlock): string | null {
+    // ★v1030续：标签统一为 `章节名_节选X`（X = 本章已有选区数 + 1），保持聊天框上方标签简短。
+    // 完全重复（同章、同范围、同文本）则不再加入。
+    const dup = pendingSelectionBlocks.value.some(
+      (b) => b.chapterId === block.chapterId && b.rangeLabel === block.rangeLabel && b.text === block.text,
+    )
+    if (dup) return null
+    const chapterTitle = block.chapterTitle || block.label || '章节正文'
+    const seq =
+      pendingSelectionBlocks.value.filter((b) => b.chapterId === block.chapterId).length + 1
+    const label = `${chapterTitle}_节选${seq}`
+    pendingSelectionBlocks.value = [...pendingSelectionBlocks.value, { ...block, label }]
+    return label
+  }
+
+  function removePendingSelection(index: number): void {
+    pendingSelectionBlocks.value = pendingSelectionBlocks.value.filter((_, i) => i !== index)
+  }
+
+  function clearPendingSelections(): void {
+    pendingSelectionBlocks.value = []
+  }
 
   let sseClient: SseClient | null = null
   let currentRunId: string | null = null
@@ -79,7 +154,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   async function loadSessions(novelId: string): Promise<void> {
     loading.value = true
-    error.value = null
+    clearError()
     // v1029：切换小说项目 → 上下文占用清零（剩余比例回到 100%）
     lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     try {
@@ -91,7 +166,7 @@ export const useAgentStore = defineStore('agent', () => {
         messages.value = []
       }
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     } finally {
       loading.value = false
     }
@@ -140,6 +215,7 @@ export const useAgentStore = defineStore('agent', () => {
     todos.value = []
     gateStage.value = null
     gateResults.value = {}
+    pendingUserMessage.value = null
   }
 
   async function createSession(novelId: string, title?: string, modelRef?: string): Promise<AgentSessionDto> {
@@ -161,6 +237,7 @@ export const useAgentStore = defineStore('agent', () => {
     gateRetryCount.value = 0
     gateG1Skipped.value = false
     gateResults.value = {}
+    pendingUserMessage.value = null
     // v1029：先清零（→ 剩余 100%），再按该会话最近一次 run 还原真实占用；
     // 全新会话没有任何 run，还原结果仍是 0，故「新会话回到 100%」自然成立。
     lastUsage.value = { tokens_in: 0, tokens_out: 0 }
@@ -169,7 +246,7 @@ export const useAgentStore = defineStore('agent', () => {
       messages.value = tree.items.filter((m) => m.in_active_path)
       activeLeafId.value = tree.active_leaf_id ?? null
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     }
     try {
       const u = await agentApi.sessionUsage(sessionId)
@@ -188,8 +265,10 @@ export const useAgentStore = defineStore('agent', () => {
       const tree = await agentApi.getMessages(currentSessionId.value)
       messages.value = tree.items.filter((m) => m.in_active_path)
       activeLeafId.value = tree.active_leaf_id ?? null
+      // v1030续：真实消息已到，撤掉乐观回显
+      pendingUserMessage.value = null
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     }
   }
 
@@ -218,9 +297,12 @@ export const useAgentStore = defineStore('agent', () => {
   async function sendMessage(content: string, modelRef?: string): Promise<void> {
     if (!currentSessionId.value) {
       error.value = '请先选择或新建会话'
+      errorCode.value = null
       return
     }
-    error.value = null
+    clearError()
+    // v1030续(1)：乐观回显——发出的用户消息立即出现在会话里（run 收尾刷新后替换）
+    pendingUserMessage.value = content
     try {
       const { run_id: runId } = await agentApi.postMessage(currentSessionId.value, {
         content,
@@ -232,7 +314,9 @@ export const useAgentStore = defineStore('agent', () => {
       // 保留上一次的值直到本次 run 的 usage 事件刷新它。
       startStream(runId)
     } catch (err) {
-      error.value = errorMessage(err)
+      // v1030续：发送失败 → 撤掉乐观回显，避免留下未真正发出的消息
+      pendingUserMessage.value = null
+      setError(err)
     }
   }
 
@@ -240,9 +324,10 @@ export const useAgentStore = defineStore('agent', () => {
   async function generateChapter(chapterId: string, chapterTitle: string, modelRef?: string): Promise<void> {
     if (!currentSessionId.value) {
       error.value = '请先选择或新建会话'
+      errorCode.value = null
       return
     }
-    error.value = null
+    clearError()
     gateStage.value = 'G0'
     gateRetryCount.value = 0
     gateG1Skipped.value = false
@@ -258,7 +343,7 @@ export const useAgentStore = defineStore('agent', () => {
       // v1029：同 postMessage，不清零（避免百分比闪回 100%）
       startStream(runId)
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
       gateStage.value = null
     }
   }
@@ -281,7 +366,8 @@ export const useAgentStore = defineStore('agent', () => {
         running.value = false
       },
       onError: (err) => {
-        error.value = err.message
+        // SSE 传输层错误：给出中文提示，会话框据此显示灰色异常态
+        setRawError(err.message || '与服务器的实时连接已断开')
       },
       onClose: () => {
         // run.end 后收尾：把流式消息合入正式列表
@@ -397,10 +483,16 @@ export const useAgentStore = defineStore('agent', () => {
         }
         break
       case 'error':
-        error.value = String(data.message ?? '运行出错')
+        setRawError(String(data.message ?? '运行出错'), Number(data.code ?? 0) || null)
         break
       case 'run.end':
         running.value = false
+        // v1030续：运行以 failed 结束时，把后端错误转成中文提示（灰色异常态）
+        if (String(data.status ?? '') === 'failed') {
+          const msg = String(data.error ?? '') || 'AI 运行已中断'
+          // error 事件已给出更精确的文案/错误码时不覆盖
+          if (!error.value) setRawError(msg)
+        }
         break
     }
   }
@@ -420,7 +512,7 @@ export const useAgentStore = defineStore('agent', () => {
         startStream(currentRunId, sseClient?.currentSeq ?? undefined)
       }
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     }
   }
 
@@ -439,7 +531,7 @@ export const useAgentStore = defineStore('agent', () => {
         startStream(currentRunId, sseClient?.currentSeq ?? undefined)
       }
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     }
   }
 
@@ -450,7 +542,7 @@ export const useAgentStore = defineStore('agent', () => {
       running.value = false
       await refreshMessages()
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
     }
   }
 
@@ -464,7 +556,7 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       await agentApi.steerRun(currentRunId, content)
     } catch (err) {
-      error.value = errorMessage(err)
+      setError(err)
       throw err
     }
   }
@@ -491,6 +583,9 @@ export const useAgentStore = defineStore('agent', () => {
     running,
     loading,
     error,
+    errorCode,
+    pendingUserMessage,
+    clearError,
     fileChanged,
     todos,
     gateStage,
@@ -501,6 +596,10 @@ export const useAgentStore = defineStore('agent', () => {
     lastUsage,
     usage,
     queued,
+    pendingSelectionBlocks,
+    attachSelection,
+    removePendingSelection,
+    clearPendingSelections,
     loadSessions,
     loadUsage,
     refreshSessionsLight,

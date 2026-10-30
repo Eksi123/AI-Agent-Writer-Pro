@@ -95,10 +95,22 @@ export const useProjectStore = defineStore('project', () => {
   /**
    * 新建卷。
    * v1029：`ordinal` 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
+   * v1030续：`firstChapterTitle` = 随卷一并创建的第一章名（★不允许产生空卷）。
    */
-  async function createVolume(title: string, summary = '', ordinal?: number): Promise<Volume> {
+  async function createVolume(
+    title: string,
+    summary = '',
+    ordinal?: number,
+    firstChapterTitle?: string,
+  ): Promise<Volume> {
     if (!currentNovelId.value) throw new ApiError(40401, t('common.unknownError'))
-    const vol = await volumesApi.create(currentNovelId.value, title, summary, ordinal)
+    const vol = await volumesApi.create(
+      currentNovelId.value,
+      title,
+      summary,
+      ordinal,
+      firstChapterTitle,
+    )
     await loadVolumes()
     return vol
   }

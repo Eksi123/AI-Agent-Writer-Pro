@@ -123,11 +123,14 @@ async def create_volume(
     title: str,
     summary: str = "",
     ordinal: int | None = None,
+    first_chapter_title: str | None = None,
 ) -> dict[str, Any]:
     """新建卷：**显式命名**。
 
     - 不传 `ordinal` → 追加到末尾（`sort_order = max+1`，兼容旧行为）；
-    - 传 `ordinal`（v1029 往前/往后插入）→ 插入到该位置，其后各卷顺延 +1。
+    - 传 `ordinal`（v1029 往前/往后插入）→ 插入到该位置，其后各卷顺延 +1；
+    - v1030续：传 `first_chapter_title` → 卷建立后立刻在它里面建第一章
+      （★**不支持空卷**，插入卷必须同时给出第一章的章节名）。
     """
     await novels.get_novel(session, project_id)
     clean = validate_volume_title(title)
@@ -162,7 +165,16 @@ async def create_volume(
         commit=True,
     )
     logger.info("volume_created", project_id=project_id, volume_id=vol_id, title=clean)
-    return _vol_dto(vol, [])
+
+    # v1030续：插入卷时一并创建它的第一章（避免空卷）
+    first_chapter: dict[str, Any] | None = None
+    if first_chapter_title and first_chapter_title.strip():
+        first_chapter = await create_chapter(
+            session, vol_id, title=first_chapter_title, content="", ordinal=1
+        )
+
+    chapters = [first_chapter] if first_chapter is not None else []
+    return _vol_dto(vol, chapters)
 
 
 async def update_volume(

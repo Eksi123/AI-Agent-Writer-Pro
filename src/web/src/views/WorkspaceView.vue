@@ -45,7 +45,7 @@ const agentOpen = ref(false)
 const exportVisible = ref(false)
 const exportNovel = ref<Novel | null>(null)
 
-/** v1029：右栏 AI 会话框宽度（px），可向左拉伸；默认沿用 --agent-width，上限 = 主页面宽度的 1/3 */
+/** v1029：右栏 AI 会话框宽度（px），可向左拉伸；默认沿用 --agent-width，上限 = 主页面宽度的 2/5 */
 const AGENT_DEFAULT_WIDTH = 340
 const agentWidth = ref(AGENT_DEFAULT_WIDTH)
 const layoutRef = ref<HTMLElement | null>(null)
@@ -61,16 +61,48 @@ const editingOutline = computed(
 )
 
 /**
- * v1029：AI 会话框可向左拉伸，**最宽到主页面的 1/3**。
- * 「主页面」= 去掉左栏后的中间工作区宽度（中栏阅读/编辑 + 右栏会话框）。
- * 阅读页与编辑页用 flex:1 + min-width:0，随会话框变宽自动收窄（自适应）。
+ * v1031：工具栏保存 icon 的可用态——没有任何待保存内容时置灰。
+ * 大纲节点看大纲脏状态，章节节点看正文脏状态；阅读模式不展示该按钮。
  */
+const hasPendingSave = computed(() => {
+  if (reader.mode !== 'edit') return false
+  if (editingOutline.value) return editorStore.dirtyOutline
+  return editorStore.chapterId ? editorStore.dirty : false
+})
+
+/**
+ * v1030续(6)：正文选区悬浮[AI润色] → 选中文本以「上下文块」形式加入模型对话（同添加文件），
+ * 并带上**章节 id + 所在段落范围 + 前后文**，让大模型知道这段文本在文章中的位置再修改；
+ * 同时展开右栏会话框便于继续输入润色要求。
+ * ★标签由 store 归一为 `章节名_节选X`（简短），详细的段落范围写进消息正文。
+ */
+function onPolishSelection(payload: {
+  label: string
+  text: string
+  chapterId: string
+  chapterTitle: string
+  rangeLabel: string
+  before: string
+  after: string
+}): void {
+  const label = agentStore.attachSelection(payload)
+  agentOpen.value = true
+  if (label) ElMessage.success(`选中文本已加入对话：${label}`)
+}
+
+/**
+ * v1029：AI 会话框可向左拉伸；v1030续：拉伸的是**左边界**（右边界始终贴着屏幕右侧不动），
+ * 会话框宽度上限 = 整个屏幕宽度的 2/5；中栏用 flex:1 + min-width:0 随之自适应收窄，不留空白。
+ */
+const AGENT_MAX_RATIO = 2 / 5
+
 function maxAgentWidth(): number {
+  const limit = window.innerWidth * AGENT_MAX_RATIO
+  // 安全兜底：不让中栏被挤成 0（正常分辨率下 2/5 远达不到这个兜底值）
   const host = layoutRef.value
-  if (!host) return AGENT_DEFAULT_WIDTH
-  const sidebar = host.querySelector('.sidebar') as HTMLElement | null
-  const available = host.clientWidth - (sidebar?.offsetWidth ?? 0)
-  return Math.max(AGENT_DEFAULT_WIDTH, Math.floor(available / 3))
+  const sidebar = host?.querySelector('.sidebar') as HTMLElement | null
+  const available = host ? host.clientWidth - (sidebar?.offsetWidth ?? 0) : window.innerWidth
+  return Math.max(AGENT_DEFAULT_WIDTH, Math.min(limit, available - 120))
 }
 
 let dragging = false
@@ -101,12 +133,19 @@ onMounted(async () => {
   await settingsStore.load()
   window.addEventListener('mousemove', onDragMove)
   window.addEventListener('mouseup', onDragEnd)
+  // v1030续：窗口尺寸变化时夹住会话框宽度，避免出现「右侧留白」
+  window.addEventListener('resize', onWindowResize)
   // v1028：项目列表加载与「默认选中上次打开的项目」由 ProjectList 统一负责（含 localStorage 记忆）
 })
+
+function onWindowResize(): void {
+  agentWidth.value = Math.min(Math.max(agentWidth.value, AGENT_DEFAULT_WIDTH), maxAgentWidth())
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', onDragEnd)
+  window.removeEventListener('resize', onWindowResize)
 })
 
 // 目录里点章：阅读模式直接渲染，编辑模式同时载入正文到编辑器
@@ -216,11 +255,11 @@ window.addEventListener('beforeunload', (e) => {
               <EditorActionBar v-if="hasNovel" />
               <span class="tb-sep" />
 
-              <!-- 保存（icon） -->
+              <!-- 保存（icon）：v1031 无待保存内容时置灰，有待保存内容恢复可点 -->
               <el-tooltip :content="t('common.save')" placement="bottom">
                 <button
                   class="tb-icon-btn"
-                  :disabled="editorStore.saving"
+                  :disabled="editorStore.saving || !hasPendingSave"
                   @click="editorStore.requestSave()"
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
@@ -249,7 +288,10 @@ window.addEventListener('beforeunload', (e) => {
             <template v-else-if="editorStore.chapterId">
               <ConflictBanner />
               <div class="editor-host">
-                <TiptapEditor :chapter-id="editorStore.chapterId" />
+                <TiptapEditor
+                  :chapter-id="editorStore.chapterId"
+                  @polish-selection="onPolishSelection"
+                />
                 <WordCountBar />
               </div>
             </template>
@@ -258,9 +300,11 @@ window.addEventListener('beforeunload', (e) => {
       </div>
     </main>
 
-    <!-- 右栏：Agent 面板（可收起；v1029 可向左拉伸，最多到主页面的 1/3） -->
+    <!-- 右栏：Agent 面板（可收起；v1029 可向左拉伸，v1030续 拉伸后铺满右侧不留空白） -->
     <template v-if="agentOpen">
-      <div class="resize-handle" :title="t('agent.resizeHint')" @mousedown="onDragStart" />
+      <div class="resize-handle" :title="t('agent.resizeHint')" @mousedown="onDragStart">
+        <span class="resize-grip" aria-hidden="true" />
+      </div>
       <aside class="agent-aside" :style="{ width: `${agentWidth}px` }">
         <AgentPanel />
       </aside>
@@ -375,23 +419,45 @@ window.addEventListener('beforeunload', (e) => {
   flex-direction: column;
 }
 
-/* v1029：右栏拉伸把手 */
+/* v1029：右栏拉伸把手
+   v1030续：把手标记随主题变化——浅色 / 护眼主题为黑色，深色主题为白色（--resize-handle） */
 .resize-handle {
-  width: 4px;
+  position: relative;
+  width: 7px;
   flex-shrink: 0;
   cursor: col-resize;
   background: transparent;
   transition: background 0.15s;
 }
 
-.resize-handle:hover {
-  background: color-mix(in srgb, var(--el-color-primary) 45%, transparent);
+/* 竖排三个小点，让「可拖拽」这一标记在三种主题下都看得见 */
+.resize-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--resize-handle);
+  opacity: 0.45;
+  transition: opacity 0.15s;
 }
 
-/* v1029：宽度由拖拽把手控制（内联 style），默认 340px、最多拉到主页面的 1/3 */
+.resize-handle:hover {
+  background: color-mix(in srgb, var(--el-color-primary) 30%, transparent);
+}
+
+.resize-handle:hover .resize-grip {
+  opacity: 0.9;
+}
+
+/* v1029：宽度由拖拽把手控制（内联 style），默认 340px；
+   v1030续：拉伸到几乎铺满右侧屏幕，中栏自适应收窄，不留空白 */
 .agent-aside {
   flex-shrink: 0;
-  min-width: 300px;  display: flex;
+  min-width: 300px;
+  display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);

@@ -8,8 +8,8 @@
  *
  * v1030 天气卡片三排布局：
  *   1) 城市**居中**独占最上排（大字号）；光标停留城市 → 悬浮显示完整地址
- *   2) 天气 icon + 天气说明小字 ｜ 污染程度突出显示 + AQI 数值小字挂右下角
- *   3) 温度{X°} 湿度{Y%} 风速{Z级}（蒲福风力等级），体感温度已删除
+ *   2) 天气 icon + 天气说明 + 污染程度 + AQI 数值**同一条横线**（v1031 排齐并收紧字号）
+ *   3) 温度{X°} 湿度{Y%} 风速{Z级}（蒲福风力等级），小字号不超出卡片边框
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { widgetsApi, type WeatherDto } from '@/api'
@@ -138,16 +138,14 @@ onBeforeUnmount(() => {
           >{{ cityLabel }}</span>
         </div>
 
-        <!-- 第二排：左 = 天气 icon + 说明小字；右 = 污染程度突出 + AQI 小字挂右下 -->
+        <!-- 第二排：天气 icon + 说明 + 污染程度 + AQI 数值，全部排在同一条横线上 -->
         <div class="wx-row wx-main">
-          <div class="wx-weather">
-            <span v-if="weather" class="wx-icon">{{ weather.icon }}</span>
-            <span v-if="weather" class="wx-desc muted">{{ weather.description }}</span>
-          </div>
-          <div v-if="weather && weather.aqi != null" class="wx-aqi-wrap">
+          <span v-if="weather" class="wx-icon">{{ weather.icon }}</span>
+          <span v-if="weather" class="wx-desc muted">{{ weather.description }}</span>
+          <template v-if="weather && weather.aqi != null">
             <span class="wx-aqi-level" :class="aqiClass">{{ aqiText }}</span>
             <span class="wx-aqi muted">{{ weather.aqi }}</span>
-          </div>
+          </template>
         </div>
 
         <!-- 第三排：温度 X° / 湿度 Y% / 风速 Z 级（v1030 带单位） -->
@@ -222,60 +220,46 @@ onBeforeUnmount(() => {
   border-bottom: 1px dashed color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 
-/* 第二排：左天气 icon+说明，右污染程度突出 + AQI 小字右下 */
+/* 第二排：icon / 说明 / 污染程度 / AQI 数值同一条横线（字号收紧保证排得下） */
 .wx-main {
-  justify-content: space-between;
-}
-
-.wx-weather {
-  display: flex;
-  align-items: center;
   gap: 5px;
-  min-width: 0;
 }
 
 .wx-icon {
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .wx-desc {
-  font-size: 11px;
+  font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 右侧上下两行：污染程度（突出）在上，AQI 数值（小字）在右下 */
-.wx-aqi-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
 .wx-aqi-level {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.2px;
   white-space: nowrap;
   color: var(--text);
+  flex-shrink: 0;
 }
 
 .wx-aqi {
   font-size: 9px;
   line-height: 1;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
-/* 第三排：温度 / 湿度 / 风速（带单位，均分不拥挤） */
+/* 第三排：温度 / 湿度 / 风速（小字号 + 均分，避免超出卡片边框） */
 .wx-meta {
-  font-size: 11px;
+  font-size: 10px;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 2px;
+  gap: 4px;
+  padding: 0 1px;
 }
 
 .wx-meta > span {

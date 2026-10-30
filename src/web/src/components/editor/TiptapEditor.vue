@@ -9,8 +9,9 @@
  * 调 POST /chapters/{id}/rewrite 取结果 → RewriteDiffDialog 做 diff 预览 →
  * 接受后替换选区并打 AI 来源标记（AiSource mark，可回滚），放弃则不改动。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
+import type { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import CharacterCount from '@tiptap/extension-character-count'
@@ -28,6 +29,16 @@ const props = defineProps<{ chapterId: string }>()
 const emit = defineEmits<{
   (e: 'autosaved'): void
   (e: 'conflict'): void
+  /** v1031 / v1030续(6)：选区悬浮[AI润色] → 选中文本作为上下文块加入模型对话 */
+  (e: 'polish-selection', payload: {
+    label: string
+    text: string
+    chapterId: string
+    chapterTitle: string
+    rangeLabel: string
+    before: string
+    after: string
+  }): void
 }>()
 
 const editorStore = useEditorStore()
@@ -51,6 +62,7 @@ const editor = useEditor({
     const { from, to } = ed.state.selection
     savedRange.value = from === to ? null : { from, to }
     selectedText.value = from === to ? '' : ed.state.doc.textBetween(from, to, ' ')
+    updatePolishButton(ed)
   },
 })
 
@@ -62,6 +74,84 @@ const diffVisible = ref(false)
 const rewriteResult = ref<RewriteResult | null>(null)
 
 const hasSelection = computed(() => !!selectedText.value.trim() && !editorStore.saving)
+
+// ---- v1031：选区上方悬浮[AI润色]按钮（点击后选中文本加入模型对话，限定修改范围） ----
+const polishBtn = ref({ top: 0, left: 0, visible: false })
+
+/** 悬浮按钮定位到选区首行上方（相对编辑容器）；空选区隐藏 */
+function updatePolishButton(ed: Editor): void {
+  const { from, to } = ed.state.selection
+  if (from === to || !selectedText.value.trim()) {
+    polishBtn.value.visible = false
+    return
+  }
+  const host = (ed.view.dom as HTMLElement).closest('.editor-host') as HTMLElement | null
+  if (!host) {
+    polishBtn.value.visible = false
+    return
+  }
+  const start = ed.view.coordsAtPos(from)
+  const end = ed.view.coordsAtPos(to)
+  const hostRect = host.getBoundingClientRect()
+  const top = Math.max(4, Math.min(start.top, end.top) - hostRect.top - 34)
+  const left = Math.max(48, Math.min((start.left + end.left) / 2 - hostRect.left, hostRect.width - 48))
+  polishBtn.value = { top, left, visible: true }
+}
+
+/** 编辑区滚动时同步悬浮按钮位置（选区坐标随滚动变化） */
+function onEditorScroll(): void {
+  if (polishBtn.value.visible && editor.value) updatePolishButton(editor.value)
+}
+
+let scrollHost: HTMLElement | null = null
+
+onMounted(() => {
+  // 滚动容器 = EditorContent 根节点（.tiptap-wrap），ProseMirror dom 的父元素
+  scrollHost = editor.value?.view.dom.parentElement ?? null
+  scrollHost?.addEventListener('scroll', onEditorScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  scrollHost?.removeEventListener('scroll', onEditorScroll)
+  scrollHost = null
+})
+
+/**
+ * 点击悬浮[AI润色]：把选中文本（含所在行范围标签）作为上下文块加入模型对话，
+ * 与「添加文件」同形制——后续提问即限定 AI 只润色这些行的内容。
+ * v1030续(6)：附带章节 id + 前后文，让大模型知道这段文本在文章中的所在范围再修改。
+ */
+function onPolishClick(): void {
+  const ed = editor.value
+  if (!ed || !savedRange.value || !selectedText.value.trim()) return
+  const { from, to } = savedRange.value
+  // 选区落在正文的第几段（行）：遍历顶层节点定位起止行号
+  let line = 0
+  let lineStart = 1
+  let lineEnd = 1
+  ed.state.doc.forEach((node, offset) => {
+    line += 1
+    const s = offset
+    const e = offset + node.nodeSize
+    if (s <= from && from < e) lineStart = line
+    if (s < to && to <= e) lineEnd = line
+  })
+  const title = editorStore.title || '章节正文'
+  const rangeLabel = `第${lineStart}-${lineEnd}段（全章共${line}段）`
+  const ctx = selectionContext()
+  // ★v1030续：聊天框上方的润色标签要短——`章节名_节选X`（X 由 store 按同章已有选区数补齐），
+  // 详细的段落范围放在消息正文里给模型看（要求(6)：模型要知道所在范围）。
+  emit('polish-selection', {
+    label: title,
+    text: selectedText.value,
+    chapterId: props.chapterId,
+    chapterTitle: title,
+    rangeLabel,
+    before: ctx.before,
+    after: ctx.after,
+  })
+  polishBtn.value.visible = false
+}
 
 /** 取选区前后文（各 ≤600 字，帮助模型衔接） */
 function selectionContext(): { before: string; after: string } {
@@ -296,6 +386,18 @@ defineExpose({ saveNow })
 
     <div class="editor-host" @click="onEditorClick">
       <EditorContent :editor="editor" class="tiptap-wrap novel-prose" />
+
+      <!-- v1031：选中文本时悬浮[AI润色]按钮；点击把选中文本加入模型对话（限定修改范围） -->
+      <button
+        v-if="polishBtn.visible"
+        class="polish-float-btn"
+        :style="{ top: `${polishBtn.top}px`, left: `${polishBtn.left}px` }"
+        title="把选中文本加入 AI 对话，限定润色范围"
+        @mousedown.prevent
+        @click.stop="onPolishClick"
+      >
+        ✨ AI 润色
+      </button>
     </div>
 
     <!-- AI 改写 diff 对话框 -->
@@ -336,6 +438,31 @@ defineExpose({ saveNow })
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+/* v1031：选区上方悬浮的 AI 润色按钮 */
+.polish-float-btn {
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 14px;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+
+.polish-float-btn:hover {
+  background: var(--el-color-primary-light-3);
 }
 
 .sel-hint {

@@ -213,6 +213,24 @@ async def test_delete_last_chapter_removes_volume_and_renumbers(client, novel_id
 
 
 @pytest.mark.asyncio
+async def test_create_volume_with_first_chapter_title(client, novel_id):
+    """v1030续：插入卷时带上第一章章节名 → 卷与它的第一章一并创建（★不允许空卷）。"""
+    resp = await client.post(
+        f"/api/v1/novels/{novel_id}/volumes",
+        json={"title": "风起", "ordinal": 1, "first_chapter_title": "第一章 拾荒"},
+    )
+    assert resp.status_code == 200, resp.text
+    vol = resp.json()["data"]
+    assert vol["sort_order"] == 1
+    assert vol["chapter_count"] == 1
+    assert vol["chapters"][0]["title"] == "第一章 拾荒"
+
+    listed = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
+    target = next(v for v in listed if v["title"] == "风起")
+    assert target["chapter_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_create_volume_with_ordinal_inserts_and_shifts(client, novel_id, volume_id):
     """v1029：带 ordinal 建卷 = 往前插入，其后各卷顺延 +1。"""
     await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": "第二站"})

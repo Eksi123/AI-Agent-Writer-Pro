@@ -18,6 +18,8 @@
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   --sidebar-width: 280px;
   --agent-width: 340px;
+  /* v1030续：右栏拉伸标记颜色——浅色/护眼主题用黑色，深色主题用白色（见下方覆盖） */
+  --resize-handle: #1f2329;
 }
 
 :root[data-theme='dark'] {
@@ -29,6 +31,8 @@
   --text-muted: #a3a6ad;
   --border: #363637;
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  /* v1030续：深色主题 → 拉伸标记显示白色 */
+  --resize-handle: #ffffff;
 }
 
 /* v1028：护眼模式（豆沙绿底色，降低亮度与对比刺激） */
@@ -41,6 +45,8 @@
   --text-muted: #6c7663;
   --border: #ccd6bb;
   --shadow: 0 2px 12px rgba(60, 80, 40, 0.1);
+  /* v1030续：护眼模式属浅色 → 拉伸标记显示黑色 */
+  --resize-handle: #1f2329;
 }
 
 :root[data-theme='eye'] .novel-prose {
@@ -90,11 +96,13 @@ body {
   overflow: hidden;
 }
 
+/* v1030续：右栏会话框宽度由 WorkspaceView 的 `.agent-aside` 内联宽度决定，
+   面板自身必须铺满父容器（此前写死 --agent-width 导致拉宽后右侧留白）。 */
 .agent-panel {
-  width: var(--agent-width);
-  flex-shrink: 0;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: var(--bg-panel);
-  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -189,6 +197,12 @@ body {
   background: var(--bg-panel);
   color: var(--text);
   resize: vertical;
+}
+
+/* v1031：点击/编辑正文时不出现浏览器默认黑框（focus outline） */
+.outline-editor:focus,
+.outline-editor:focus-visible {
+  outline: none;
 }
 
 /* 卷章树节点 */

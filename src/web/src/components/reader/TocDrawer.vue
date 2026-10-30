@@ -84,7 +84,9 @@ function chLabel(title: string, sortOrder: number, index: number): string {
           </div>
 
           <div v-for="(vol, vi) in volumes" :key="vol.id" class="vol-block">
-            <!-- 一级：卷（可展开/收起） -->
+            <!-- 一级：卷（可展开/收起）
+                 v1030续(1)：★点击卷只做展开/收起，**不跳转内容**——正文/大纲的切换
+                 只由「大纲节点」和「具体章节」触发，点卷时右侧仍显示原来的大纲或章节内容。 -->
             <div class="toc-node vol-node" @click="toggleVolume(vol.id, vi)">
               <svg
                 class="ico vol-chev"

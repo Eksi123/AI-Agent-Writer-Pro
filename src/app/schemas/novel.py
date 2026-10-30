@@ -28,6 +28,7 @@ class NovelCreate(BaseModel):
 
     title: str = Field(max_length=200, description="书名，必填；空名/默认名/纯序号名由服务层返回 42201")
     author_name: str | None = Field(default=None, max_length=100)
+    #: v1030续：题材支持自定义标签（最多 3 个以「、」连接，自定义名 ≤5 字），50 足够
     genre: str | None = Field(default=None, max_length=50)
     synopsis: str | None = None
 
@@ -35,6 +36,7 @@ class NovelCreate(BaseModel):
 class NovelUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     author_name: str | None = Field(default=None, max_length=100)
+    #: v1030续：同 NovelCreate，容纳自定义题材
     genre: str | None = Field(default=None, max_length=50)
     synopsis: str | None = None
 
@@ -81,6 +83,10 @@ class VolumeCreate(BaseModel):
     summary: str = ""
     #: v1029：插入位置（1..N+1，正整数）；不传则追加到末尾
     ordinal: int | None = Field(default=None, ge=1, description="插入位置序号；缺省追加末尾")
+    #: v1030续：插入卷时同时创建它的第一章（★不允许产生空卷）
+    first_chapter_title: str | None = Field(
+        default=None, max_length=200, description="第一章章节名；给出时随卷一并创建（避免空卷）"
+    )
 
 
 class VolumeUpdate(BaseModel):
