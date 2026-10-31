@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.gates.orchestrator
 文件名: orchestrator.py
@@ -34,13 +34,15 @@ from app.agent.gates.state import (
     GateTarget,
     llm_json,
 )
-from app.agent.knowledge import build_recap
+from app.agent.knowledge import build_recap, summarize_chapter
 from app.agent.prompts import render
 from app.agent.tracing import create_score, current_trace_id, observation
+from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.core.paths import chapter_file
-from app.db.base import utcnow
-from app.db.models import Novel
+from app.db.base import new_id, utcnow
+from app.db.models import ChapterRevision, Novel
+from app.db.session import session_scope
 from app.services import audit, files
 from app.services.outline import normalize_title, parse_outline
 from app.services.workspace import WorkspaceGuard
@@ -386,7 +388,6 @@ async def prepare_g2(runner: GateRunner) -> str:
     ★生成前必须先快照（手册「二、(6) G2」），保证重生成可回滚。
     自带 session 作用域（调用点在 advance_gate 的 session_scope 之外）。
     """
-    from app.db.session import session_scope
 
     state = runner.state
     assert state.target is not None
@@ -425,8 +426,6 @@ async def _snapshot_before_generation(db: AsyncSession, target: GateTarget, *, r
     if not (content or "").strip():
         return  # 空章无需快照
 
-    from app.db.base import new_id
-    from app.db.models import ChapterRevision
 
     exists = (
         await db.execute(
@@ -574,7 +573,6 @@ async def _finish(runner: GateRunner, content: str) -> None:
     assert state.target is not None
     target = state.target
 
-    from app.agent.knowledge import summarize_chapter
 
     try:
         summary = await summarize_chapter(
@@ -621,7 +619,6 @@ async def _finish(runner: GateRunner, content: str) -> None:
 
 async def resolve_target(db: AsyncSession, project_id: str, chapter_id: str) -> GateTarget:
     """由 chapter_id 解析门禁目标（卷/章标题、虚拟路径）。"""
-    from app.core.errors import NotFoundError
 
     vol_id_found: str | None = None
     meta_found: dict[str, Any] | None = None

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.core.security
 文件名: security.py
@@ -25,8 +25,7 @@ import re
 from pathlib import Path
 
 from app.core.config import PROJECT_ROOT, get_settings
-
-ENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
+from app.core.system_env import system_env_get
 
 #: v1029：合法的环境变量名（任意命名，只要 shell 可接受）
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -105,7 +104,6 @@ def get_api_key(env_name: str) -> tuple[str | None, bool]:
     if value:
         return value, False
 
-    from app.core.system_env import system_env_get
 
     value = system_env_get(env_name)
     if value:
@@ -141,36 +139,12 @@ def _unquote(value: str) -> str:
     return v
 
 
-def ensure_env_example() -> None:
-    """若缺 `.env.example` 则按手册「十二」的键清单生成（M0 交付项）。"""
-    if ENV_EXAMPLE_PATH.exists():
-        return
-    ENV_EXAMPLE_PATH.write_text(ENV_EXAMPLE_TEMPLATE, encoding="utf-8")
-
-
-ENV_EXAMPLE_TEMPLATE = """\
-APP_HOST=127.0.0.1
-APP_PORT=8000
-DATA_ROOT=./data
-LOG_LEVEL=INFO
-
-# LLM（密钥只进 .env，DB 只存变量名）
-DASHSCOPE_API_KEY=
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-GOOGLE_API_KEY=
-AZURE_OPENAI_API_KEY=
-OPENROUTER_API_KEY=
-
-# Langfuse（三项全空则追踪自动降级为本地日志）
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-LANGFUSE_HOST=https://cloud.langfuse.com
-"""
-
-
 def configured_provider_keys() -> dict[str, bool]:
-    """启动时探测各 Provider 密钥是否已配置（供前端「未配置密钥」警示）。"""
+    """启动时探测各 Provider 密钥是否已配置（供前端「未配置密钥」警示）。
+
+    ★v1031 续：`.env` 已移除，密钥在系统级环境变量（`core/system_env.py`），
+    这里只查进程环境（启动时系统级存储的值会在首次 `get_api_key` 时回填）。
+    """
     names = [
         "DASHSCOPE_API_KEY",
         "OPENAI_API_KEY",
@@ -179,5 +153,4 @@ def configured_provider_keys() -> dict[str, bool]:
         "AZURE_OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
     ]
-    parsed = read_env_file()
-    return {n: bool(os.getenv(n) or parsed.get(n)) for n in names}
+    return {n: bool(os.getenv(n)) for n in names}

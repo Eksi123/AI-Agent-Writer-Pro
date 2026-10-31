@@ -20,7 +20,7 @@ import { agentApi, configApi, llmApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import { t } from '@/i18n'
 import { describeAgentError, type AgentErrorInfo } from '@/utils/agentErrors'
-import type { AgentMessageDto, ContextBlock, LlmOverview } from '@/types'
+import type { ContextBlock, LlmOverview } from '@/types'
 import ApprovalCard from './ApprovalCard.vue'
 import ConsultCard from './ConsultCard.vue'
 import PlanTodoList from './PlanTodoList.vue'
@@ -36,8 +36,36 @@ const input = ref('')
 const sending = ref(false)
 const messageHost = ref<HTMLElement | null>(null)
 const overview = ref<LlmOverview | null>(null)
-/** v1028：选中的模型（未选中或无模型 → Model Off） */
+/**
+ * v1028：选中的模型（未选中或无模型 → Model Off）。
+ * ★v1031：默认值取「上次使用的模型」（localStorage 记忆），而不是后端的默认模型。
+ */
 const modelRef = ref<string>('')
+
+const LAST_MODEL_KEY = 'aiwriter:lastModelRef'
+
+function readLastModelRef(): string | null {
+  try {
+    return localStorage.getItem(LAST_MODEL_KEY)
+  } catch {
+    return null
+  }
+}
+
+function rememberModelRef(modelRefValue: string): void {
+  try {
+    if (modelRefValue) localStorage.setItem(LAST_MODEL_KEY, modelRefValue)
+    else localStorage.removeItem(LAST_MODEL_KEY)
+  } catch {
+    /* 隐私模式/配额满：忽略，模型记忆是增强功能 */
+  }
+}
+
+/** 选择模型即记住，下次进入会话框默认就是它 */
+function onModelPicked(value: string): void {
+  modelRef.value = value
+  rememberModelRef(value)
+}
 /** 发送方式三选项弹层 */
 const sendMenu = ref(false)
 
@@ -133,19 +161,23 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     streaming: false,
     createdAt: m.created_at,
   }))
+  // ★v1031 续：AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
+  // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
+  const shown = collapseTurns(persisted)
   // v1030续(1)：乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
   // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
+  // ★v1031：pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
   const pending = agent.pendingUserMessage
   if (pending) {
-    const lastUser = [...persisted].reverse().find((m) => m.role === 'user')
-    if (lastUser?.content !== pending) {
-      persisted.push({
+    const lastUser = [...shown].reverse().find((m) => m.role === 'user')
+    if (lastUser?.content !== pending.content) {
+      shown.push({
         key: 'pending-user',
         role: 'user',
-        content: pending,
+        content: pending.content,
         toolCalls: [],
         streaming: false,
-        createdAt: null,
+        createdAt: pending.sentAt,
       })
     }
   }
@@ -157,8 +189,42 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     streaming: !s.done,
     createdAt: null,
   }))
-  return [...persisted, ...live]
+  return [...shown, ...live]
 })
+
+/**
+ * ★v1031 续：把已持久化的消息按「轮」折叠——每个 user 消息开启一轮，
+ * 该轮到下一个 user 消息之间的 assistant / tool 消息都视为思考过程，
+ * 只保留**最后一条有正文的 assistant 消息**作为本轮回复（并去掉它身上的工具卡片）。
+ * 找不到有正文的 assistant（异常轮）时原样保留，避免渲染空气泡。
+ */
+function collapseTurns(list: DisplayMessage[]): DisplayMessage[] {
+  const out: DisplayMessage[] = []
+  let turn: DisplayMessage[] = []
+  const flush = (): void => {
+    if (!turn.length) return
+    let finalIdx = -1
+    for (let i = turn.length - 1; i >= 0; i--) {
+      if (turn[i].role === 'assistant' && turn[i].content.trim()) {
+        finalIdx = i
+        break
+      }
+    }
+    if (finalIdx >= 0) out.push({ ...turn[finalIdx], toolCalls: [] })
+    else out.push(...turn)
+    turn = []
+  }
+  for (const m of list) {
+    if (m.role === 'user') {
+      flush()
+      out.push(m)
+    } else {
+      turn.push(m)
+    }
+  }
+  flush()
+  return out
+}
 
 /** 每条问答下方的小字日期时间 */
 function stampOf(iso?: string | null): string {
@@ -196,10 +262,15 @@ watch(
 async function loadOverview(): Promise<void> {
   try {
     overview.value = await llmApi.overview()
-    // 默认选中后端的默认模型；否则留空（显示 Model Off）
+    /**
+     * ★v1031：默认选中「上次使用的模型」，而不是后端标记的默认（新建）模型。
+     * 记忆值失效（模型已删/被禁用）时回落到后端默认模型；都没有则留空（Model Off）。
+     */
     if (!modelRef.value) {
+      const remembered = readLastModelRef()
+      const available = overview.value.models.some((m) => m.model_ref === remembered)
       const def = overview.value.models.find((m) => m.is_default)
-      modelRef.value = def?.model_ref ?? ''
+      modelRef.value = available ? remembered! : (def?.model_ref ?? '')
     }
   } catch {
     overview.value = null
@@ -224,8 +295,43 @@ onBeforeUnmount(() => {
 watch(
   () => project.currentNovelId,
   async (id) => {
+    markUserLeftChat()
     agent.backToList()
     if (id) await agent.loadSessions(id)
+  },
+)
+
+/**
+ * ★v1031 续：对话视图粘性守卫——回答结束（或任何非用户主动操作）后若会话视图被
+ * 隐式重置回列表，自动粘回原会话，保证「回答结束后仍停留在对话视图」。
+ * 用户主动返回 / 删除会话 / 切换小说时先 markUserLeftChat()，不参与粘回。
+ */
+const lastViewedSessionId = ref<string | null>(null)
+let userLeftChat = false
+
+function markUserLeftChat(): void {
+  userLeftChat = true
+}
+
+function restoreChatView(): void {
+  const target = lastViewedSessionId.value
+  if (!target || agent.running) return // 运行中不抢视图，等 run 结束由 running watcher 粘回
+  void agent.selectSession(target)
+}
+
+watch(
+  () => agent.currentSessionId,
+  (id, prev) => {
+    if (id) lastViewedSessionId.value = id
+    if (!id && prev && !userLeftChat) restoreChatView()
+    if (!id) userLeftChat = false
+  },
+)
+
+watch(
+  () => agent.running,
+  (running, wasRunning) => {
+    if (wasRunning && !running && !agent.currentSessionId && !userLeftChat) restoreChatView()
   },
 )
 
@@ -245,6 +351,7 @@ async function openSession(id: string): Promise<void> {
 }
 
 function backToList(): void {
+  markUserLeftChat()
   agent.backToList()
   void agent.refreshSessionsLight()
 }
@@ -279,6 +386,7 @@ async function removeSession(id: string): Promise<void> {
       cancelButtonText: t('common.cancel'),
       type: 'warning',
     })
+    markUserLeftChat()
     await agent.deleteSession(id)
     agent.backToList()
   } catch {
@@ -286,81 +394,19 @@ async function removeSession(id: string): Promise<void> {
   }
 }
 
-/**
- * 导出会话为 Markdown。
- * v1030续：入口从会话内右上角移到会话记录列表的 ···，因此支持按 id 导出——
- * 未打开的会话先拉取它的消息树再导出。
- */
-async function exportSessionById(id: string): Promise<void> {
-  const sess = agent.sessions.find((s) => s.id === id)
-  if (!sess) return
-  let items: AgentMessageDto[] = agent.messages
-  if (agent.currentSessionId !== id) {
-    try {
-      const tree = await agentApi.getMessages(id)
-      items = tree.items.filter((m) => m.in_active_path)
-    } catch (err) {
-      ElMessage.error(errorMessage(err))
-      return
-    }
-  }
-  if (!items.length) {
-    ElMessage.warning('该会话还没有消息，无法导出')
-    return
-  }
-  downloadSessionMarkdown(sess, items)
-}
-
-function downloadSessionMarkdown(
-  sess: { title: string; project_title?: string | null; project_id: string },
-  items: readonly AgentMessageDto[],
-): void {
-  const lines: string[] = [
-    `# 会话记录 · ${sess.title}`,
-    '',
-    `- 项目：${sess.project_title || sess.project_id}`,
-    `- 导出时间：${new Date().toLocaleString('zh-CN')}`,
-    '',
-    '---',
-    '',
-  ]
-  for (const msg of items) {
-    const who = msg.role === 'user' ? '我' : msg.role === 'assistant' ? 'AI' : msg.role
-    lines.push(`### ${who}`, '')
-    if (msg.tool_calls?.length) {
-      for (const tc of msg.tool_calls) {
-        let argsText = ''
-        try {
-          argsText = JSON.stringify(tc.args ?? {})
-          if (argsText.length > 200) argsText = `${argsText.slice(0, 200)}…`
-        } catch {
-          argsText = ''
-        }
-        lines.push(`> 🔧 ${tc.name}${argsText ? ` ${argsText}` : ''}`)
-      }
-      lines.push('')
-    }
-    const content = String(msg.content ?? '').trim()
-    if (content) lines.push(content, '')
-  }
-  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
-  a.href = url
-  a.download = `${sess.title.replace(/[\\/:*?"<>|]/g, '_')}-${stamp}.md`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-  ElMessage.success('会话已导出为 Markdown')
-}
+// ★v1031：删除「导出会话」功能（含会话记录列表 ··· 里的导出入口）
 
 // ---------------------------------------------------------------------------
 // 发送 / 运行中三选项（停止并发送 / 通过消息引导发送 / 添加到队列）
 // ---------------------------------------------------------------------------
 
 const canSend = computed(() => input.value.trim().length > 0 && !!project.currentNovelId)
+
+/**
+ * ★v1031：底部发送按键的形态判定依据——运行中是否已输入「追加消息」。
+ * 有输入 → 追加形态（停止后发送 / 添加到队列 / 添加为引导）；无输入 → 停止形态。
+ */
+const hasInput = computed(() => input.value.trim().length > 0)
 
 /**
  * v1030续(4)：Agent / 大模型运行报错时，给出**中文提示 + 应该怎么做**（灰色异常态）。
@@ -392,6 +438,8 @@ async function send(): Promise<void> {
   }
   sending.value = true
   input.value = ''
+  // ★v1031：实际发起问答的模型即为「上次使用的模型」
+  rememberModelRef(modelRef.value)
   try {
     await agent.sendMessage(content, modelRef.value || undefined)
   } catch (err) {
@@ -442,10 +490,6 @@ function queueSend(): void {
 async function onStop(): Promise<void> {
   await agent.cancelRun()
   ElMessage.info(t('agent.cancelledRun'))
-}
-
-async function onRegenerate(): Promise<void> {
-  await agent.regenerate(modelRef.value || undefined)
 }
 
 function copyText(text: string): void {
@@ -774,14 +818,13 @@ watch(
           </div>
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => {
             if (cmd === 'rename') renameSession(s.id, s.title)
-            else if (cmd === 'export') exportSessionById(s.id)
             else if (cmd === 'delete') removeSession(s.id)
           }">
             <span class="session-more" @click.stop>···</span>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="rename">{{ t('agent.renameSession') }}</el-dropdown-item>
-                <el-dropdown-item command="export">{{ t('agent.exportSession') }}</el-dropdown-item>
+                <!-- ★v1031：删除「导出会话」入口 -->
                 <el-dropdown-item command="delete">{{ t('agent.deleteSession') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -839,8 +882,9 @@ watch(
           </div>
         </div>
 
-        <!-- v1030续(1)：「AI 正在思考… / 停止」放进会话内部（模仿主流 AI Agent），
-             不再占用会话框最上方一整行 -->
+        <!-- v1030续(1)：「AI 正在思考…」放进会话内部（模仿主流 AI Agent），
+             不再占用会话框最上方一整行
+             ★v1031：[停止] 从状态条移到底部发送按键（三形态：发送 / 停止 / 追加消息） -->
         <div
           v-if="agent.running || agent.activeSubagents.length || agent.gateStage"
           class="status-inline"
@@ -853,16 +897,6 @@ watch(
           <el-tag v-if="agent.gateStage" size="small" type="warning">
             {{ t('agent.gateStage') }}: {{ agent.gateStage }}
           </el-tag>
-          <el-button
-            v-if="agent.running"
-            size="small"
-            type="danger"
-            text
-            class="status-stop"
-            @click="onStop"
-          >
-            {{ t('agent.stop') }}
-          </el-button>
         </div>
 
         <!-- v1030续(4)：Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
@@ -988,7 +1022,7 @@ watch(
           <!-- Model（v1029）：左侧无 icon、Model Off 不用斜体；
                弹窗内**不显示** Model Off 选项；无模型时在弹窗里提示「尚未配置大模型」；
                点击某模型名 → 收起弹窗，按钮文案变为该模型名称 -->
-          <el-dropdown trigger="click" placement="top-start" @command="(v: string) => (modelRef = v)">
+          <el-dropdown trigger="click" placement="top-start" @command="(v: string) => onModelPicked(v)">
             <button class="bar-btn model-btn" :class="{ off: !selectedModel }">
               {{ selectedModel ? selectedModel.display_name : t('agent.modelOff') }}
             </button>
@@ -1003,8 +1037,8 @@ watch(
                   :command="m.model_ref"
                   :class="{ 'is-selected': m.model_ref === modelRef }"
                 >
+                  <!-- ★v1031 续：去掉模型名后的「· 33K」上下文窗口小字（用户不需要） -->
                   {{ m.display_name }}{{ m.is_default ? ' ★' : '' }}
-                  <span class="muted text-sm"> · {{ Math.round(m.max_context / 1000) }}K</span>
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -1024,15 +1058,7 @@ watch(
 
           <div class="bar-spacer" />
 
-          <el-button
-            v-if="!agent.running && displayMessages.length"
-            text
-            size="small"
-            class="regen-btn"
-            @click="onRegenerate"
-          >
-            {{ t('agent.regenerate') }}
-          </el-button>
+          <!-- ★v1031：删除[重新生成]功能 -->
           <el-tooltip
             v-if="reader.activeChapterId"
             :content="`按大纲生成《${activeChapterTitle}》正文（四阶段门禁）`"
@@ -1050,17 +1076,19 @@ watch(
             </el-button>
           </el-tooltip>
 
-          <!-- 发送箭头；运行中变为 ↵ 并给三种选项
-               v1030续(2)：停止后发送 / 添加到队列 / 添加为引导（每项带一句说明，模仿主流 Agent） -->
+          <!-- ★v1031：底部这颗按键统一承载「发送 / 停止 / 追加消息」三种形态（模仿主流大模型与 Agent）：
+               · 未在运行                → 发送箭头（可发送时点亮）
+               · 运行中 + 输入框为空      → 停止形态（方块），点击立即停止本轮回答
+               · 运行中 + 已输入追加内容  → 追加形态，弹出「停止后发送 / 添加到队列 / 添加为引导」 -->
           <el-popover
-            v-if="agent.running"
+            v-if="agent.running && hasInput"
             v-model:visible="sendMenu"
             placement="top-end"
             :width="250"
             trigger="click"
           >
             <template #reference>
-              <button class="send-btn running" :title="t('agent.running')">
+              <button class="send-btn running" :title="t('agent.appendMessage')">
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="M19 7H8" />
                   <path d="M11 3 7 7l4 4" />
@@ -1083,6 +1111,18 @@ watch(
               </button>
             </div>
           </el-popover>
+
+          <!-- 运行中且没有输入追加内容 → 停止形态 -->
+          <button
+            v-else-if="agent.running"
+            class="send-btn stop"
+            :title="t('agent.stop')"
+            @click="onStop"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="1.5" />
+            </svg>
+          </button>
 
           <button
             v-else
@@ -1147,9 +1187,7 @@ watch(
   color: var(--el-text-color-secondary);
 }
 
-.status-stop {
-  margin-left: auto;
-}
+/* ★v1031：[停止] 已移到底部发送按键，状态条里的 .status-stop 随之删除 */
 
 .dot-pulse {
   width: 8px;
@@ -1484,7 +1522,7 @@ watch(
   flex: 1;
 }
 
-.regen-btn,
+/* ★v1031：[重新生成]已删除，.regen-btn 样式一并移除 */
 .gen-btn {
   padding: 3px 8px;
   height: 24px;
@@ -1513,6 +1551,11 @@ watch(
 
 .send-btn.running {
   background: var(--el-color-warning);
+}
+
+/* ★v1031：停止形态（运行中且输入框为空）——红色方块，点击立即停止本轮回答 */
+.send-btn.stop {
+  background: var(--el-color-danger);
 }
 
 .send-menu {

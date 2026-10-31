@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_subagent_assembly.py
@@ -17,14 +17,24 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage
 from tests.fake_model import ScriptedFakeChatModel
+from tests.test_agent_e2e import (
+    _drain_events,
+    _install_fake,
+    _post_message,
+    _setup_provider_model,
+)
 
+from app.agent.llm.factory import register_model_override
+from app.agent.loop.builder import build_agent, load_subagent_specs
+from app.core.config import get_settings
+from app.db.base import new_id
+from app.db.models import LlmModel, LlmProvider
 from app.db.session import get_sessionmaker
 
 
 @pytest.fixture(autouse=True)
 def _enable_subagents(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AGENT_SUBAGENTS_ENABLED", "true")
-    from app.core.config import get_settings
 
     get_settings.cache_clear()
     yield
@@ -32,8 +42,6 @@ def _enable_subagents(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _seed_provider_model(session) -> str:
-    from app.db.base import new_id
-    from app.db.models import LlmModel, LlmProvider
 
     pid = new_id()
     session.add(
@@ -53,8 +61,6 @@ async def _seed_provider_model(session) -> str:
 class TestSubagentAssembly:
     async def test_builtins_enter_subagents(self, client, session):
         """DB 播种的 5 个内置子代理全部进入装配。"""
-        from app.agent.llm.factory import register_model_override
-        from app.agent.loop.builder import build_agent, load_subagent_specs
 
         model_ref = await _seed_provider_model(session)
         await session.commit()
@@ -71,8 +77,6 @@ class TestSubagentAssembly:
         assert set(agent["subagent_names"]) >= {"planner", "writer", "editor"}
 
     async def test_disabled_subagent_excluded(self, client, session):
-        from app.agent.llm.factory import register_model_override
-        from app.agent.loop.builder import build_agent, load_subagent_specs
 
         model_ref = await _seed_provider_model(session)
         await session.commit()
@@ -98,8 +102,6 @@ class TestSubagentAssembly:
         assert "writer" not in agent["subagent_names"]
 
     async def test_user_subagent_included(self, client, session):
-        from app.agent.llm.factory import register_model_override
-        from app.agent.loop.builder import build_agent
 
         model_ref = await _seed_provider_model(session)
         await session.commit()
@@ -123,12 +125,6 @@ class TestSubagentAssembly:
 
     async def test_run_with_subagents_enabled(self, client, novel_id):
         """开启子代理后完整跑一条消息（task 工具可见、运行正常结束）。"""
-        from tests.test_agent_e2e import (
-            _drain_events,
-            _install_fake,
-            _post_message,
-            _setup_provider_model,
-        )
 
         _pid, model_ref = await _setup_provider_model(client)
         _install_fake(model_ref, [AIMessage(content="带子代理的回复")])

@@ -22,6 +22,7 @@ from app.api import (
     mcp,
     novels,
     outline,
+    recycle,
     settings,
     skills,
     story,
@@ -46,3 +47,5 @@ api_router.include_router(subagents.router)
 api_router.include_router(skills.router)
 api_router.include_router(mcp.router)
 api_router.include_router(widgets.router)
+#: v1031：回收站（被删章节的归档 / 回收 / 彻底删除）
+api_router.include_router(recycle.router)

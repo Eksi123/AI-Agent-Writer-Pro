@@ -1,3 +1,6 @@
+/**
+ * 应用入口：装配 Pinia / Router / Element Plus（中文 locale）与全局样式。
+ */
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'

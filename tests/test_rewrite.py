@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_rewrite.py
@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage
 from tests.test_agent_e2e import _setup_provider_model
 
 from app.agent.llm.factory import register_model_override
+from app.agent.llm.rewrite import _strip_wrappers
 
 
 class _EchoValidator:
@@ -165,7 +166,6 @@ class TestRewriteApi:
 
 class TestStripWrappers:
     def test_variants(self):
-        from app.agent.llm.rewrite import _strip_wrappers
 
         assert _strip_wrappers("```\n正文\n```") == "正文"
         assert _strip_wrappers("```markdown\n正文\n```") == "正文"

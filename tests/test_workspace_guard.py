@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_workspace_guard.py
@@ -17,6 +17,7 @@ import os
 import pytest
 
 from app.core.errors import ForbiddenError
+from app.core.paths import workspace_dir
 from app.services.workspace import WorkspaceGuard
 
 
@@ -85,7 +86,6 @@ async def test_cross_project_write_rejected(two_projects):
         guard_a.write(f"../{pid_b}/novel.yaml", "篡改")
 
     # 直接用绝对路径指向 B
-    from app.core.paths import workspace_dir
 
     b_meta = workspace_dir(pid_b) / "novel.yaml"
     assert b_meta.is_file()

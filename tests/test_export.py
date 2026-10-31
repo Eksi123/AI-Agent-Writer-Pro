@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_export.py
@@ -16,12 +16,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
+
+from app.api import novels as novels_api
+from app.core.paths import exports_root
+from app.db.models import AuditLog
+from app.db.session import get_sessionmaker
 
 OUTLINE = """\
 # 第一卷 荒原初醒
@@ -50,7 +58,6 @@ async def book(client, novel_id):
 
 async def _run_export(client, novel_id: str, fmt: str) -> Path:
     """触发导出并等待任务完成，返回 zip 路径。"""
-    import asyncio
 
     resp = await client.post(f"/api/v1/novels/{novel_id}/export", params={"format": fmt})
     assert resp.status_code == 200, resp.text
@@ -65,7 +72,6 @@ async def _run_export(client, novel_id: str, fmt: str) -> Path:
         await asyncio.sleep(0.05)
     assert status["status"] == "done", f"导出失败：{status}"
 
-    from app.core.paths import exports_root
 
     path = exports_root() / status["filename"]
     assert path.is_file(), f"导出产物不存在：{path}"
@@ -167,7 +173,6 @@ async def test_export_epub_chapter_order_matches_tree(client, book):
         nav = zf.read("OEBPS/nav.xhtml").decode("utf-8")
 
     # spine 中章节 itemref 的顺序
-    import re
 
     spine_ids = re.findall(r'<itemref idref="(ch\d+)"/>', opf)
     assert len(spine_ids) == 3
@@ -214,7 +219,6 @@ async def test_export_invalid_format_rejected(client, book):
 @pytest.mark.asyncio
 async def test_export_mobi_without_calibre_503(client, book, monkeypatch):
     """★calibre 未安装 → 受理阶段即返回 503 / `50301`（前端据此置灰该选项）。"""
-    from app.api import novels as novels_api
 
     monkeypatch.setattr(novels_api, "calibre_available", lambda: False)
 
@@ -234,10 +238,7 @@ async def test_export_task_not_found(client, book):
 @pytest.mark.asyncio
 async def test_export_writes_audit(client, book):
     """导出动作写审计。"""
-    from sqlalchemy import select
 
-    from app.db.models import AuditLog
-    from app.db.session import get_sessionmaker
 
     await _run_export(client, book["novel_id"], "txt")
 

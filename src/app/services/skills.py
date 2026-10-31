@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.skills
 文件名: skills.py
@@ -29,10 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
-from app.core.paths import BUILTIN_SKILLS_DIR, skills_root
+from app.core.paths import BUILTIN_SKILLS_DIR, session_skills_dir, skills_root
 from app.db.base import new_id, utcnow
 from app.db.models import SkillConfig
 from app.services import audit
+from app.services.workspace import WorkspaceGuard
 
 logger = get_logger(__name__)
 
@@ -72,7 +73,6 @@ def render_skill_md(name: str, description: str, body: str, *, allowed_tools: li
 
 def materialize_skill(name: str, content_md: str) -> None:
     """把 SKILL.md 物化到 `data/skills/{name}/SKILL.md`（服务层写，Agent 只读）。"""
-    from app.services.workspace import WorkspaceGuard
 
     target = WorkspaceGuard.write_shared(f"skills/{name}/SKILL.md", content_md)
     logger.info("skill_materialized", name=name, path=str(target))
@@ -402,7 +402,6 @@ async def materialize_session_skills(
     内置技能从包内复制，用户技能从 `data/skills/`（或 DB content_md）复制。
     返回实际物化的技能数。
     """
-    from app.core.paths import session_skills_dir
 
     target_root = session_skills_dir(session_id)
     # 清空重建（选择可能已变化）

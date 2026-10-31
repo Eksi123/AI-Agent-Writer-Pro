@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_agent_units.py
@@ -15,8 +15,13 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
+import app.agent.tracing as tracing
+from app.agent.loop.builder import SKILL_PATHS, build_middleware_stack
+from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
 from app.agent.loop.middleware.write_approval import (
     DEFAULT_EDIT_THRESHOLD,
     DEFAULT_OVERWRITE_THRESHOLD,
@@ -24,6 +29,14 @@ from app.agent.loop.middleware.write_approval import (
     classify_risk,
     virtual_to_host,
 )
+from app.agent.memory import add_message, load_tree, set_active_leaf
+from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
+from app.agent.sandbox.permissions import PERMISSION_RULES
+from app.agent.subagents import BUILTIN_SUBAGENTS, build_subagents
+from app.core.config import get_settings
+from app.core.paths import workspace_dir
+from app.db.base import new_id
+from app.db.models import AgentSession
 
 # ---------------------------------------------------------------------------
 # WriteApproval 高危判定
@@ -59,7 +72,6 @@ class TestClassifyRisk:
         """write_file 覆盖已存在的非空章节 → overwrite。"""
 
         # 构造已存在的项目章节文件
-        from app.core.paths import workspace_dir
 
         pid = "testpid"
         ch = workspace_dir(pid) / "chapters" / "v1" / "c1.md"
@@ -87,7 +99,6 @@ class TestClassifyRisk:
 class TestVirtualToHost:
     def test_maps_project_path(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_ROOT", str(tmp_path))
-        from app.core.config import get_settings
 
         get_settings.cache_clear()
         p = virtual_to_host("/projects/pid1/chapters/v1/c1.md")
@@ -130,7 +141,6 @@ class TestNormalizeDecision:
 
 class TestErrorFingerprint:
     def test_second_failure_warns_third_blocks(self):
-        from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
 
         mw = WorkspaceGuardMiddleware()
         args = {"file_path": "/projects/x/f.md"}
@@ -146,7 +156,6 @@ class TestErrorFingerprint:
         assert again is not None and "阻断" in again
 
     def test_different_args_isolated(self):
-        from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
 
         mw = WorkspaceGuardMiddleware()
         mw.note_error("write_file", {"file_path": "/a"}, "err")
@@ -155,7 +164,6 @@ class TestErrorFingerprint:
         assert mw.note_error("write_file", {"file_path": "/b"}, "err") is None
 
     def test_different_error_isolated(self):
-        from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
 
         mw = WorkspaceGuardMiddleware()
         mw.note_error("write_file", {"file_path": "/a"}, "err1")
@@ -163,7 +171,6 @@ class TestErrorFingerprint:
         assert mw.note_error("write_file", {"file_path": "/a"}, "err2") is None
 
     def test_check_path_cross_project(self):
-        from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
 
         mw = WorkspaceGuardMiddleware()
         assert mw.check_path("/projects/other/novel.yaml", "write", "current") is not None
@@ -177,9 +184,6 @@ class TestErrorFingerprint:
 
 class TestMessageTree:
     async def test_parent_and_branch_structure(self, session, novel_id):
-        from app.agent.memory import add_message, load_tree, set_active_leaf
-        from app.db.base import new_id
-        from app.db.models import AgentSession
 
         sid = new_id()
         session.add(AgentSession(id=sid, project_id=novel_id, title="t"))
@@ -226,9 +230,6 @@ class TestMessageTree:
         assert m3.id not in active  # m3 是 m2 的后代，不在 root→m2 路径上
 
     async def test_set_active_leaf_validates_session(self, session, novel_id):
-        from app.agent.memory import set_active_leaf
-        from app.db.base import new_id
-        from app.db.models import AgentSession
 
         sid = new_id()
         session.add(AgentSession(id=sid, project_id=novel_id, title="t"))
@@ -245,7 +246,6 @@ class TestMessageTree:
 class TestBuilderAssembly:
     def test_middleware_order(self):
         """中间件顺序必须符合手册（Retry → Fallback → CallLimit → Todo → Recap → Guard → Notify → Approval）。"""
-        from app.agent.loop.builder import build_middleware_stack
 
         class _DummyModel:
             model_name = "dummy"
@@ -263,20 +263,17 @@ class TestBuilderAssembly:
         assert "WriteApproval" in names[-1]
 
     def test_permission_rules_constant(self):
-        from app.agent.sandbox.permissions import PERMISSION_RULES
 
         assert len(PERMISSION_RULES) == 8
         assert PERMISSION_RULES[-1][1] == ["/**"] and PERMISSION_RULES[-1][2] == "deny"
 
     def test_skill_paths(self):
-        from app.agent.loop.builder import SKILL_PATHS
 
         assert SKILL_PATHS == ["/skills/builtin/", "/skills/user/"]
 
 
 class TestSubagents:
     def test_build_subagents_all(self):
-        from app.agent.subagents import BUILTIN_SUBAGENTS, build_subagents
 
         agents = build_subagents()
         names = [a["name"] for a in agents]
@@ -287,20 +284,17 @@ class TestSubagents:
             assert a["description"] and a["system_prompt"]
 
     def test_fork_mode_clears_skills(self):
-        from app.agent.subagents import build_subagents
 
         agents = build_subagents(prompt_overrides={})
         writer = next(a for a in agents if a["name"] == "writer")
         assert writer["skills"] == ["/skills/builtin/prose-writing"]
 
     def test_enabled_filter(self):
-        from app.agent.subagents import build_subagents
 
         agents = build_subagents(enabled_names={"writer", "planner"})
         assert {a["name"] for a in agents} == {"writer", "planner"}
 
     def test_model_override(self):
-        from app.agent.subagents import build_subagents
 
         sentinel = object()
         agents = build_subagents(
@@ -319,10 +313,8 @@ class TestTracingDegrade:
     def test_no_client_without_keys(self, monkeypatch):
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-        from app.core.config import get_settings
 
         get_settings.cache_clear()
-        import app.agent.tracing as tracing
 
         tracing.reset_client()
         assert tracing.get_client() is None
@@ -343,9 +335,7 @@ class TestTracingDegrade:
 
 class TestBuiltinSkills:
     def test_all_skills_have_valid_frontmatter(self):
-        import re
 
-        from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
 
         name_re = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
         dirs = [d for d in BUILTIN_SKILLS_DIR.iterdir() if d.is_dir()]
@@ -367,8 +357,6 @@ class TestBuiltinSkills:
             assert skill_md.stat().st_size < 10 * 1024 * 1024
 
     def test_subagent_skill_paths_exist(self):
-        from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
-        from app.agent.subagents import BUILTIN_SUBAGENTS
 
         for name, spec in BUILTIN_SUBAGENTS.items():
             for sp in spec.get("skills") or []:

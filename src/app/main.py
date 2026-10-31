@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.main
 文件名: main.py
@@ -16,7 +16,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
@@ -25,7 +26,6 @@ from app.core.config import PROJECT_ROOT, get_settings
 from app.core.errors import CODE_TO_HTTP, CODE_TO_MESSAGE, ApiError, ErrorCode
 from app.core.logging import configure_logging, get_logger
 from app.core.paths import data_root
-from app.core.security import ensure_env_example
 from app.db.bootstrap import init_database
 from app.db.fts import probe_fts5
 from app.db.session import reset_engine
@@ -37,7 +37,6 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
-    ensure_env_example()
     data_root()
 
     fts = probe_fts5()
@@ -199,8 +198,6 @@ def _mount_frontend(app: FastAPI) -> None:
     - M0 迁移前：`src/web` 是无构建骨架，用 `python -m http.server` 直开；
     - M0 迁移后：`src/web/dist` 存在则单体部署（API 与静态资源同进程）。
     """
-    from fastapi.responses import FileResponse
-    from fastapi.staticfiles import StaticFiles
 
     dist = PROJECT_ROOT / "src" / "web" / "dist"
     if dist.is_dir():

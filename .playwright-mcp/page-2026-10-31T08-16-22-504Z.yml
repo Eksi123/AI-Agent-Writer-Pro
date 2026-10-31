@@ -1,0 +1,120 @@
+- generic [ref=f8e1]:
+  - generic [ref=f8e3]:
+    - complementary [ref=f8e4]:
+      - generic [ref=f8e5]:
+        - generic [ref=f8e7]:
+          - generic "生肖宠物与日期" [ref=f8e8]:
+            - generic [ref=f8e9]: 🐵
+            - generic [ref=f8e10]: 2026年10月31日
+            - generic [ref=f8e11]: 星期六
+          - generic [ref=f8e12]:
+            - generic [ref=f8e13]: 北京
+            - generic [ref=f8e15]:
+              - generic [ref=f8e16]:
+                - generic [ref=f8e17]: ☁️
+                - generic [ref=f8e18]: 阴
+              - generic [ref=f8e19]:
+                - generic [ref=f8e20]: 轻度污染
+                - generic [ref=f8e21]: "130"
+            - generic [ref=f8e22]:
+              - generic [ref=f8e23]: 温度 11°
+              - generic [ref=f8e24]: 湿度 49%
+              - generic [ref=f8e25]: 风速 1级
+        - button "新建小说" [ref=f8e27] [cursor=pointer]
+        - generic [ref=f8e30] [cursor=pointer]:
+          - generic [ref=f8e34]:
+            - generic [ref=f8e35]: 霸道总裁爱上我
+            - generic [ref=f8e36]:
+              - generic [ref=f8e37]: 都市
+              - generic [ref=f8e38]: 现代言情
+          - button "···" [ref=f8e40]
+        - generic [ref=f8e41]:
+          - button "通用设置" [ref=f8e42] [cursor=pointer]
+          - button "AI 设置" [ref=f8e44] [cursor=pointer]
+    - main [ref=f8e46]:
+      - generic [ref=f8e47]:
+        - generic [ref=f8e48]:
+          - radiogroup "radio-group" [ref=f8e49]:
+            - generic [ref=f8e50]:
+              - radio "阅读模式" [ref=f8e51]
+              - generic [ref=f8e52] [cursor=pointer]: 阅读模式
+            - generic [ref=f8e53]:
+              - radio "编辑模式" [checked] [ref=f8e54]
+              - generic [ref=f8e55] [cursor=pointer]: 编辑模式
+          - generic [ref=f8e56]: 霸道总裁爱上我
+        - generic [ref=f8e58]:
+          - button "回收站" [ref=f8e59] [cursor=pointer]
+          - button [ref=f8e156] [cursor=pointer]
+      - generic [ref=f8e68]:
+        - generic [ref=f8e69]:
+          - generic [ref=f8e70]:
+            - button "目录" [ref=f8e71] [cursor=pointer]
+            - generic [ref=f8e100]:
+              - generic [ref=f8e101] [cursor=pointer]: 霸道总裁爱上我_大纲
+              - generic [ref=f8e105]:
+                - generic [ref=f8e106] [cursor=pointer]:
+                  - generic [ref=f8e109]: 第一卷 测试呀
+                  - generic [ref=f8e110]: "1"
+                - generic [ref=f8e111] [cursor=pointer]: 第一章 ?????
+          - generic [ref=f8e78]:
+            - button [ref=f8e113] [cursor=pointer]
+            - button [ref=f8e79] [cursor=pointer]
+            - button [ref=f8e117] [cursor=pointer]
+            - button [ref=f8e120] [cursor=pointer]
+            - button [ref=f8e83] [cursor=pointer]
+            - button [ref=f8e86] [cursor=pointer]
+          - button [disabled] [ref=f8e90]
+          - button [disabled] [ref=f8e93]
+          - generic [ref=f8e96]: 自动保存
+        - generic [ref=f8e123]:
+          - generic [ref=f8e124]:
+            - generic [ref=f8e125]:
+              - generic [ref=f8e126]:
+                - button "B" [ref=f8e127] [cursor=pointer]
+                - button "I" [ref=f8e129] [cursor=pointer]
+                - button "H1" [ref=f8e132] [cursor=pointer]
+                - button "H2" [ref=f8e134] [cursor=pointer]
+                - button "• 列表" [ref=f8e136] [cursor=pointer]
+              - separator [ref=f8e138]
+              - generic [ref=f8e139]:
+                - button "AI 改写" [ref=f8e140] [cursor=pointer]
+                - button "AI 扩写" [ref=f8e142] [cursor=pointer]
+                - button "AI 缩写" [ref=f8e144] [cursor=pointer]
+                - button "AI 润色" [ref=f8e146] [cursor=pointer]
+              - generic [ref=f8e159]: 已选 14 字
+              - button "标记定稿" [ref=f8e148] [cursor=pointer]
+            - textbox [active] [ref=f8e152]:
+              - paragraph [ref=f8e153]: "????????,?????????????????,???????????????????,????,?????????????????????,????????"
+          - generic [ref=f8e154]: 字数：82
+    - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=f8e160]
+    - complementary [ref=f8e162]:
+      - generic [ref=f8e163]:
+        - generic [ref=f8e164]:
+          - generic "会话记录" [ref=f8e165]: 2个会话
+          - generic "用量：入 0 / 出 0 tokens" [ref=f8e168]: 50.2K Token
+        - generic [ref=f8e171]:
+          - generic [ref=f8e172] [cursor=pointer]:
+            - generic [ref=f8e173]:
+              - generic [ref=f8e174]: "2"
+              - generic [ref=f8e175]: 2026-10-31
+            - button "···" [ref=f8e177]
+          - generic [ref=f8e178] [cursor=pointer]:
+            - generic [ref=f8e179]:
+              - generic [ref=f8e180]: "1"
+              - generic [ref=f8e181]: 2026-10-31
+            - button "···" [ref=f8e183]
+        - generic [ref=f8e184]:
+          - generic [ref=f8e186]:
+            - generic [ref=f8e187]: "?????_节选1"
+            - button "关闭此标签" [ref=f8e188]:
+              - generic [ref=f8e189] [cursor=pointer]
+          - generic [ref=f8e192]:
+            - textbox [ref=f8e194]
+            - generic [ref=f8e195]:
+              - button "＋" [ref=f8e196] [cursor=pointer]
+              - button "工具" [ref=f8e197] [cursor=pointer]
+              - button "Model Off" [ref=f8e199] [cursor=pointer]
+              - button "生成本章" [ref=f8e200] [cursor=pointer]
+              - button "发送" [disabled] [ref=f8e202]
+  - alert [ref=f8e205]:
+    - paragraph [ref=f8e209]: 选中文本已加入对话：?????_节选1

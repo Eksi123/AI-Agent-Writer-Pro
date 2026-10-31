@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware
+from langchain_core.messages import HumanMessage
 
 from app.core.logging import get_logger
 
@@ -51,7 +52,6 @@ class SteerInjectionMiddleware(AgentMiddleware):
         if not texts:
             return None
 
-        from langchain_core.messages import HumanMessage
 
         messages = list(state.get("messages") or [])
         for text in texts:

@@ -1,11 +1,11 @@
+/**
+ * 路由：history 模式（单体部署由后端 SPA 回落承接），路由切换时同步页面标题。
+ * - `/`         工作台（三栏主界面 WorkspaceView）
+ * - `/settings` 通用设置（SettingsView）
+ * - `/ai-tools` AI 设置（大模型 / 子代理 / 技能，AiSettingsView）
+ */
 import { createRouter, createWebHistory } from 'vue-router'
 
-/**
- * 路由（M0 迁移：hash → history，单体部署由后端 SPA 回落承接）。
- * - `/`          工作台（三栏主界面 WorkspaceView）
- * - `/settings`  通用设置（SettingsView）
- * - `/ai-tools`  AI 设置（v1028 更名：大模型/子代理/技能，AiSettingsView）
- */
 export const router = createRouter({
   history: createWebHistory(),
   routes: [

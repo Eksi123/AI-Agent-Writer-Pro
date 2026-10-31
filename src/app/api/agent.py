@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.api.agent
 文件名: agent.py
@@ -40,6 +40,7 @@ from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.core.response import ok
 from app.db.models import AgentRun
+from app.db.session import session_scope
 from app.schemas import (
     AgentBranchIn,
     AgentInterruptResolveIn,
@@ -357,6 +358,5 @@ async def resolve_interrupt(
 
 
 def _db():
-    from app.db.session import session_scope
 
     return session_scope()

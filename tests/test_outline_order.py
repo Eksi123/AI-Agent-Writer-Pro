@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_outline_order.py
@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import pytest
+from tests.conftest import workspace_of
 
 from app.services.outline import normalize_title, parse_outline
 
@@ -196,7 +197,6 @@ async def test_outline_save_reports_diff_without_reordering(client, novel_id, vo
 @pytest.mark.asyncio
 async def test_sync_order_does_not_change_ids_or_filenames(client, novel_id, volume_id):
     """★顺序回填只改 sort_order：ID 与文件名不变。"""
-    from tests.conftest import workspace_of
 
     vol2_id, chs = await _build_three_chapters(client, novel_id, volume_id)
     ws = workspace_of(novel_id)
@@ -323,7 +323,6 @@ async def test_outline_read_write_roundtrip(client, novel_id):
 @pytest.mark.asyncio
 async def test_outline_saved_to_correct_file(client, novel_id):
     """大纲写到 outline_file 指向的文件（唯一寻址依据）。"""
-    from tests.conftest import workspace_of
 
     await client.put(
         f"/api/v1/novels/{novel_id}/outline", json={"content": "# 卷一 测试\n## 章一\n- 简介：x\n"}

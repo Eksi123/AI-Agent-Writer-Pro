@@ -44,6 +44,47 @@ const emit = defineEmits<{
 const editorStore = useEditorStore()
 const settingsStore = useSettingsStore()
 
+// ---------------------------------------------------------------------------
+// ★v1031：[回退编辑]（工具栏 icon，最多回退 5 次，类似 Word 的撤销）
+// ---------------------------------------------------------------------------
+
+/** 一次「连续输入」停顿多久算结束（结束后才把编辑前的正文压入回退栈） */
+const UNDO_DEBOUNCE_MS = 800
+let undoTimer: ReturnType<typeof setTimeout> | null = null
+/** 本轮连续编辑开始前的正文（尚未压栈） */
+let pendingSnapshot: string | null = null
+
+function clearUndoTimer(): void {
+  if (undoTimer) {
+    clearTimeout(undoTimer)
+    undoTimer = null
+  }
+}
+
+/**
+ * 记录一个可回退点：连续输入视为一次编辑——
+ * 编辑开始时抓住「编辑前的正文」，停顿 `UNDO_DEBOUNCE_MS` 后压入回退栈（栈深由 store 限制为 5）。
+ */
+function recordUndoPoint(previousHtml: string): void {
+  if (pendingSnapshot === null) pendingSnapshot = previousHtml
+  clearUndoTimer()
+  undoTimer = setTimeout(() => {
+    if (pendingSnapshot !== null) {
+      editorStore.pushUndoSnapshot(pendingSnapshot)
+      pendingSnapshot = null
+    }
+    undoTimer = null
+  }, UNDO_DEBOUNCE_MS)
+}
+
+/** 立即把「本轮未停顿完的编辑」压栈（点击[回退编辑]、AI 改写等整块变更时用） */
+function flushUndoPoint(previousHtml?: string): void {
+  clearUndoTimer()
+  const snapshot = pendingSnapshot ?? previousHtml
+  pendingSnapshot = null
+  if (snapshot !== undefined && snapshot !== null) editorStore.pushUndoSnapshot(snapshot)
+}
+
 const editor = useEditor({
   content: editorStore.draft,
   extensions: [
@@ -53,7 +94,10 @@ const editor = useEditor({
     AiSource,
   ],
   onUpdate: ({ editor: ed }) => {
+    // 本次更新前的正文（editorStore.draft 此刻还没被覆盖）
+    const previous = editorStore.draft
     editorStore.draft = ed.getHTML()
+    recordUndoPoint(previous)
     editorStore.markDirty()
     scheduleAutosave()
   },
@@ -190,6 +234,8 @@ function acceptRewrite(rewritten: string): void {
   if (!ed || !savedRange.value) return
   const mode = rewriteResult.value?.mode ?? 'rewrite'
   const original = rewriteResult.value?.original ?? ''
+  // ★v1031：AI 整块替换算一次编辑，先压一个可回退点
+  flushUndoPoint(ed.getHTML())
   ed
     .chain()
     .focus()
@@ -229,6 +275,8 @@ function onEditorClick(event: MouseEvent): void {
   if (!aiMark) return
   event.preventDefault()
   const original = (aiMark.attrs.original as string) ?? ''
+  // ★v1031：回滚 AI 改写同样记一个可回退点
+  flushUndoPoint(ed.getHTML())
   // 选中整个标记范围并替换回原文：向后扫描同一 mark 找结束位置
   let to = pos
   state.doc.nodesBetween(pos, state.doc.content.size, (node, nodePos) => {
@@ -260,12 +308,16 @@ watch(
     }
     savedRange.value = null
     selectedText.value = ''
+    // ★v1031：换章/重载后回退栈与未压入的编辑点都作废（回退只针对当前章节）
+    clearUndoTimer()
+    pendingSnapshot = null
   },
 )
 
 onBeforeUnmount(() => {
   editor.value?.destroy()
   clearTimer()
+  clearUndoTimer()
 })
 
 // ---- 自动保存（间隔见通用设置）----
@@ -306,6 +358,27 @@ async function saveNow(): Promise<void> {
 watch(
   () => editorStore.saveRequestTick,
   () => void saveNow(),
+)
+
+/**
+ * ★v1031：工具栏[回退编辑] icon → editor store 回退请求 → 还原最近一份快照（最多 5 次）。
+ * 还原后同样标记脏状态并触发自动保存，与 Word 的「撤销」一致（撤销也是一次编辑）。
+ */
+watch(
+  () => editorStore.undoEditTick,
+  () => {
+    const ed = editor.value
+    if (!ed) return
+    // 正在输入未停顿的一轮编辑先补压栈，避免「回退一次跳掉整轮输入」
+    flushUndoPoint()
+    const snapshot = editorStore.popUndoSnapshot()
+    if (snapshot === null) return
+    ed.commands.setContent(snapshot, false)
+    editorStore.draft = snapshot
+    editorStore.markDirty()
+    scheduleAutosave()
+    ElMessage.success(t('editor.undoDone'))
+  },
 )
 
 /** v1029：标记定稿 / 取消定稿（原【卷章】页签的入口收敛到此） */

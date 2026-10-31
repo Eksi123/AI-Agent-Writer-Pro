@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.search
 文件名: search.py
@@ -16,12 +16,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import frontmatter
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.paths import summaries_dir
 from app.db.fts import bigram_tokenize, ensure_fts_schema, fts_available
+from app.db.models import ProjectIndex
 from app.services import files
 from app.services.story import outline_relpath_of
 from app.services.workspace import WorkspaceGuard
@@ -116,14 +118,12 @@ async def reindex_project(session: AsyncSession, project_id: str) -> dict[str, A
 
 def _read_summary(path: Any) -> tuple[dict[str, Any], str]:
     """读摘要 md 的 frontmatter + 正文。"""
-    import frontmatter
 
     post = frontmatter.load(str(path))
     return dict(post.metadata), post.content
 
 
 async def _mark_dirty(session: AsyncSession, project_id: str, *, dirty: int) -> None:
-    from app.db.models import ProjectIndex
 
     idx = await session.get(ProjectIndex, project_id)
     if idx is not None:

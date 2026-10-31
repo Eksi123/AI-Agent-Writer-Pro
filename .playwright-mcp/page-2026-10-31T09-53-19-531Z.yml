@@ -1,0 +1,50 @@
+- generic [ref=f11e3]:
+  - complementary [ref=f11e4]:
+    - generic [ref=f11e5]:
+      - generic [ref=f11e7]:
+        - generic "生肖宠物与日期" [ref=f11e8]:
+          - generic [ref=f11e9]: 🐔
+          - generic [ref=f11e10]: 2026年10月31日
+          - generic [ref=f11e11]: 星期六
+        - generic [ref=f11e12]:
+          - generic [ref=f11e13]: 北京市
+          - generic [ref=f11e67]:
+            - generic [ref=f11e68]:
+              - generic [ref=f11e69]: ☁️
+              - generic [ref=f11e70]: 阴
+            - generic [ref=f11e71]:
+              - generic [ref=f11e72]: 良
+              - generic [ref=f11e73]: "91"
+          - generic [ref=f11e74]:
+            - generic [ref=f11e75]: 温度 9°
+            - generic [ref=f11e76]: 湿度 65%
+            - generic [ref=f11e77]: 风速 1级
+      - button "新建小说" [ref=f11e18] [cursor=pointer]
+      - generic [ref=f11e21]:
+        - button "通用设置" [ref=f11e22] [cursor=pointer]
+        - button "AI 设置" [ref=f11e24] [cursor=pointer]
+  - main [ref=f11e26]:
+    - generic [ref=f11e27]:
+      - radiogroup "radio-group" [ref=f11e29]:
+        - generic [ref=f11e30]:
+          - radio "阅读模式" [checked] [ref=f11e31]
+          - generic [ref=f11e32] [cursor=pointer]: 阅读模式
+        - generic [ref=f11e33]:
+          - radio "编辑模式" [ref=f11e34]
+          - generic [ref=f11e35] [cursor=pointer]: 编辑模式
+      - generic [ref=f11e36]:
+        - button "回收站" [ref=f11e37] [cursor=pointer]
+        - button [ref=f11e78] [cursor=pointer]
+    - paragraph [ref=f11e65]: 还没有小说项目，点击「新建小说」开始创作
+  - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=f11e81]
+  - complementary [ref=f11e83]:
+    - generic [ref=f11e84]:
+      - generic "会话记录" [ref=f11e86]: 0个会话
+      - generic [ref=f11e89]: 还没有小说项目哦~
+      - generic [ref=f11e92]:
+        - textbox "还没有小说项目哦~" [disabled] [ref=f11e94]
+        - generic [ref=f11e95]:
+          - button "＋" [disabled] [ref=f11e96]
+          - button "工具" [disabled] [ref=f11e97]
+          - button "Model Off" [ref=f11e99] [cursor=pointer]
+          - button "发送" [disabled] [ref=f11e100]

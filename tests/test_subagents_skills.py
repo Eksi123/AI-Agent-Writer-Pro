@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_subagents_skills.py
@@ -12,6 +12,8 @@
 """
 
 from __future__ import annotations
+
+import shutil
 
 from app.core.paths import skills_root
 
@@ -258,7 +260,6 @@ class TestSkillsApi:
     async def test_resync_repairs_missing_dir(self, client):
         await client.post("/api/v1/skills", json={"name": "repair-me", "description": "d"})
         # 模拟目录丢失
-        import shutil
 
         shutil.rmtree(skills_root() / "repair-me", ignore_errors=True)
         assert not (skills_root() / "repair-me" / "SKILL.md").exists()

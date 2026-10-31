@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_volumes_chapters.py
@@ -15,8 +15,12 @@
 
 from __future__ import annotations
 
+import frontmatter
 import pytest
 from tests.conftest import workspace_of
+
+from app.main import app
+from app.services import volumes as volumes_service
 
 # ---------------------------------------------------------------------------
 # 卷
@@ -158,7 +162,6 @@ async def test_rename_chapter_keeps_id_and_filename(client, novel_id, volume_id,
     md_files = list((ws / "chapters" / f"v{volume_id}").glob("c*.md"))
     assert md_files == [old], "改名后该卷下仍只有这一个章文件"
 
-    import frontmatter
 
     meta = frontmatter.load(str(old)).metadata
     assert meta["title"] == "拾荒少年的黎明"
@@ -345,7 +348,6 @@ async def test_no_reorder_or_move_routes(client, novel_id, volume_id, chapter_id
 @pytest.mark.asyncio
 async def test_openapi_has_no_reorder_paths(client):
     """从 OpenAPI schema 层面再断言一次（防止将来误加）。"""
-    from app.main import app
 
     paths = app.openapi()["paths"]
     offenders = [p for p in paths if "reorder" in p.lower() or "/move" in p.lower()]
@@ -354,7 +356,6 @@ async def test_openapi_has_no_reorder_paths(client):
 
 def test_service_module_exports_no_reorder_functions():
     """服务层不得存在重排/移动函数（设计守卫）。"""
-    from app.services import volumes as volumes_service
 
     forbidden = {"reorder_volumes", "reorder_chapters", "move_chapter", "move_volume"}
     leaked = forbidden & set(dir(volumes_service))

@@ -18,8 +18,8 @@
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   --sidebar-width: 280px;
   --agent-width: 340px;
-  /* v1030续：右栏拉伸标记颜色——浅色/护眼主题用黑色，深色主题用白色（见下方覆盖） */
-  --resize-handle: #1f2329;
+  /* v1031：右栏拉伸标记颜色——浅色/护眼主题纯黑，深色主题纯白（见下方覆盖） */
+  --resize-handle: #000000;
 }
 
 :root[data-theme='dark'] {
@@ -46,7 +46,7 @@
   --border: #ccd6bb;
   --shadow: 0 2px 12px rgba(60, 80, 40, 0.1);
   /* v1030续：护眼模式属浅色 → 拉伸标记显示黑色 */
-  --resize-handle: #1f2329;
+  --resize-handle: #000000;
 }
 
 :root[data-theme='eye'] .novel-prose {

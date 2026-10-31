@@ -2,8 +2,8 @@
 /**
  * 顶部工具栏（v1028）：
  *   左：【阅读模式】/【编辑模式】切换 + 项目名 + 后端提示（目录开关移到阅读区左上角浮层）
- *   右：AI写作助手入口 —— 聊天框 icon + 文字；悬浮提示功能介绍；
- *       会话框展开后只保留聊天框 icon，点击可收起。
+ *   右：★v1031 回收站入口（在 AI 写作助手左边）+ AI写作助手入口 —— 聊天框 icon + 文字；
+ *       悬浮提示功能介绍；会话框展开后只保留聊天框 icon，点击可收起。
  */
 import { computed } from 'vue'
 import { useReaderStore } from '@/stores/reader'
@@ -15,7 +15,11 @@ defineProps<{
   /** AI 会话框是否展开（展开后只显示聊天框 icon，点击收起） */
   agentOpen: boolean
 }>()
-const emit = defineEmits<{ (e: 'toggle-agent'): void }>()
+const emit = defineEmits<{
+  (e: 'toggle-agent'): void
+  /** ★v1031：打开回收站抽屉 */
+  (e: 'open-recycle'): void
+}>()
 
 const reader = useReaderStore()
 const project = useProjectStore()
@@ -52,6 +56,16 @@ const backendHint = computed(() => {
       <!-- v1030：卷章操作条 / 保存 / 自动保存标记已移到「目录」所在工具栏行；
            页面最上方不再显示「已保存 自动保存已开启（30 秒）」标记 -->
 
+      <!-- ★v1031：回收站入口（放在 AI写作助手的左边）——找回被删除的章节，最多 20 本 -->
+      <el-tooltip :content="t('recycle.tooltip')" placement="bottom-end" :show-after="200">
+        <button class="recycle-btn" @click="emit('open-recycle')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M9 3h6l1 1.5h3.5v2h-15v-2H8L9 3zm-3.5 5.5h13a1 1 0 0 1 1 1.1l-1 9.9a2 2 0 0 1-2 1.9H7.5a2 2 0 0 1-2-1.9l-1-9.9a1 1 0 0 1 1-1.1zm3.7 2.2-.1 8h1.9l.1-8H9.2zm4 0-.1 8h1.9l.1-8h-1.9z" />
+          </svg>
+          <span>{{ t('recycle.title') }}</span>
+        </button>
+      </el-tooltip>
+
       <!-- v1028：AI写作助手（未展开）= 聊天框 icon + 文字，悬浮出功能提示 -->
       <el-tooltip
         v-if="!agentOpen"
@@ -87,6 +101,29 @@ const backendHint = computed(() => {
   flex-shrink: 0;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* ★v1031：回收站入口（AI写作助手左边，样式与 AI 助手入口同形制但用中性色） */
+.recycle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.recycle-btn:hover {
+  color: var(--el-color-danger);
+  border-color: color-mix(in srgb, var(--el-color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--el-color-danger) 8%, var(--bg-panel));
 }
 
 /* v1028：AI写作助手入口（比原纯文字按钮更有存在感） */

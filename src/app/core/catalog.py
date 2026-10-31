@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.core.catalog
 文件名: catalog.py
@@ -19,16 +19,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agent.subagents.builtin import BUILTIN_SUBAGENTS
+from app.agent.subagents.builtin import builtin_subagent_names as _names
+
 
 def builtin_subagents() -> dict[str, dict[str, Any]]:
     """内置子代理出厂定义（name → description/system_prompt/skills/mode）。"""
-    from app.agent.subagents.builtin import BUILTIN_SUBAGENTS
 
     return BUILTIN_SUBAGENTS
 
 
 def builtin_subagent_names() -> list[str]:
     """内置子代理名列表（顺序即出厂顺序）。"""
-    from app.agent.subagents.builtin import builtin_subagent_names as _names
 
     return _names()

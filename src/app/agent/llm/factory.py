@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.llm.factory
 文件名: factory.py
@@ -21,6 +21,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.llm.params import merge_params
 from app.core.config import current_config_version
 from app.core.errors import LlmProviderError, NotFoundError
 from app.core.logging import get_logger
@@ -147,7 +148,6 @@ def _params_of(
     provider: LlmProvider | None = None,
 ) -> dict[str, Any]:
     """Provider 参数（v1028：超时/温度/Max Token）+ default_params_json + 调用方覆盖合并。"""
-    from app.agent.llm.params import merge_params
 
     provider_layer: dict[str, Any] = {}
     if provider is not None:

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.builder
 文件名: builder.py
@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from deepagents import create_deep_agent
 from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ModelRetryMiddleware,
@@ -35,6 +36,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.llm.factory import get_chat_model
+from app.agent.loop.checkpointer import get_checkpointer
 from app.agent.loop.context import AgentContext
 from app.agent.loop.middleware import (
     FileChangeNotifyMiddleware,
@@ -43,10 +46,12 @@ from app.agent.loop.middleware import (
     WorkspaceGuardMiddleware,
     WriteApprovalMiddleware,
 )
+from app.agent.prompts import render
 from app.agent.sandbox import build_backend, build_permissions
+from app.agent.subagents import BUILTIN_SUBAGENTS
 from app.core.config import current_config_version, get_settings
 from app.core.logging import get_logger
-from app.db.models import SkillConfig, SubagentConfig
+from app.db.models import Novel, SkillConfig, SubagentConfig
 
 logger = get_logger(__name__)
 
@@ -65,7 +70,6 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
 
     DB 为空（如未播种的测试环境）时回落内置定义，保证 agent 始终有写作子代理可用。
     """
-    from app.agent.subagents import BUILTIN_SUBAGENTS
 
     rows = (
         (
@@ -233,7 +237,6 @@ async def resolve_subagent_models(
     session: AsyncSession, model_refs: set[str]
 ) -> dict[str, BaseChatModel]:
     """把子代理需要的 model_ref 预解析为 ChatModel 实例（`SubAgent.model` 只接受实例）。"""
-    from app.agent.llm.factory import get_chat_model
 
     resolved: dict[str, BaseChatModel] = {}
     for ref in model_refs:
@@ -368,9 +371,7 @@ async def build_agent(
     `subagent_names` / `skill_names`：会话级选择（手册「三、(3) 输入窗口」上下文 Chips），
     空/None = 用全局默认（全部启用子代理 + 全部技能目录）。`session_id` 用于会话技能精选目录挂载。
     """
-    from deepagents import create_deep_agent
 
-    from app.agent.prompts import render
 
     # 会话级技能精选：先物化，再挂进 backend 路由（手册「三、(3) 输入窗口」）
     session_skill_count = 0
@@ -441,7 +442,6 @@ async def build_agent(
         skills.append(f"/skills/session-{session_id}/")
         logger.info("session_skills_attached", session_id=session_id, count=session_skill_count)
 
-    from app.agent.loop.checkpointer import get_checkpointer
 
     checkpointer = await get_checkpointer()
 
@@ -483,7 +483,6 @@ async def build_agent(
 
 
 async def _load_novel_meta(session: AsyncSession, project_id: str) -> dict[str, Any]:
-    from app.db.models import Novel
 
     novel = await session.get(Novel, project_id)
     if novel is None:

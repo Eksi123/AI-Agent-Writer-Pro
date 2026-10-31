@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.volumes
 文件名: volumes.py
@@ -31,10 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import BadRequestError, NotFoundError, VersionConflictError
 from app.core.logging import get_logger
-from app.core.paths import chapter_file, volume_dir
-from app.db.base import short_id, utcnow
+from app.core.paths import chapter_file, volume_dir, workspaces_root
+from app.db.base import new_id, short_id, utcnow
 from app.db.models import ChapterRevision
-from app.services import audit, files, novels
+from app.services import audit, files, novels, recycle
 from app.services.naming import validate_chapter_title, validate_volume_title
 from app.services.workspace import WorkspaceGuard
 
@@ -213,13 +213,25 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
     """删除卷：**级联删除其下章节文件**（前端二次确认列出章名与字数）。
 
     v1029：删除后其余卷重新连续编号（1..N）。
+    ★v1031：其下章节先进回收站（可回收 / 彻底删除），再删文件。
     """
     project_id, volumes, vol = _locate_volume(vol_id)
     guard = WorkspaceGuard(project_id)
+    novel_title = await recycle.get_novel_title(session, project_id)
 
     chapters = await list_chapters(session, project_id, vol_id)
     removed_files: list[str] = []
     for ch in chapters:
+        # ★v1031：归档到回收站（卷名/序号一并快照，供「卷 → 被删章节」目录展示）
+        recycle.archive_chapter(
+            project_id,
+            vol_id=vol_id,
+            volume_title=str(vol.get("title") or ""),
+            volume_sort_order=int(vol.get("sort_order") or 0),
+            chapter_id=str(ch["id"]),
+            meta=ch,
+            novel_title=novel_title,
+        )
         rel = f"chapters/v{vol_id}/c{ch['id']}.md"
         if guard.exists(rel):
             guard.delete(rel)
@@ -264,7 +276,6 @@ def _locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, An
 
     卷 ID 全局唯一（uuid 前 8 位），扫描各工作区的 volumes.yaml 定位。
     """
-    from app.core.paths import workspaces_root
 
     for ws in workspaces_root().iterdir() if workspaces_root().exists() else []:
         if not ws.is_dir():
@@ -387,7 +398,6 @@ def _renumber_chapters(project_id: str, vol_id: str, keep: list[dict[str, Any]])
 
 def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
     """由 chapter_id 反查 `(project_id, vol_id, meta, content)`。"""
-    from app.core.paths import workspaces_root
 
     root = workspaces_root()
     if not root.exists():
@@ -484,9 +494,25 @@ async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, An
     v1029：
     - 删除后卷内其余章重新连续编号（1..N）；
     - **某一卷下所有章节都删除后，该卷一并删除**（卷层同样重新连续编号）。
+
+    ★v1031：删除的章节先进回收站（可回收 / 彻底删除）。
     """
     project_id, vol_id, meta, _content = _locate_chapter(chapter_id)
     guard = WorkspaceGuard(project_id)
+
+    # ★v1031：归档到回收站（带书名 / 卷名快照）
+    volumes_meta = files.read_volumes(project_id)
+    vol_meta = files.find_volume(volumes_meta, vol_id) or {}
+    recycle.archive_chapter(
+        project_id,
+        vol_id=vol_id,
+        volume_title=str(vol_meta.get("title") or ""),
+        volume_sort_order=int(vol_meta.get("sort_order") or 0),
+        chapter_id=chapter_id,
+        meta=meta,
+        novel_title=await recycle.get_novel_title(session, project_id),
+    )
+
     rel = f"chapters/v{vol_id}/c{chapter_id}.md"
     guard.delete(rel)
 
@@ -641,7 +667,6 @@ async def _snapshot(
     run_id: str | None = None,
 ) -> ChapterRevision:
     """把当前内容快照进 `chapter_revisions`，并按保留策略清理最旧的非定稿快照。"""
-    from app.db.base import new_id
 
     rev = ChapterRevision(
         id=new_id(),

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_sse_bus.py
@@ -15,10 +15,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections import deque
 
 import pytest
 
-from app.agent.loop.events import RunStream, SseBus
+from app.agent.loop.events import RunStream, SseBus, SseEvent
+from app.core.config import get_settings
 
 
 @pytest.fixture
@@ -51,7 +54,6 @@ class TestSeqMonotonic:
         assert d["ts"].endswith("Z")
         assert d["data"] == {"tool_name": "ls"}
         # 可 JSON 序列化
-        import json
 
         json.loads(evt.to_json())
 
@@ -79,7 +81,6 @@ class TestResume:
 
     async def test_buffer_lost_when_seq_evicted(self, bus):
         """缓冲溢出后，请求已被挤出的 seq → buffer_lost=True（API 层发 41001）。"""
-        from collections import deque
 
         stream = await bus.open("r1", "s1")
         stream.buffer = deque(maxlen=3)  # 模拟小缓冲
@@ -115,7 +116,6 @@ class TestSubscribeLive:
         await bus.close("r1")
         item = await asyncio.wait_for(queue.get(), timeout=1.0)
         # 关闭哨兵（非 SseEvent）
-        from app.agent.loop.events import SseEvent
 
         assert not isinstance(item, SseEvent)
 
@@ -142,7 +142,6 @@ class TestSubscribeLive:
 
 class TestRingBuffer:
     async def test_buffer_respects_settings_size(self, bus, monkeypatch):
-        from app.core.config import get_settings
 
         get_settings.cache_clear()
         stream = RunStream(run_id="r", session_id="s")

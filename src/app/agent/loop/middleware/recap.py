@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.middleware.recap
 文件名: recap.py
@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain_core.messages import SystemMessage
 
 from app.core.logging import get_logger
 
@@ -47,7 +48,6 @@ class RecapInjectionMiddleware(AgentMiddleware):
         if not messages:
             return None
         # 前情提要作为 system 消息插到最前（deepagents summarization 会保留首个 system）
-        from langchain_core.messages import SystemMessage
 
         injected = SystemMessage(content=recap, name="recap")
         existing = [m for m in messages if getattr(m, "name", None) == "recap"]

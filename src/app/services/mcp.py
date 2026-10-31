@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.mcp
 文件名: mcp.py
@@ -20,7 +20,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.mcp.adapter import STDIO_COMMAND_WHITELIST, probe_http, probe_stdio, validate_stdio_command
+from app.agent.mcp.adapter import (
+    STDIO_COMMAND_WHITELIST,
+    probe_http,
+    probe_stdio,
+    validate_stdio_command,
+    wrap_tools_async,
+)
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
@@ -237,7 +243,6 @@ async def enabled_tool_rows(session: AsyncSession) -> list[McpServer]:
 
 async def wrap_enabled_tools(session: AsyncSession) -> list[Any]:
     """把启用的第三方 MCP 封装为 LangChain tool 列表（单个失败跳过不阻断）。"""
-    from app.agent.mcp.adapter import wrap_tools_async
 
     tools: list[Any] = []
     for row in await enabled_tool_rows(session):

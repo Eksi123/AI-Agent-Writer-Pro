@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.llm.budget
 文件名: budget.py
@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.core.logging import get_logger
@@ -60,7 +61,6 @@ def _get_encoder(model: str) -> Any | None:
 
 def count_messages_tokens(messages: list[Any], *, model: str | None = None) -> int:
     """消息列表的总 token 数（按 content 文本 + 工具调用参数估算）。"""
-    import json
 
     total = 0
     for msg in messages:

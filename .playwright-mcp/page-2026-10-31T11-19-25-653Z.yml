@@ -1,0 +1,107 @@
+- generic [ref=f20e1]:
+  - generic [ref=f20e3]:
+    - complementary [ref=f20e4]:
+      - generic [ref=f20e5]:
+        - generic [ref=f20e7]:
+          - generic "生肖宠物与日期" [ref=f20e8]:
+            - generic [ref=f20e9]: 🐶
+            - generic [ref=f20e10]: 2026年10月31日
+            - generic [ref=f20e11]: 星期六
+          - generic [ref=f20e12]:
+            - generic [ref=f20e13]: 北京市
+            - generic [ref=f20e67]:
+              - generic [ref=f20e68]:
+                - generic [ref=f20e69]: ☁️
+                - generic [ref=f20e70]: 阴
+              - generic [ref=f20e71]:
+                - generic [ref=f20e72]: 轻度污染
+                - generic [ref=f20e73]: "105"
+            - generic [ref=f20e74]:
+              - generic [ref=f20e75]: 温度 10°
+              - generic [ref=f20e76]: 湿度 69%
+              - generic [ref=f20e77]: 风速 0级
+        - button "新建小说" [ref=f20e18] [cursor=pointer]
+        - generic [ref=f20e78] [cursor=pointer]:
+          - generic [ref=f20e82]:
+            - generic [ref=f20e83]: UI???
+            - generic [ref=f20e84]: "??"
+          - button "···" [ref=f20e87]
+        - generic [ref=f20e21]:
+          - button "通用设置" [ref=f20e22] [cursor=pointer]
+          - button "AI 设置" [ref=f20e24] [cursor=pointer]
+    - main [ref=f20e26]:
+      - generic [ref=f20e27]:
+        - generic [ref=f20e28]:
+          - radiogroup "radio-group" [ref=f20e29]:
+            - generic [ref=f20e30]:
+              - radio "阅读模式" [checked] [ref=f20e31]
+              - generic [ref=f20e32] [cursor=pointer]: 阅读模式
+            - generic [ref=f20e33]:
+              - radio "编辑模式" [ref=f20e34]
+              - generic [ref=f20e35] [cursor=pointer]: 编辑模式
+          - generic [ref=f20e88]: UI???
+        - generic [ref=f20e36]:
+          - button "回收站" [ref=f20e37] [cursor=pointer]
+          - button "AI写作助手" [ref=f20e41] [cursor=pointer]
+      - generic [ref=f20e91]:
+        - button "目录" [ref=f20e94] [cursor=pointer]
+        - article [ref=f20e101]:
+          - generic [ref=f20e102]:
+            - heading "UI???_大纲" [level=1] [ref=f20e103]
+            - blockquote [ref=f20e104]:
+              - paragraph [ref=f20e105]:
+                - text: 本文件是
+                - strong [ref=f20e106]: 创作参考资料
+                - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+                - code [ref=f20e107]: "#"
+                - text: 为卷或附录，
+                - code [ref=f20e108]: "##"
+                - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+                - strong [ref=f20e109]: 不会
+                - text: 改变卷章顺序。
+            - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=f20e110]
+            - heading "第一章 章名（请改为具体章名）" [level=2] [ref=f20e111]
+            - list [ref=f20e112]:
+              - listitem [ref=f20e113]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+              - listitem [ref=f20e114]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+            - heading "附录A 世界观" [level=1] [ref=f20e115]
+            - list [ref=f20e116]:
+              - listitem [ref=f20e117]: 世界背景：
+              - listitem [ref=f20e118]: 力量体系：
+              - listitem [ref=f20e119]: 重要势力：
+            - heading "附录B 人物角色" [level=1] [ref=f20e120]
+            - list [ref=f20e121]:
+              - listitem [ref=f20e122]: 姓名｜身份｜性格｜目标｜关键关系：
+            - heading "附录C 战力层次" [level=1] [ref=f20e123]
+            - list [ref=f20e124]:
+              - listitem [ref=f20e125]: 层次划分与判定标准：
+            - heading "附录D 写作要求" [level=1] [ref=f20e126]
+            - list [ref=f20e127]:
+              - listitem [ref=f20e128]: 视角与人称：
+              - listitem [ref=f20e129]: 文风与节奏：
+              - listitem [ref=f20e130]: 禁忌与雷区：
+    - dialog "回收站" [ref=f20e132]:
+      - banner [ref=f20e133]:
+        - heading "回收站" [level=2] [ref=f20e134]
+        - button "关闭此对话框" [ref=f20e135] [cursor=pointer]
+      - generic [ref=f20e139]:
+        - generic [ref=f20e148]:
+          - button "返回回收站" [ref=f20e149] [cursor=pointer]
+          - generic [ref=f20e153]: UI???
+        - generic [ref=f20e154]: 共 1 个被删章节
+        - generic [ref=f20e156]:
+          - generic [ref=f20e157] [cursor=pointer]:
+            - generic [ref=f20e160]: 第一卷 ??
+            - generic [ref=f20e161]: "1"
+          - generic [ref=f20e162] [cursor=pointer]:
+            - generic [ref=f20e163]: 第一章 ??
+            - generic [ref=f20e164]: 22字
+  - dialog "回收还是删除？" [ref=f20e166]:
+    - generic [ref=f20e167]:
+      - generic [ref=f20e168]:
+        - generic [ref=f20e169]: 回收还是删除？
+        - button "关闭此对话框" [ref=f20e170] [cursor=pointer]
+      - paragraph [ref=f20e180]: 《??》要回收到小说里，还是从回收站彻底删除？
+      - generic [ref=f20e181]:
+        - button "回收" [ref=f20e182] [cursor=pointer]
+        - button "删除" [active] [ref=f20e184] [cursor=pointer]

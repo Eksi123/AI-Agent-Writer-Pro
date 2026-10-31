@@ -1,19 +1,12 @@
 <script setup lang="ts">
 /**
- * 编辑模式 · 工具栏上的卷章结构操作条（v1029 引入，v1030续 重写插入逻辑）。
+ * 编辑模式工具栏上的卷章结构操作条：插入卷 / 插入章节 / 重命名 / 删除。
  *
- * v1030续 插入规则：
- * - **大纲节点**：大纲在最前头 → 只支持「往后插入卷」（新卷落在第 1 位，原有各卷顺延 +1），
- *   不支持插入章节、不支持往前插入；
- * - **章节节点**：支持往前 / 往后插入「卷」与「章节」；
- *   · 插入卷 → 填「卷序号（自动算好，可改）+ 卷名 + 第一章章节名」，★不允许产生空卷；
- *   · 插入章节 → 只填「章节名」，章节序号由插入方向自动推算；
- * - 序号自动增减：插入到第 k 位 → 第 k 位及其后各项 +1；删除 → 其后各项重新连续编号（后端保证）。
- *
- * 其余入口：
- * - 重命名弹窗：含「章名 + 卷名」，卷名默认填当前章所属卷名（即默认不修改卷名）；
- * - 删除：二次确认；删的是当前章，**该卷章节删空后卷一并删除**（后端保证）。
- *   当前处于大纲节点时不允许删除（大纲是整本书的创作参考）。
+ * 插入规则：大纲节点只支持「往后插入卷」（落在第 1 位）；章节节点支持往前 / 往后插入
+ * 卷与章节。插入卷必须同时给出第一章章节名（不允许空卷）；插入章节只填章节名，
+ * 序号按插入方向自动推算（插入到第 k 位 → 其后各项顺延 +1，删除后重新连续编号）。
+ * 重命名弹窗含「章名 + 卷名」（卷名默认当前卷，即不改卷名）；删除需二次确认，
+ * 大纲节点上不允许删除。
  */
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -61,17 +54,6 @@ const kind = ref<InsertKind>('volume')
 const dir = ref<InsertDir>('before')
 /** volume：ordinal=卷序号、title=卷名、firstChapter=第一章章节名；chapter：只用 title */
 const form = ref({ ordinal: '', title: '', firstChapter: '' })
-
-const dialogTitle = computed(() => {
-  if (kind.value === 'volume') {
-    return dir.value === 'before'
-      ? t('volumeChapter.insertBeforeVolume')
-      : t('volumeChapter.insertAfterVolume')
-  }
-  return dir.value === 'before'
-    ? t('volumeChapter.insertBeforeChapter')
-    : t('volumeChapter.insertAfterChapter')
-})
 
 /** 卷总数（插入卷时的序号上限 = N+1） */
 const volumeCount = computed(() => volumes.value.length)
@@ -347,14 +329,15 @@ async function onDelete(): Promise<void> {
     </el-tooltip>
 
     <!-- ============ 插入弹窗（输入框无提示词） ============ -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="440px">
+    <!-- ★v1031：弹窗不再展示标题（「往前/往后插入小说卷」「插入章节」等提示全部去掉），
+         卷序号 / 章节名下方的自动推算提示也一并删除 -->
+    <el-dialog v-model="dialogVisible" width="440px">
       <el-form label-width="96px" @submit.prevent>
-        <!-- 插入卷：卷序号（自动算好，可改）+ 卷名 + 第一章章节名 -->
+        <!-- 插入卷：卷序号（自动算好，可改）+ 卷名 + 章节名 -->
         <template v-if="kind === 'volume'">
           <el-form-item :label="t('volumeChapter.ordinalLabel')" required>
             <el-input v-model="form.ordinal" class="ordinal-input" />
             <div v-if="ordinalError" class="field-error">{{ ordinalError }}</div>
-            <div v-else class="field-hint">{{ t('volumeChapter.ordinalAutoHint') }}</div>
           </el-form-item>
 
           <el-form-item :label="t('volumeChapter.volumeTitleLabel')" required>
@@ -365,7 +348,6 @@ async function onDelete(): Promise<void> {
           <el-form-item :label="t('volumeChapter.firstChapterLabel')" required>
             <el-input v-model="form.firstChapter" maxlength="200" />
             <div v-if="firstChapterError" class="field-error">{{ firstChapterError }}</div>
-            <div v-else class="field-hint">{{ t('volumeChapter.noEmptyVolumeHint') }}</div>
           </el-form-item>
         </template>
 
@@ -380,9 +362,6 @@ async function onDelete(): Promise<void> {
             {{ t('volumeChapter.volumeTitleLabel') }}：{{
               formatVolumeTitle(targetVolume.title, targetVolume.sort_order, 0)
             }}
-          </div>
-          <div class="muted text-sm target-hint">
-            {{ t('volumeChapter.chapterOrdinalAutoHint') }}
           </div>
         </template>
       </el-form>

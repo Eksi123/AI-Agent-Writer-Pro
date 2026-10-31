@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.story
 文件名: story.py
@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.paths import outline_filename
 from app.db.base import utcnow
-from app.services import audit, files
+from app.services import audit, files, novels
 from app.services.outline import (
     OutlineParseResult,
     normalize_title,
@@ -46,7 +47,6 @@ def outline_relpath_of(project_id: str) -> str:
 
 async def read_outline(session: AsyncSession, project_id: str) -> dict[str, Any]:
     """读大纲全文。文件不存在时返回模板内容（不落盘，保持解析只读原则）。"""
-    from app.services import novels
 
     await novels.get_novel(session, project_id)
     guard = WorkspaceGuard(project_id)
@@ -73,7 +73,6 @@ async def write_outline(
     session: AsyncSession, project_id: str, content: str
 ) -> dict[str, Any]:
     """保存大纲。★v1029：大纲不再回填卷章顺序，只产出只读差异报告（`order_sync`）。"""
-    from app.services import novels
 
     novel = await novels.get_novel(session, project_id)
     guard = WorkspaceGuard(project_id)
@@ -247,7 +246,6 @@ async def validate_outline(session: AsyncSession, project_id: str) -> dict[str, 
 
     与 G0 复用同一份 `parse_outline`，避免两套解析漂移。校验不阻断保存。
     """
-    from app.services import novels
 
     await novels.get_novel(session, project_id)
     guard = WorkspaceGuard(project_id)
@@ -354,7 +352,6 @@ _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六":
 
 def _ordinal_of(title: str) -> int | None:
     """从「第X卷 / 第X章」标题里解析序数；无法解析返回 None。"""
-    import re
 
     m = re.match(r"^第\s*([0-9零一二三四五六七八九十百千万两]+)\s*[卷章回节篇部集话話]", title.strip())
     if not m:

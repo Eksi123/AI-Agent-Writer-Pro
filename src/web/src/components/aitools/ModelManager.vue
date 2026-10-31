@@ -1,18 +1,11 @@
 <script setup lang="ts">
 /**
- * 大模型管理（v1028 扁平化 / v1029 展示调整）：一条 = 一个大模型。
+ * 大模型管理：一条 = 一个大模型（前端把 Provider + 其唯一伴随模型收敛为一条配置）。
  *
- * 列表（v1029）：上方显示模型名称，下方用小字号显示 `Time Out=X  Temperature=X  Max Token=X`；
- *       右侧 测试连接 / 编辑 / 删除 三个按钮。
- * 弹窗：无顶部标题；v1029 设置名字号更小、一行展示，输入框收窄（不再挡住右上角 ×）。
- *       协议类型只三种（OpenAI Chat Completions / Anthropic Messages / Google Gemini）；
- *       Base Url；密钥环境变量名（可任意命名，仅排除与配置项同名的保留键）；
- *       API 密钥（保存后写入系统级环境变量，仅显示掩码）；
- *       Time Out（10~60s，默认 30）；Temperature（按协议类型校验范围，不含 0）；
- *       Max Token（默认 2048）。全部必填。
- *
- * ★后端仍是 Provider + Model 两级：这里把二者收敛为一条配置——保存 Provider 的同时
- *   维护其**唯一伴随模型**（model_id 必填，否则无法真正调用大模型）。
+ * 列表：模型名 + 小字 `Time Out / Temperature / Max Token` + 测试连接 / 编辑 / 删除。
+ * 弹窗（无标题）：协议类型三选一（OpenAI Chat / Anthropic Messages / Google Gemini）、
+ * Base Url、密钥环境变量名（任意命名，仅排除与配置项同名）、API 密钥（存系统级环境变量、
+ * 只显示掩码）、Time Out（10~60s）、Temperature（按协议校验、不含 0）、Max Token，全部必填。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'

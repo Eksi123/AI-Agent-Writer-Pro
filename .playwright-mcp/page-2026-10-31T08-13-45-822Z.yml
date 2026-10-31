@@ -1,0 +1,57 @@
+- generic [ref=f7e3]:
+  - complementary [ref=f7e4]:
+    - generic [ref=f7e5]:
+      - generic [ref=f7e7]:
+        - generic "生肖宠物与日期" [ref=f7e8]:
+          - generic [ref=f7e9]: 🐵
+          - generic [ref=f7e10]: 2026年10月31日
+          - generic [ref=f7e11]: 星期六
+        - generic [ref=f7e12]:
+          - generic [ref=f7e13]: 北京
+          - generic [ref=f7e15]:
+            - generic [ref=f7e16]:
+              - generic [ref=f7e17]: ☁️
+              - generic [ref=f7e18]: 阴
+            - generic [ref=f7e19]:
+              - generic [ref=f7e20]: 轻度污染
+              - generic [ref=f7e21]: "130"
+          - generic [ref=f7e22]:
+            - generic [ref=f7e23]: 温度 11°
+            - generic [ref=f7e24]: 湿度 47%
+            - generic [ref=f7e25]: 风速 1级
+      - button "新建小说" [ref=f7e27] [cursor=pointer]
+      - generic [ref=f7e30] [cursor=pointer]:
+        - generic [ref=f7e34]:
+          - generic [ref=f7e35]: 霸道总裁爱上我
+          - generic [ref=f7e36]:
+            - generic [ref=f7e37]: 都市
+            - generic [ref=f7e38]: 现代言情
+        - button "···" [ref=f7e40]
+      - generic [ref=f7e41]:
+        - button "通用设置" [ref=f7e42] [cursor=pointer]
+        - button "AI 设置" [ref=f7e44] [cursor=pointer]
+  - main [ref=f7e46]:
+    - generic [ref=f7e47]:
+      - generic [ref=f7e48]:
+        - radiogroup "radio-group" [ref=f7e49]:
+          - generic [ref=f7e50]:
+            - radio "阅读模式" [ref=f7e51]
+            - generic [ref=f7e52] [cursor=pointer]: 阅读模式
+          - generic [ref=f7e53]:
+            - radio "编辑模式" [checked] [active] [ref=f7e54]
+            - generic [ref=f7e55] [cursor=pointer]: 编辑模式
+        - generic [ref=f7e56]: 霸道总裁爱上我
+      - generic [ref=f7e58]:
+        - button "回收站" [ref=f7e59] [cursor=pointer]
+        - button "AI写作助手" [ref=f7e63] [cursor=pointer]
+    - generic [ref=f7e68]:
+      - generic [ref=f7e69]:
+        - button "目录" [ref=f7e71] [cursor=pointer]
+        - generic [ref=f7e109]:
+          - button [ref=f7e110] [cursor=pointer]
+          - button [disabled] [ref=f7e114]
+          - button [disabled] [ref=f7e117]
+        - button [disabled] [ref=f7e121]
+        - button [disabled] [ref=f7e124]
+        - generic [ref=f7e127]: 自动保存
+      - textbox [ref=f7e129]: "# 霸道总裁爱上我_大纲 > 本文件是**创作参考资料**：AI 生成正文时以各章「简介」为依据。 > 建议保持标题层级（`#` 为卷或附录，`##` 为章）便于阅读与检索。 > ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， > 调整本文件小节先后**不会**改变卷章顺序。 # 第一卷 卷名（请改为具体卷名） ## 第一章 章名（请改为具体章名） - 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。 - 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。 # 附录A 世界观 - 世界背景： - 力量体系： - 重要势力： # 附录B 人物角色 - 姓名｜身份｜性格｜目标｜关键关系： # 附录C 战力层次 - 层次划分与判定标准： # 附录D 写作要求 - 视角与人称： - 文风与节奏： - 禁忌与雷区："

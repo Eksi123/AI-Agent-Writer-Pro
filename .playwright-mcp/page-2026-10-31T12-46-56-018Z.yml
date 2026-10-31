@@ -1,0 +1,28 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]:
+        - generic "生肖宠物与日期" [ref=e8]:
+          - generic [ref=e9]: 🐶
+          - generic [ref=e10]: 2026年10月31日
+          - generic [ref=e11]: 星期六
+        - generic [ref=e12]:
+          - generic [ref=e13]: 定位中…
+          - generic [ref=e15]: …
+      - button "新建小说" [ref=e18] [cursor=pointer]
+      - generic [ref=e21]:
+        - button "通用设置" [ref=e22] [cursor=pointer]
+        - button "AI 设置" [ref=e24] [cursor=pointer]
+  - main [ref=e26]:
+    - generic [ref=e27]:
+      - radiogroup "radio-group" [ref=e29]:
+        - generic [ref=e30]:
+          - radio "阅读模式" [checked] [ref=e31]
+          - generic [ref=e32] [cursor=pointer]: 阅读模式
+        - generic [ref=e33]:
+          - radio "编辑模式" [ref=e34]
+          - generic [ref=e35] [cursor=pointer]: 编辑模式
+      - generic [ref=e36]:
+        - button "回收站" [ref=e37] [cursor=pointer]
+        - button "AI写作助手" [ref=e41] [cursor=pointer]
+    - paragraph [ref=e65]: 还没有小说项目，点击「新建小说」开始创作

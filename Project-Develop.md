@@ -60,7 +60,9 @@
 6. **显式命名**（禁止「未命名小说」「第 1 卷」等默认名，违规 `42201`）；
 7. UI 默认中文，文案集中管理；
 8. permissions **首条匹配生效**、兜底 `deny /**` 必须最后；
-9. **ID 稳定、顺序由大纲派生**（`sort_order` 唯一写入口 `sync_order_from_outline`，无 reorder / move 接口）；
+9. **ID 稳定、顺序由「插入」维护**（★v1029 起大纲降级为参考资料，不再回填 `sort_order`；
+   卷章顺序由 `services/volumes.py` 维护：插入到第 k 位则该位及其后各项 +1、删后重新连续编号；
+   仍**无 reorder / move 接口**，插入是唯一的位置编辑入口）；
 10. 时间戳一律 UTC ISO-8601 应用层写入（不用 SQLite 触发器 / `CURRENT_TIMESTAMP`）；
 11. 文件读写一律 `pathlib` + 显式 `encoding="utf-8"`（Windows 兼容）。
 
@@ -78,9 +80,10 @@ AI Agent Writer Pro
 │
 ├─ 写作业务层（人工撰写，不经 Agent）
 │   ├─ 项目管理：小说 CRUD / 软删除 / 复制 / 导出
-│   ├─ 卷章管理：卷章 CRUD / 短 ID 恒定 / 顺序由大纲派生
-│   ├─ 正文编辑：乐观锁 / 修订快照 / 自动保存 / 选区 AI 改写
-│   ├─ 大纲维护：单文件大纲 / 严格解析 / 格式校验 / 顺序回填
+│   ├─ 回收站（v1031）：被删章节归档（最多 20 本）/ 卷章浏览 / 回收 / 彻底删除
+│   ├─ 卷章管理：卷章 CRUD / 短 ID 恒定 / 顺序由「插入」维护（无 reorder）
+│   ├─ 正文编辑：乐观锁 / 修订快照 / 自动保存 / 回退编辑（≤5 次）/ 选区 AI 改写
+│   ├─ 大纲维护：单文件大纲 / 严格解析 / 格式校验（★大纲是参考资料，不回填顺序）
 │   ├─ 阅读模式：目录 / 翻页 / 进度记忆 / 夜间模式
 │   └─ 检索：FTS5 二元切分 / LIKE 降级
 │
@@ -116,8 +119,8 @@ AI Agent Writer Pro
 ├── docker-compose.yml      单体部署（writer-data 卷持久化）
 ├── src/
 │   ├── app/                后端（FastAPI）
-│   │   ├── api/            ① 路由层：14 模块 / 81 端点
-│   │   ├── services/       ② 业务编排层：16 模块
+│   │   ├── api/            ① 路由层：15 模块 / 89 端点
+│   │   ├── services/       ② 业务编排层：17 模块
 │   │   ├── agent/          ③ AI Agent：12 子包（本项目技术核心）
 │   │   ├── db/             ④ 数据访问：ORM 模型（按域拆 4 文件）+ 迁移 + FTS
 │   │   ├── schemas/        ⑤ DTO：按域拆 4 文件
@@ -125,7 +128,7 @@ AI Agent Writer Pro
 │   │   ├── main.py         应用装配（lifespan / 路由 / CORS / 异常 / 静态资源）
 │   │   └── cli.py          writer CLI（dev / migrate / rebuild-index / doctor）
 │   └── web/                前端（Vue 3 + Vite + TS）
-├── tests/                  pytest（18 文件 / 399 用例，假模型驱动）
+├── tests/                  pytest（21 文件 / 497 用例，假模型驱动）
 └── data/                   运行期数据（不入版本库）
 ```
 
@@ -148,7 +151,7 @@ AI Agent Writer Pro
               │ core/ + db/ + schemas/ │   ┌────────▼────────┐
               │ 基础设施 / ORM / DTO   │◀──┤ agent/          │
               └────────────────────────┘   │ ★AI Agent 全部  │
-                                           │   逻辑（12 子包）│
+              │   逻辑（12 子包）│
                                            └─────────────────┘
 ```
 
@@ -156,7 +159,7 @@ AI Agent Writer Pro
 
 | 方向 | 允许性 | 说明 |
 | --- | --- | --- |
-| `api/ → services/` | ✅ 唯一取数路径 | 14 个 api 模块全部经 services |
+| `api/ → services/` | ✅ 唯一取数路径 | 15 个 api 模块全部经 services |
 | `api/ → agent/` | ✅ **仅运行入口** | 只 `api/agent.py` 持有 `run_manager` + `sse_bus`（起 run / 订阅流）；`api/chapters.py` 持 `rewrite`（服务层直连 LLM 的选区改写） |
 | `agent/ → services/` | ✅ 允许方向 | gates / knowledge / loop / mcp 用业务服务（大纲解析、文件写入、索引重建） |
 | `services/ → agent/` | ⚠️ **两处文档化例外** | ① `services/agent.py` → `agent.memory`（消息树读写）② `services/search.py` → `agent.knowledge`（章节摘要生成） |
@@ -174,8 +177,8 @@ AI Agent Writer Pro
 
 | 层 | 模块数 | 职责 | 不做什么 |
 | --- | --- | --- | --- |
-| `api/` | 14 | 协议转换：路径/查询/请求体解析 → 调 services → `ok()` 包装；SSE 流订阅 | 不写业务规则、不直接查 ORM |
-| `services/` | 16 | 业务编排：校验、事务、审计、文件写入、派生索引同步 | 不碰 HTTP 概念（无 Request/Response） |
+| `api/` | 15 | 协议转换：路径/查询/请求体解析 → 调 services → `ok()` 包装；SSE 流订阅 | 不写业务规则、不直接查 ORM |
+| `services/` | 17 | 业务编排：校验、事务、审计、文件写入、派生索引同步 | 不碰 HTTP 概念（无 Request/Response） |
 | `agent/` | 12 子包 | AI Agent 全部逻辑 | 不承载写作业务 CRUD（那些是 REST 接口） |
 | `db/` | — | ORM 模型 + async engine + 迁移 + FTS | 不含业务规则 |
 | `schemas/` | — | Pydantic DTO（请求体与响应 `data`） | 不含行为逻辑 |
@@ -185,23 +188,33 @@ AI Agent Writer Pro
 
 ```
 src/web/src/
-├── views/          WorkspaceView（三栏主工作台）/ SettingsView（通用设置）/ AiToolsView（AI 工具）
+├── views/          WorkspaceView（三栏主工作台）/ SettingsView（通用设置）
+│                   / AiSettingsView（AI 工具：模型 / 子代理 / 技能）
 ├── layouts/        三栏骨架
 ├── components/
-│   ├── sidebar/    ProjectList（项目列表 + 新建/删除/导出）/ WeatherWidget（宠物 + 城市 + 天气）
-│   ├── reader/     ChapterReader / OutlineReader / TocDrawer / ReaderToolbar
-│   ├── editor/     TiptapEditor / aiSourceMark（AI 来源标记 Tiptap Mark 扩展）
-│   │               / RewriteDiffDialog（选区改写句级 diff）/ VolumeChapterTree（只读顺序）
+│   ├── sidebar/    ProjectList（项目列表 + 新建/删除/导出）/ WeatherWidget（城市 + 天气）
+│   │               / ZodiacPet（生肖宠物）
+│   ├── reader/     ChapterReader / OutlineReader / TocDrawer
+│   │               / ReaderToolbar（目录 / 模式切换 / ★回收站入口 / AI 助手开关）
+│   ├── editor/     TiptapEditor（★含回退编辑 ≤5 次快照机制）/ aiSourceMark（AI 来源标记 Mark 扩展）
+│   │               / EditorActionBar（★v1029 插入卷/章 + 重命名 + 删除操作条）
+│   │               / RewriteDiffDialog（选区改写句级 diff）
 │   │               / OutlineEditor / ConflictBanner（版本冲突合并）/ WordCountBar
 │   ├── agent/      AgentPanel（会话面板）/ ApprovalCard（审批卡片）/ ConsultCard（咨询卡片）
 │   │               / GateStatusBar（门禁状态条）/ PlanTodoList（待办计划）
-│   └── aitools/    SubagentManager / SkillManager / McpManager
-├── stores/         project / editor / reader / agent / settings（Pinia）
-├── api/            http（axios 封装）/ index（81 端点）/ sse（EventSource 续传）
+│   │               / ContextPicker（上下文章节选择）/ ToolsPicker（工具·技能勾选浮层）
+│   ├── common/     ExportDialog（导出格式选择与任务轮询）/ ★RecycleBin（v1031 回收站抽屉）
+│   └── aitools/    ModelManager / SubagentManager / SkillManager
+│                   （★MCP 管理页已移除：内置天气 MCP 由后端自动装配，无需 UI）
+├── stores/         project / editor（★含回退编辑栈）/ reader / agent / settings（Pinia）
+├── api/            http（axios 封装）/ index（89 端点）/ sse（EventSource 续传）
 ├── i18n/           中文文案集中管理
 ├── styles/         主题变量（主题色/字号/字体/页宽由 user_settings 驱动）
 └── types/          DTO 类型定义
 ```
+
+> 说明：★v1029 移除了独立的 `VolumeChapterTree` 组件——卷章结构改由目录树（`TocDrawer`）
+> 只读展示 + 编辑模式右上方的 `EditorActionBar` 维护（插入 / 重命名 / 删除）。
 
 三栏布局：**左侧**动态组件 + 项目列表 + 设置入口；**中间**阅读模式 / 编辑模式；
 **右侧** Agent 面板（会话流、审批与咨询卡片、门禁状态条、子代理泳道、上下文 Chips）。
@@ -213,12 +226,20 @@ src/web/src/
 ```
 ① 文件（内容事实源）        data/workspaces/{project_id}/
                             ├── novel.yaml         项目元信息 + 项目级 llm_params + outline_file
-                            ├── volumes.yaml       卷列表（id 短 uuid 恒定 / title / sort_order★派生）
+                            ├── volumes.yaml       卷列表（id 短 uuid 恒定 / title / sort_order★插入维护）
                             ├── chapters/v{vol}/c{ch}.md
-                            │                      frontmatter: title / sort_order★派生 / word_count
+                            │                      frontmatter: title / sort_order★插入维护 / word_count
                             │                        / status(draft|finalized) / version(乐观锁) / updated_at
-                            ├── outline/{小说名称}-大纲.md   单文件大纲（知识库之纲）
+                            ├── outline/{小说名称}-大纲.md   单文件大纲（★参考资料，不回填顺序）
                             └── summaries/ch-{chapter_id}.md 章节摘要（仅 summarize_chapter 可写）
+
+                            data/recycle/{project_id}/      ★v1031 回收站（最多 20 本）
+                            ├── index.yaml       被删条目索引（章名 / 所属卷 / 删除时间 / novel_deleted / trash_dir）
+                            └── chapters/c{id}.md  章级删除的正文快照（整本删除不复制，见 trash_dir）
+                            data/trash/{project_id}-{ts}/   整本软删除时搬走的工作区原件
+                            data/skills/{name}/SKILL.md     用户技能物化目录
+                            data/session-skills/{sid}/      会话选中技能的物化副本
+                            data/exports/                   导出任务产物（zip）
 
 ② SQLite（结构化登记）      data/app.db —— 16 张表
                             登记 / 修订快照 / 会话 / 消息树 / 运行 / 中断 / 审计 / 配置 / 派生索引
@@ -247,22 +268,23 @@ src/web/src/
 
 ### 3.4 API 架构
 
-统一前缀 `/api/v1`，**81 个端点**，分 14 组：
+统一前缀 `/api/v1`，**89 个端点**，分 15 组（与 `api/` 模块 1:1）：
 
 | 组 | 端点数 | 代表路径 |
 | --- | --- | --- |
+| `agent` | 16 | `GET/POST /agent/sessions`、`/{sid}/messages`(202)、`/{sid}/branch`、`/{sid}/context`、`/runs/{id}`、`/runs/{id}/stream`(SSE)、`/runs/{id}/cancel`、`/interrupts/{id}/resolve` |
 | `novels` | 14 | `GET/POST /novels`、`PATCH/DELETE /novels/{id}`、`/duplicate`、`/export`、`/index/rebuild`、`/reading-progress` |
-| `agent` | 13 | `GET/POST /agent/sessions`、`/{sid}/messages`(202)、`/{sid}/branch`、`/{sid}/context`、`/runs/{id}`、`/runs/{id}/stream`(SSE)、`/runs/{id}/cancel`、`/interrupts/{id}/resolve` |
 | `llm` | 13 | `/llm/providers` CRUD + `/test`、`/llm/models` CRUD + `/fallback-chain`、`/llm/overview`、`/config/reload` |
 | `volumes` | 8 | `/novels/{id}/volumes`、`/volumes/{vid}/chapters`、`/chapters/{cid}` |
 | `mcp` | 6 | `/mcp-servers` CRUD + `/probe` + `/confirm` |
 | `chapters` | 5 | `GET/PUT /{cid}/content`（乐观锁）、`/{cid}/rewrite`、`/revisions`、`/restore` |
 | `skills` | 5 | `/skills` CRUD（`GET` 支持 `include_writing=true` 追加包内写作技能）+ `/resync` |
 | `subagents` | 5 | `/subagents` CRUD + `/reset`（恢复出厂） |
+| `recycle` | 4 | ★v1031 回收站：`GET /recycle`、`GET /recycle/{id}`、`POST /recycle/{id}/chapters/{cid}/restore`、`DELETE /recycle/{id}/chapters/{cid}` |
 | `outline` | 3 | `GET/PUT /novels/{id}/outline`、`/outline/validate` |
+| `settings` | 3 | `GET/PUT /settings`、`POST /settings/reset` |
 | `widgets` | 3 | `/widgets/city`、`/pet-state`、`/weather` |
 | `story` | 2 | `/novels/{id}/search`、`/summaries/rebuild` |
-| `settings` | 2 | `GET/PUT /settings` |
 | `audit` | 1 | `GET /audit-logs`（只读） |
 | `health` | 1 | `GET /health` |
 
@@ -320,7 +342,7 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 | --- | --- | --- |
 | `/` | **工作台**（WorkspaceView） | 主界面，写作全流程都在这里完成（三栏布局） |
 | `/settings` | **通用设置**（SettingsView） | 外观 / 编辑 / 动态组件偏好 + 运行状态自检 |
-| `/ai-tools` | **AI 工具**（AiToolsView） | 大模型 Provider·Model / 子代理 / 技能 / MCP 四类 AI 配置 |
+| `/ai-tools` | **AI 工具**（AiSettingsView） | 大模型 Provider·Model / 子代理 / 技能 三类 AI 配置（★v1029 已移除 MCP 页签：内置天气 MCP 由后端自动装配，无需 UI 管理） |
 
 入口关系：工作台左栏底部「设置」「AI 工具」按钮 → 对应页面；两个配置页均有「‹ 返回」回工作台。
 未匹配路由一律重定向 `/`。
@@ -353,32 +375,34 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 
 | 区块 | 功能设计 |
 | --- | --- |
-| TocDrawer | 顶端固定「≡ 大纲」节点（虚线分隔），其下按 `sort_order` **只读**渲染卷（标题+章数）→ 章（定稿章带「定稿」绿标）；点击章=阅读该章，点击大纲=看大纲；★无拖拽/无重排按钮（顺序由大纲派生） |
+| TocDrawer | 顶端固定「≡ 大纲」节点（虚线分隔），其下按 `sort_order` **只读**渲染卷（标题+章数）→ 章（定稿章带「定稿」绿标）；点击章=阅读该章，点击大纲=看大纲；★无拖拽/无重排按钮（顺序由编辑模式操作条的「插入」维护） |
 | ChapterReader | Markdown 渲染（markdown-it + DOMPurify 消毒）；上一章/下一章翻页（按展平序列）；**进度记忆**（滚动比例入库，回到同章自动定位）；夜间模式独立于全局暗色主题 |
 | OutlineReader | 大纲只读渲染（未选章或点大纲节点时的默认视图） |
 
-编辑模式（两页签；大纲经目录「大纲」节点进入，不单设页签）：
+编辑模式（★v1029 起**无页签**，按目录当前节点直接切换编辑器：大纲节点→OutlineEditor / 章节节点→TiptapEditor）：
+
+顶部工具条独占一行（阅读模式仍为悬浮样式，避免遮挡编辑器工具栏）＝ 目录（TocDrawer）+ 卷章结构操作（EditorActionBar）+ ★**回退编辑**（v1031 icon，保存左侧；栈空或正在编辑大纲时置灰）+ 保存（无待存内容置灰）+ 自动保存标记（开=绿 / 关=灰）。
 
 | 区块 | 功能设计 |
 | --- | --- |
-| 【正文】页签 | ConflictBanner（版本冲突横幅，见 4.1.4）+ TiptapEditor（富文本：Markdown 快捷输入、工具栏、**选区 AI 改写**四按钮）+ WordCountBar（实时字数）；自动保存按 `autosave_interval_sec`（自动保存不产生修订快照）；关闭页面有未保存修改时浏览器拦截提醒 |
-| 【卷章】页签 | VolumeChapterTree：卷/章增删改（新建一律追加末尾）；删除卷级联删章，确认框列出将删除的章名与字数；★**只读顺序**——顶部提示「顺序由大纲决定」+「去大纲调整」按钮直达大纲编辑 |
-| 大纲节点 | OutlineEditor：Markdown **源码**编辑（保证 `# 卷 / ## 章` 层级不被富文本破坏）+ 编辑/预览切换；保存后显示校验结果（错误/警告分行号列出，不阻断保存）与顺序回填统计（「已同步 x 卷 / y 章顺序」） |
+| 章节节点 | ConflictBanner（版本冲突横幅，见 4.1.4）+ TiptapEditor（富文本：Markdown 快捷输入、工具栏、**选区 AI 改写**四按钮、★v1031 **回退编辑 ≤5 次**：800ms 防抖把连续输入并成一个撤销点）+ WordCountBar（实时字数）；自动保存按 `autosave_interval_sec`（自动保存不产生修订快照）；关闭页面有未保存修改时浏览器拦截提醒 |
+| 卷章结构 | ★v1029 移除独立卷章树页签，结构编辑走 EditorActionBar 的**插入**：「往前/往后插入卷」「往前/往后插入章节」，插入到第 k 位则该位及其后各项顺延、删后重新连续编号；删除卷级联删章，确认框列出将删除的章名与字数（★v1031 删除先进回收站）；插入卷必须同时给出第一章章节名（不支持空卷） |
+| 大纲节点 | OutlineEditor：Markdown **源码**编辑（保证 `# 卷 / ## 章` 层级不被富文本破坏）+ 编辑/预览切换；保存后调用 `validate` 显示校验结果（错误/警告分行号列出，**不阻断保存**）。★v1029：大纲是**参考资料**，保存**不再回填卷章顺序**（validate 为只读诊断） |
 
 **右栏 —— Agent 面板（AgentPanel）**
 
 | 区块（自上而下） | 功能设计 |
 | --- | --- |
-| 面板头 | 会话下拉（按项目隔离，非 idle 会话带状态后缀）+「＋」新建 +「⋯」菜单（重命名 / **导出会话为 Markdown**（浏览器端拼 Blob 下载，含工具调用摘要）/ 删除） |
+| 面板头 | 会话下拉（按项目隔离，非 idle 会话带状态后缀）+「＋」新建 +「⋯」菜单（重命名 / 删除）（★v1031 移除「导出会话为 Markdown」） |
 | 引导条 | 未配置任何模型时显示警告条，指引去「AI 工具」页添加 Provider |
-| 运行状态条 | 运行中脉冲圆点 + 活跃子代理泳道 tag + 门禁阶段 tag +「停止」按钮（协作式取消） |
-| 消息流 | 用户/AI/工具三类气泡；AI 消息流式渲染（打字光标）；工具调用折叠卡片（名称+截断参数）；消息级操作：复制 / 重新生成（产生**兄弟分支**，可切换对比）；流式中断线重连由 SSE 层透明处理，缓冲丢失时回落重拉全量消息 |
+| 运行状态条 | 运行中脉冲圆点 + 活跃子代理泳道 tag + 门禁阶段 tag（★v1031 停止按钮已并入发送区三态按钮，状态条内不再重复） |
+| 消息流 | 用户/AI/工具三类气泡；AI 消息流式渲染（打字光标）；工具调用折叠卡片（名称+截断参数）；消息级操作：复制（★v1031 移除「重新生成」——分支能力后端仍在，但面板不再暴露该入口）；流式中断线重连由 SSE 层透明处理，缓冲丢失时回落重拉全量消息（★v1031 重拉时清空流式缓冲，修复「同一条回复显示两次」） |
 | PlanTodoList | Agent 待办计划（`write_todos` 驱动，勾选态实时更新） |
 | GateStatusBar | 门禁 G0→G3 阶段流转 + 重试计数 + 各阶段判定摘要（订阅 `gate.update`） |
 | ApprovalCard | 高危操作审批：工具名+参数+风险说明，**四决策**（批准 / 编辑后批准（参数可改）/ 拒绝（可附说明）/ 回复补充） |
 | ConsultCard | 门禁咨询：问题 + 选项按钮 + 自由输入框（`allow_text` 时） |
 | 用量行 | 最近一次运行的 token 输入/输出 |
-| 输入区 | **上下文 Chips**：「＋上下文」popover 三类可选（子代理/技能/已读章节，含「＋当前章」快捷），增删即 `PATCH /context` 持久化、会话切换回填；模型下拉（单条消息级覆盖，不回写会话）；**「生成本章」**按钮（选中章时出现，确认框说明四阶段门禁与快照可回滚）；发送框（Enter 发送） |
+| 输入区 | **上下文 Chips**：「＋上下文」popover 三类可选（子代理/技能/已读章节，含「＋当前章」快捷），增删即 `PATCH /context` 持久化、会话切换回填；模型下拉（单条消息级覆盖，不回写会话；★v1031 记忆上次所选模型到 `localStorage`，失效则回落默认）；**「生成本章」**按钮（选中章时出现，确认框说明四阶段门禁与快照可回滚）；发送框（Enter 发送）+ ★v1031 **三态发送按钮**：空闲→发送箭头；运行中且输入框为空→**红色停止方块**（协作式取消）；运行中且已输入→「追加引导消息」popover（不打断当前工作，在下一步执行前插入这条消息） |
 
 #### 4.1.3 通用设置页（SettingsView）
 
@@ -392,16 +416,20 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 | AI 工具 | 提示条 +「前往 AI 工具」按钮 | 配置项已迁出本页，只留导航 |
 | 运行状态 | 后端版本 / SQLite / FTS5（可用性+降级原因）/ calibre（mobi 导出）/ Langfuse / 数据目录 | 只读自检面板（`GET /health`） |
 
-#### 4.1.4 AI 工具页（AiToolsView）
+#### 4.1.4 AI 工具页（AiSettingsView）
 
-四页签：**大模型 API / 子代理 / 技能 / MCP**；页头「重载配置」按钮（使后端模型工厂缓存失效）。
+三页签：**大模型 API / 子代理 / 技能**；页头「重载配置」按钮（使后端模型工厂缓存失效）。
+
+> ★v1028 已移除「MCP 服务」页签（前端 `mcpApi` 随之删除）：内置 Open-Meteo 天气 MCP 由后端自动装配，
+> 无需 UI 管理。后端 `api/mcp.py`（6 端点，含 stdio 白名单 + 二次确认 + 命令全文落审计）与
+> `services/mcp.py` **保留**，作为未来开放第三方 MCP 的能力底座，并有 `test_mcp_widgets.py` 覆盖。
 
 | 页签 | 功能设计 |
 | --- | --- |
-| 大模型 API | 顶部概览（当前默认模型）；**Provider 卡片**列表：名称+类型 tag、密钥状态 tag（已配置显示掩码 `sk-****abcd` / 未配置红色警示）、测试连接、编辑、删除（提示将级联删除 N 个模型）；卡片内**模型行**：model_id、默认标、启停、上下文长度、降级链长度，可编辑/删除/追加。Provider 对话框：6 种类型下拉、base_url、密钥环境变量（可创建，给出建议 env 列表）、**密钥输入只在编辑态**（保存写入 `.env` 后仅回显掩码，留空=不修改）、优先级、启停。Model 对话框：model_id、显示名、max_context、supports_tools、is_default、降级链（每行一个 model_ref，附全部可用 ref 提示）、默认参数 JSON |
+| 大模型 API | 顶部概览（当前默认模型）；**Provider 卡片**列表：名称+类型 tag、密钥状态 tag（已配置显示掩码 `sk-****abcd` / 未配置红色警示）、测试连接、编辑、删除（提示将级联删除 N 个模型）；卡片内**模型行**：model_id、默认标、启停、上下文长度、降级链长度，可编辑/删除/追加。Provider 对话框：6 种类型下拉、base_url、密钥环境变量（可创建，变量名任意）、**密钥输入只在编辑态**（★v1029 起保存写入**系统级环境变量**，仅回显掩码，留空=不修改）、优先级、启停。Model 对话框：model_id、显示名、max_context、supports_tools、is_default、降级链（每行一个 model_ref，附全部可用 ref 提示）、默认参数 JSON |
 | 子代理 | 内置 5 个 + 用户自建。**内置不可删除/改名**，但可停用、改提示词、改模型覆盖、「恢复出厂」；自建支持完整 CRUD。编辑对话框：名称/描述/系统提示词/模型覆盖（下拉全部模型，默认模型带 ★）/模式（isolated/fork，fork 不带技能）/可用技能（按行）/启停 |
 | 技能 | 内置 8 项**只读**（可预览全文 SKILL.md）+ 用户自建 CRUD（name==目录名、小写连字符 ≤64，description ≤1024）；编辑对话框：name/description/正文（frontmatter 自动生成）/allowed_tools/启停；「重新同步」按钮对齐 DB 与包内文件 |
-| MCP | 内置 Open-Meteo 天气（只读展示，免配置）；第三方添加：stdio（命令**白名单** npx/uvx/python，保存前弹窗展示完整命令**二次显式确认**）/ http / sse（URL 必填）；每服务可**探测**（列出 tools）、启停、删除 |
+| MCP（★后端能力，无 UI 页签） | 内置 Open-Meteo 天气由后端自动装配（免配置）；`api/mcp.py` 仍支持第三方注册：stdio（命令**白名单** npx/uvx/python，保存前要求完整命令**二次显式确认**）/ http / sse（URL 必填）；每服务可**探测**（列出 tools）、启停、删除。★v1028 前端页签已移除，仅保留 API |
 
 #### 4.1.5 关键功能流程设计
 
@@ -428,8 +456,10 @@ SPA（Vue Router history 模式，单体部署由后端 SPA 回落承接），�
 （代写大纲 / 去补简介 / 强制跳过 / 认可现状…）；G2 期间高危写入 → ApprovalCard。
 
 **⑤ 对话运行与分支**：发消息 → 202+run_id → SSE 流式渲染（token/工具/泳道/计划/用量）→
-run.end 后重拉落库消息合并；「重新生成」/「编辑重发」= 以同一条消息为父建**兄弟分支**，
-消息树 UI 可切换查看各分支；运行中可「停止」（协作式取消）。
+run.end 后重拉落库消息合并（★v1031 重拉同时清空流式缓冲，否则同一条回复会显示两次）；
+运行中可「停止」（协作式取消，★v1031 由发送区的红色停止方块承担）。
+★消息树的**兄弟分支**能力（`POST /agent/sessions/{sid}/branch` + `store.switchBranch`）**后端与 store 保留**，
+但 v1031 起面板已移除「重新生成」入口，故 UI 上暂不暴露分支切换；用户消息的乐观回显带时间戳（`pendingUserMessage` 记 `sentAt`）。
 
 **⑥ 导出成书**：项目右键「导出」→ ExportDialog 选格式（markdown/epub/mobi/txt，mobi 在
 calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后「下载」zip（含大纲原件）。
@@ -441,9 +471,9 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 | store | 职责 |
 | --- | --- |
 | `project` | 项目列表 / 当前项目 / 卷章树（`volumeTree` 按 sort_order 只读排序）/ 展平章序列 `flatChapters`（翻页用）/ 卷 CRUD |
-| `editor` | 打开章的 draft + base_version（乐观锁）/ dirty / 自动保存 / 409 冲突态 `conflict` / 修订快照列表与回滚 / 定稿状态 |
-| `reader` | 模式（read/edit）/ 编辑页签 / 目录抽屉开关 / 当前章或大纲节点 / 夜间模式 / 滚动比例 |
-| `agent` | 会话列表与当前会话 / 已落库消息 + 流式增量合并 / SSE 客户端生命周期 / 运行·取消·重新生成·门禁生成 / 待审批 interrupt 与 consult / todos / 门禁状态 / fileChanged 事件暴露给工作台 / 最近用量 |
+| `editor` | 打开章的 draft + base_version（乐观锁）/ dirty / 自动保存 / 409 冲突态 `conflict` / 修订快照列表与回滚 / 定稿状态 / ★v1031 **回退编辑栈**（`undoStack` 上限 5 条、`canUndo`、`pushUndoSnapshot`/`requestUndo`/`popUndoSnapshot`，换章与 reset 时清空） |
+| `reader` | 模式（read/edit）/ 目录抽屉开关 / 当前章或大纲节点 / 夜间模式 / 滚动比例（★v1029 已无「编辑页签」状态） |
+| `agent` | 会话列表与当前会话 / 已落库消息 + 流式增量合并（★重拉消息树时清空流式缓冲）/ SSE 客户端生命周期 / 运行·取消·追加引导·门禁生成 / 待审批 interrupt 与 consult / todos / 门禁状态 / fileChanged 事件暴露给工作台 / 最近用量 / ★`switchBranch`（分支能力保留，UI 暂无入口） |
 | `settings` | user_settings 加载与保存 / health 自检 / calibre 可用性 |
 
 **通信约定**：
@@ -452,7 +482,7 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
   （40901→ConflictBanner、40902→「运行已结束」提示、42201→命名错误、50301→依赖不可用警告）；
 - `api/sse.ts`（EventSource）：断线自动重连带 `Last-Event-ID`；手动重连走 `?last_event_id=`；
   收到 `error(41001)`（缓冲丢失）回落重拉消息树；
-- `api/index.ts`：81 个端点的类型化封装（与 `types/index.ts` DTO 一一对应）；
+- `api/index.ts`：89 个端点的类型化封装（与 `types/index.ts` DTO 一一对应）；
 - `i18n/index.ts`：全部中文文案集中管理（组件内不写死文案，`t(key)` 取用）；
 - `styles/main.css` + CSS 变量：主题色/字号/字体/页宽由 settings 写入 `:root` 变量即时生效。
 
@@ -519,15 +549,17 @@ calibre 未装时置灰+提示）→ 启动任务显示进度条 → 完成后�
 
 「规则写在多个地方」是这类系统最常见的腐化路径——总有一处忘了加校验。收敛到一处，就没有「忘了」的可能。
 
-#### 4.2.3 顺序为什么不给用户改
+#### 4.2.3 顺序为什么不给用户拖拽
 
-卷章的排列顺序，在很多编辑器里是可以拖拽的。本项目**故意不提供**：没有拖拽、没有「上移/下移」按钮、连 API 都没有 reorder 端点。
+卷章的排列顺序，在很多编辑器里是可以拖拽的。本项目**故意不提供**：没有拖拽、没有「上移/下移」按钮、连 API 都没有 reorder / move 端点。
 
-理由是**顺序只能有一个事实源**。如果大纲里写着章的顺序，卷章树里又能拖出另一个顺序，两者迟早打架，而且没人说得清该信哪个。
+理由是**顺序只能有一个事实源**。如果同一个卷章树存在两种改顺序的途径（拖拽 + 别的写入），两者迟早打架，而且没人说得清该信哪个。
 
-本项目的做法：**大纲是顺序的唯一来源**。你在大纲里调整 `# 卷` / `## 章` 的先后，保存后系统自动把顺序回填到卷章树（提示「已同步 x 卷 / y 章顺序」）。界面上那句「顺序由大纲决定」+「去大纲调整」按钮，就是把这个设计讲给用户听。
+本项目的做法（★v1029 调整）：**「插入」是唯一的位置编辑入口**。新建卷/章时可以指定序号，插入到第 k 位则第 k 位及其后各项顺延 +1；删除后其后各项重新连续编号。位置在创建那一刻就确定，之后只能靠插入新的卷章来「挤」出空间，不能拖着改。
 
-而且回填**不产生修订快照、不递增 version**——顺序是元数据，不是正文变更，不该和乐观锁、自动保存互相干扰。
+> v1029 之前顺序由大纲小节先后派生（保存大纲回填 `sort_order`）。实测下来这条链路对用户是黑盒——大纲改一个字，卷章树顺序就变了，还容易产生「大纲有、树里没有」的漂移。所以 v1029 把**大纲降级为参考资料**（仍是 AI 生成正文的重要依据），顺序改由插入维护；`sync_order_from_outline` 保留为只读诊断（报告大纲与实际结构的差异，不写盘）。
+
+插入序号本身是**元数据**而非正文变更，所以调整序号不产生修订快照、不递增 `version`，避免和乐观锁、自动保存互相干扰。
 
 这条约束还被写成了代码里的守卫函数 `assert_no_manual_reorder()`，配套测试断言「禁止出现的函数名」与模块实际导出**无交集**。谁想加个 reorder 接口，测试会先失败。
 
@@ -578,7 +610,7 @@ SSE 还会断线（切后台、网络抖动），所以每个 run 在服务端�
 
 理由很朴素：默认名会让工作区文件名、大纲标题、导出成品全都变成一堆无法区分的垃圾，而这些名字一旦生成就散落在文件系统各处，事后清理成本极高。与其事后治理，不如在入口拦住。
 
-同一思路下，项目里还有几条「宁可让用户多点一下，也不留隐患」的约束：MCP 的 stdio 命令保存前要**弹窗展示完整命令二次确认**；密钥只写 `.env` 不进数据库，界面只显示 `sk-****abcd`。
+同一思路下，项目里还有几条「宁可让用户多点一下，也不留隐患」的约束：MCP 的 stdio 命令保存前要**弹窗展示完整命令二次确认**；密钥只写**系统级环境变量**（v1029 起；`.env` 已于 v1031 续移除）不进数据库，界面只显示 `sk-****abcd`。
 
 ### 4.3 Agent + Harness 设计
 
@@ -869,12 +901,12 @@ AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **La
 
 | 模块 | 实现要点 |
 | --- | --- |
-| `config.py` | pydantic-settings 读 `.env`（`extra="ignore"`）；`get_settings()` 进程内 `lru_cache` 单例；`data_root` / `db_path` / `agent_state_path` 派生属性；`langfuse_enabled` = 两 Key 均非空。**配置版本是进程级单调计数器** `current_config_version()`（`/config/reload` 时 +1，使 Agent 工厂缓存失效；★不随 Settings 重载归零） |
+| `config.py` | pydantic-settings（环境变量优先；`.env` 仅历史兼容、可不存在）；★v1031 续 **Langfuse 三项改读根目录 `config.ini` 的 `[langfuse]` 段**（`default_factory` + `reload_settings` 重读）；`get_settings()` 进程内 `lru_cache` 单例；`data_root` / `db_path` / `agent_state_path` 派生属性；`langfuse_enabled` = 两 Key 均非空。**配置版本是进程级单调计数器** `current_config_version()`（`/config/reload` 时 +1，使 Agent 工厂缓存失效；★不随 Settings 重载归零） |
 | `errors.py` | `ErrorCode` 常量 + `CODE_TO_HTTP` / `CODE_TO_MESSAGE` 双映射；`ApiError` 基类携 `code/message/data`，`http_status` 属性查表；8 个子类（`BadRequestError` / `ForbiddenError` / `NotFoundError` / `VersionConflictError` / `NamingInvalidError` / `OutlineParseError` / `DependencyUnavailableError` / `LlmProviderError`） |
 | `response.py` | `ok(data)` → `{code:0, message:"success", data}` |
 | `logging.py` | structlog JSON 输出；**processor 对键名匹配 `key\|token\|secret` 的字段自动掩码**；按日期轮转写 `data/logs/{app,error,audit}-{date}.jsonl` |
 | `paths.py` | 路径解析集中地：`data_root()` / `workspace_dir()` / `chapters_dir()` / `volume_dir()` / `chapter_file()` / `outline_dir()` / `summaries_dir()` / `skills_root()` / `session_skills_dir()` / `exports_root()` / `trash_root()`；`safe_filename()`（替换 Windows 非法字符 `\/:*?"<>\|` + 压缩空白）→ `outline_filename()` = `{名}-大纲.md`；`write_text()` / `read_text()` 统一 utf-8 写入口。另含 `BUILTIN_SKILLS_DIR` 路径常量（指向 `agent/skills/`，下沉此处以消除 services→agent 反向依赖） |
-| `security.py` | `get_api_key(env_name)`（读取 + 缺失检测）、`mask(key)` → `sk-****abcd`、`set_env_key(env, value)`：UI 保存密钥时写回 `.env`，**只允许白名单键**（`*_API_KEY`、`LANGFUSE_*`），流程为「读全文 → 替换/追加目标键 → 临时文件 + `os.replace` 原子写 → 写前备份 `.env.bak`」+ 进程内互斥锁 |
+| `security.py` | `get_api_key(env_name)`（查找顺序：进程环境 → 系统级存储 → 历史 `.env` 回落）、`mask(key)` → `sk-****abcd`、`is_valid_secret_key_name`（★v1029 变量名任意，仅挡非法字符与配置键重名）；密钥写入走 `system_env.system_env_set`（Windows 注册表 HKCU / 类 Unix `~/.ai-writer-pro/env.json` 0600）+ 回填进程环境 |
 | `deps.py` | FastAPI 依赖注入：`get_session()` 提供 AsyncSession |
 | `catalog.py` | Agent 内置目录数据的**惰性访问器**：`builtin_subagents()` / `builtin_subagent_names()`。core 在模块加载期不触碰 agent，只在运行期解析 → import 图保持无环 |
 
@@ -898,15 +930,16 @@ AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **La
 关键约束编码在 DTO 上：`ContentIn.base_version` 是 `Field(ge=1)` **必填**（乐观锁）；
 `RewriteIn.mode` 是 `Literal["rewrite","expand","condense","polish"]`、`selected_text` 限
 `min_length=1, max_length=8000`；`LlmProviderCreate.type` 是 `Literal[_PROVIDER_TYPES]`
-（6 种厂商类型）；★**没有任何 reorder / move 相关 DTO**（顺序是大纲派生值）。
+（6 种厂商类型）；★**没有任何 reorder / move 相关 DTO**（顺序由「插入」维护，插入位置即最终位置）。
 
-### 5.4 `services/` —— 业务编排（16 模块）
+### 5.4 `services/` —— 业务编排（17 模块）
 
 | 模块 | 实现要点 |
 | --- | --- |
-| `novels.py` | 项目 CRUD。**创建必须显式命名**（`validate_novel_title`，违规 42201）+ 初始化工作区 + 写入大纲模板文件；软删除移工作区到 `trash/{pid}-{ts}/`；重命名是**事务**：同步重命名 outline 文件 + 更新 `novel.yaml.title/outline_file` + `novels.title/outline_file`（DB 值是文件值的缓存），任一步失败整体回滚；`refresh_project_index()` 刷新派生统计 |
-| `volumes.py` | 卷章 CRUD + 正文读写（乐观锁）+ 修订快照与回滚。★**无任何 reorder / move 函数**，并有 `assert_no_manual_reorder()` 设计守卫（测试断言 `forbidden` 集合与 `globals()` 无交集）。写入流程：比对 `base_version` 与文件 frontmatter `version` → 不符抛 `VersionConflictError`（409/40901，`data` 含最新 content/version/updated_at/last_writer）→ 符合则按策略快照（手动保存/Agent 写前/章节定稿快照；**自动保存不快照**，防版本爆炸）→ `version += 1` → `_prune_revisions` 保留最近 `chapter_revision_keep`(20) 条 |
-| `story.py` | 大纲读写 + `sync_order_from_outline`（★卷章 `sort_order` **唯一写入口**）+ 章节定稿。顺序回填规则：按卷节 H1 先后写 `volumes.yaml.sort_order`(1..N)，按各卷下章简介 H2 先后写章节 frontmatter `sort_order`（卷内 1..N）；匹配以归一化后「卷名+章名完全一致」为准；大纲未出现的卷/章保持原值并追加末尾（validate 给警告）；★回填**不产生修订快照、不递增 version**（顺序是元数据而非正文变更，避免与乐观锁/自动保存互相干扰） |
+| `novels.py` | 项目 CRUD。**创建必须显式命名**（`validate_novel_title`，违规 42201）+ 初始化工作区 + 写入大纲模板文件；软删除**先归档回收站**（★v1031 `recycle.archive_novel`，登记 `novel_deleted=true` + `trash_dir`）再移工作区到 `trash/{pid}-{ts}/`；重命名是**事务**：同步重命名 outline 文件 + 更新 `novel.yaml.title/outline_file` + `novels.title/outline_file`（DB 值是文件值的缓存），任一步失败整体回滚；`refresh_project_index()` 刷新派生统计 |
+| `volumes.py` | 卷章 CRUD + 正文读写（乐观锁）+ 修订快照与回滚。★v1029 起**卷章顺序由插入维护**（无 reorder / move 函数，但有 `assert_no_manual_reorder()` 设计守卫，测试断言 `forbidden` 集合与 `globals()` 无交集）：新建卷/章可指定插入位置，该位置及其后各项 `sort_order` 顺延；删章后卷内重新连续编号、删空卷则连卷一起移除。★v1031 删除卷/章**先归档回收站**（`recycle.archive_chapter`）再落盘删除。写入流程：比对 `base_version` 与文件 frontmatter `version` → 不符抛 `VersionConflictError`（409/40901，`data` 含最新 content/version/updated_at/last_writer）→ 符合则按策略快照（手动保存/Agent 写前/章节定稿快照；**自动保存不快照**，防版本爆炸）→ `version += 1` → `_prune_revisions` 保留最近 `chapter_revision_keep`(20) 条 |
+| `recycle.py` | ★v1031 回收站。**最多 20 本**小说（`MAX_NOVELS`，超出按最旧淘汰）。数据落 `data/recycle/{project_id}/`（`index.yaml` 索引 + `chapters/c{id}.md` 正文快照）。章级删除归档 md + 追加 index；整本删除只置 `novel_deleted=true` + 记 `trash_dir`（正文留在 `data/trash/{pid}-{ts}/`，浏览时按需读取）。`restore_chapter`：若该本已整本删除，先把工作区搬回并把 `novels.status` 翻回 `active`（连大纲/项目一起复原），再重建卷章；`purge_chapter`：从归档移除，彻底删除；★v1031 续：**卷章被删干净 → 该本小说也从回收站彻底删除**（整本被删的连 trash 工作区一并清除；列表时对「trash 已无章节」的脏条目自动剪枝） |
+| `story.py` | 大纲读写 + 校验。**★v1029：大纲是参考资料而非结构约束**——它是 AI 生成正文的重要来源，但**不再回填卷章 `sort_order`**（顺序改由 `volumes.py` 的插入维护）。`sync_order_from_outline` 保留为**只读校验/诊断**入口（报告大纲与实际结构的差异，**不写盘**），供「大纲校验」与 Agent 改大纲后的提示使用；章节定稿逻辑在此 |
 | `outline.py` | `parse_outline()` **严格层级解析**：H1 用 `^#(?!#)\s+(.*)$`（`#` 后不接 `#`），H2 用 `^##(?!#)\s+(.*)$`，H3+ 忽略。★宽松正则会把 `## 第三章 卷土重来` 误判为卷节，故必须严格。H1 中匹配 `^附录` 的为附录节（不参与章匹配），其余为卷节；章简介小节按行解析 `- 简介：`（必需）与 `- 衔接要点：`（可选）；`normalize_title()` 归一化：去首尾空白 → 全角空格转半角 → 压缩连续空白 → 去序数词前缀（`第X卷/章/回/节`，X 支持阿拉伯与中文数字）→ 去标点（`·、,，.。:：-—`）；`render_template()` 生成创建时的大纲模板 |
 | `search.py` | FTS5 检索：`bigram_tokenize` 处理查询词（★查询侧必须用与索引侧同一函数，否则永远查不到）+ `MATCH` + `bm25()` 排序 + `project_id` 过滤；异常/不可用降级 `LIKE '%q%'`（返回结构不变，`data.degraded=true`）；`reindex_project()` 全量重建（数据源 = 大纲单文件 + `summaries/`）；`rebuild_summaries()` 先补 LLM 摘要再重建索引 |
 | `exporters.py` | 4 种格式导出为 zip：markdown（分卷分章）/ txt（自研拼接，不依赖外部工具）/ epub（自研生成器：`mimetype` + `META-INF/container.xml` + `content.opf` + `nav.xhtml` + 各章 xhtml，markdown 段落转 xhtml）/ mobi（EPUB 产物经 **calibre `ebook-convert`** 转换，`find_calibre()` 探测 `shutil.which` + Windows 常见安装路径，带超时；未装则 `50301` 置灰）。异步任务模型：`create_task` → 后台线程 `run_export` → 轮询 `GET /export-tasks/{id}` → `download`。zip 内附 `manifest.json` + 大纲原件 |
@@ -914,7 +947,7 @@ AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **La
 | `workspace.py` | ★`WorkspaceGuard`：**服务层唯一文件写入口**。6 条规则：① 入参接受工作区相对路径，内部换算宿主路径；② `resolve()` 归一化后必须严格落在白名单根内（`workspaces`/`skills`/`exports`/`trash`/`logs`），否则 `ForbiddenError`(403/40301)；③ 拒绝含 `..` 的路径、**逐段检查**符号链接解析后是否越界；④ 跨项目写一律拒绝；⑤ `summaries/` 只允许 `summarize_chapter` 写（`allow_summaries=True` 显式放行）；⑥ 写入成功后同步更新派生索引 |
 | `naming.py` | `validate_novel_title()` / `validate_volume_title()` / `validate_chapter_title()`：拒绝空名、默认名（「未命名小说」「第 1 卷」）、纯序号名 → 42201 |
 | `audit.py` | `record(session, action, entity_type, entity_id, detail)`：写 `audit_logs` 表 + JSONL 备份（双写） |
-| `llm.py` | Provider/Model CRUD + 连接测试 + 降级链解析 + `/config/reload`（重读 `.env` + `bump_config_version` + `invalidate_model_cache` + `reset_client`）。密钥经 `security.set_env_key` 写 `.env`，DB 只存 `api_key_env`；响应回 `api_key_masked` |
+| `llm.py` | Provider/Model CRUD + 连接测试 + 降级链解析 + `/config/reload`（重读配置 + `bump_config_version` + `invalidate_model_cache` + `reset_client`）。密钥经 `system_env.system_env_set` 写**系统级环境变量**（★v1029 起；`.env` 于 v1031 续移除），DB 只存 `api_key_env`；响应回 `api_key_masked` |
 | `agent.py` | Agent 业务规则：会话 CRUD（严格按 `project_id` 隔离，默认标题按现有会话数派生）、会话级上下文（model_ref / subagent_ids / skill_ids / context_chapter_ids，变更落审计）、`load_message_tree` / `switch_branch`（经 `agent.memory`）、`run_dto`、`resolve_interrupt`（审批与咨询**统一入口**）、数据访问（`list_sessions` / `list_tool_calls` / `require_session` / `project_word_count`）。★运行编排（astream/SSE）不在这里，在 `agent/loop/runner.py` |
 | `skills.py` | `skill_configs` CRUD + **物化**到 `data/skills/{name}/SKILL.md`（frontmatter `name` 必须等于目录名、`description` ≤1024、SKILL.md ≤10MB）；改名迁移目录；停用移除物化；`/skills/resync` 一致性修复；与内置技能重名拒绝；`materialize_session_skills()` 把会话选中的技能物化到 `data/session-skills/{sid}/`（内置从包内复制，用户技能从 `data/skills/` 或 DB `content_md` 复制）。`list_skills()` DTO 带 `kind`（`tool`=Agent 基础工具 / `writing`=写作技能）与 `tool_name`；★v1030 `include_builtin_writing=True` 才追加包内 8 个写作技能（`builtin:{name}` id），供会话级「工具添加」浮层勾选——「AI 工具 → 技能管理」页仍只看基础工具 |
 | `subagents.py` | `subagent_configs` CRUD + `seed_builtins()`（幂等：按 name 跳过，**不覆盖用户改动**）+ `reset_builtin()`（恢复出厂：提示词/描述/mode/skills/model_ref）。校验：`name` 小写字母开头 + 仅小写字母数字连字符 + ≤64；`mode=fork` 时 `skills_json` 必须为空（deepagents 实测会抛错）；内置不可删除（可停用） |
@@ -923,8 +956,8 @@ AI 应用最难的是「效果不好但不知道哪不好」。本项目接 **La
 
 ### 5.5 `api/` —— 路由层
 
-14 个模块与 services **同名配对**（agent / audit / llm / mcp / novels / outline / skills / story /
-subagents / volumes + chapters / settings / widgets / health），分层命名一致、无缩写。
+15 个模块与 services **同名配对**（agent / audit / llm / mcp / novels / outline / recycle /
+skills / story / subagents / volumes + chapters / settings / widgets / health），分层命名一致、无缩写。
 
 `api/agent.py` 是唯一持有 Agent 运行入口的模块（`run_manager` + `sse_bus`），其 SSE 端点实现：
 读 `Last-Event-ID` 请求头（EventSource 自动重连）或 `?last_event_id=`（手动重连，EventSource
@@ -945,7 +978,7 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 | 模块 | 实现 |
 | --- | --- |
 | `factory.py` | `resolve_model_ref()` 解析 `"{provider_id}:{model_id}"` → (provider 行, model 行)；`build_chat_model()` 按 `provider.type` 装配 6 种 ChatModel（`openai_compatible` → `ChatOpenAI(base_url=...)`，`openai` → `ChatOpenAI`，`anthropic` → `ChatAnthropic`，`google` → `ChatGoogleGenerativeAI`，`azure_openai` → `AzureChatOpenAI`，`openrouter` → `ChatOpenAI(base_url=openrouter)`）；`_KNOWN_BASE_URLS` 为 6 家常见厂商提供 `base_url` 兜底；密钥经 `security.get_api_key(provider.api_key_env)` 读取（未配置 → `LlmProviderError` 50201）；**LRU 缓存**按 `(model_ref, config_version)` 为键，上限 32 条，`invalidate_model_cache()` 清空；`get_default_chat_model()` 取 `is_default` 模型；`get_fallback_chain()` 解析有序降级链；`provider_key_status()` 报告密钥配置状态；`register_model_override()` / `clear_model_overrides()` 供测试注入假模型 |
-| `params.py` | **四层参数覆盖**（后者覆盖前者，未设置项逐层回落）：① 全局默认（`.env` + `llm_models.default_params_json`）② 小说项目级（`novel.yaml.llm_params`）③ 会话级（`agent_sessions.model_ref` 等）④ 单条消息级（发消息 body 的 `model_ref`，仅本次 run 生效、不回写会话）。支持 `temperature / max_tokens / top_p / timeout / max_retries / stream / extra_body` |
+| `params.py` | **四层参数覆盖**（后者覆盖前者，未设置项逐层回落）：① 全局默认（`Settings` + `llm_models.default_params_json`）② 小说项目级（`novel.yaml.llm_params`）③ 会话级（`agent_sessions.model_ref` 等）④ 单条消息级（发消息 body 的 `model_ref`，仅本次 run 生效、不回写会话）。支持 `temperature / max_tokens / top_p / timeout / max_retries / stream / extra_body` |
 | `budget.py` | token 预算：预算 = `max_context × 阈值(默认 0.5)`；`budget_report(current_tokens)` 产出 `{used, budget, ratio, need_compact}`，供 `RecapInjectionMiddleware` 与前端 `context.compact` 事件使用；计数默认 `count_tokens_approximately`，可切 `tiktoken` |
 | `rewrite.py` | 选区 AI 改写（**服务层直连 ChatModel，不进 Agent 循环**——单次转换无需工具与多轮，同门禁 G1/G3）。四模式各有提示词要求；选区 ≤8000 字符；上下文前后各截 600 字；SystemMessage 强制「只输出处理后正文，绝不输出解释/标题/引号包裹」；`_strip_wrappers()` 剥离模型可能包裹的代码块/前缀/成对引号（★中文引号是**不对称对** `“ ”`/`「 」`/`『 』`/`‘ ’`，不能用首尾相等判断）；返回原文 + 改写文 + 字数对比，**不落盘**（前端 diff 预览后由用户「接受」再走 `PUT content`） |
 
@@ -973,7 +1006,7 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 | --- | --- | --- |
 | `RecapInjectionMiddleware` | `abefore_model` | 调 `recap_provider` 把前情提要追加到 system 提示；token 预算检查（超阈值发 `context.compact`）；敏感内容检查**仅预留挂载位**（`_check_sensitive`，MVP 不实现） |
 | `WorkspaceGuardMiddleware` | `awrap_tool_call` | **第二道**路径防线（permissions 是第一道，但只作用于内置文件工具，自定义工具/MCP 不在其覆盖范围）：`_TOOL_OPERATION` 把 7 个文件工具映射到 read/write（★`delete` 归 write）→ `WorkspaceGuard` 校验 → 审计埋点（写 `tool_call_logs`：status/duration_ms/result_excerpt/error）→ 发 `tool.start` / `tool.result`（含 `denied` 态）→ **错误指纹记忆与阻断**（自研，内置中间件无此能力）：对 `(tool_name, args_hash, error_fingerprint)` 计数，`_WARN_AFTER=2` 次注入告警 ToolMessage，`_BLOCK_AFTER=3` 次直接阻断该调用路径 |
-| `FileChangeNotifyMiddleware` | `awrap_tool_call`（工具成功后） | 发 SSE `file.changed`（`virtual_path` / `change_kind`(write\|edit\|delete) / `chapter_id`）供前端热更新正文与目录树 + 触发派生索引同步（`refresh_project_index` / `reindex_project`）；★**变更目标为大纲文件时额外触发 `sync_order_from_outline`**（卷章顺序回填） |
+| `FileChangeNotifyMiddleware` | `awrap_tool_call`（工具成功后） | 发 SSE `file.changed`（`virtual_path` / `change_kind`(write\|edit\|delete) / `chapter_id` / `is_outline`）供前端热更新正文与目录树 + 触发派生索引同步（`refresh_project_index` / `reindex_project`）；★v1029 起**改大纲不再回填卷章顺序**（大纲是参考资料），只重建检索索引与项目统计 |
 | `WriteApprovalMiddleware` | `awrap_tool_call` | **参数级** HITL（`interrupt_on` 只能做工具级开关，无法按参数判定）。`classify_risk()` 三类高危：① `write_file` 目标是**已存在的非空章节文件**且新旧内容不同（`overwrite_threshold=200`）→ 整章覆盖；② `edit_file` 的 `old_string`/`new_string` 超 `edit_threshold=800` 字符 → 大范围改写；③ `delete` 任何项目内文件/目录 → 不可逆。命中则调 `langgraph.types.interrupt({kind:"writer_approval", tool_name, args, risk, reason, decisions})`。恢复语义四决策：`approve` 原样执行 / `edit` 用 `edited_args` 替换参数后执行 / `reject` 不执行并向模型返回「用户拒绝」ToolMessage / `respond` 不执行并把用户补充说明回给模型。`virtual_to_host()` 仅用于**只读**探测（拒绝含 `..`） |
 
 #### `gates/` —— 四阶段门禁
@@ -1015,16 +1048,17 @@ subagents / volumes + chapters / settings / widgets / health），分层命名�
 | --- | --- |
 | `api/sse.ts` | EventSource 封装：自动重连带 `Last-Event-ID`；手动重连走 `?last_event_id=`（EventSource 无法自定义 header）；收到 `error(41001)` 时回落重拉 `GET /agent/sessions/{sid}/messages` 重建消息列表 |
 | `api/http.ts` | axios 封装：统一拆 `{code,message,data}`；按 `code` 分发（40901 → 触发 ConflictBanner；40902 → 提示运行已结束；42201 → 命名错误提示） |
-| `components/agent/AgentPanel.vue` | 会话面板：会话列表（按项目隔离）+ 消息流（含分支切换）+ 输入区 + **上下文 Chips 选择器**（子代理/技能/已读章节三类，含「＋当前章」快捷，增删即 `PATCH /context` 持久化，会话切换时回填）+ 模型切换（单条消息级覆盖）+ 打断/重新生成/复制/导出会话 |
-| `components/editor/TiptapEditor.vue` | Tiptap（ProseMirror）：StarterKit + CharacterCount + Placeholder；自动保存（`autosave_interval_sec`，不产生快照）；保存走 `PUT content` 携 `base_version` |
+| `components/agent/AgentPanel.vue` | 会话面板：会话列表（按项目隔离）+ 消息流（含分支切换）+ 输入区 + **上下文 Chips 选择器**（子代理/技能/已读章节三类，含「＋当前章」快捷，增删即 `PATCH /context` 持久化，会话切换时回填）+ 工具添加浮层（ToolsPicker）+ 模型切换（★v1031 记忆上次所用模型，`localStorage` 且需仍在可用列表内，否则回落默认）+ ★v1031 三态发送按钮（空闲=发送箭头 / 运行中且输入框空=红色停止方块 / 运行中且有输入=追加引导消息）+ 打断/复制（★已移除重新生成与导出会话） |
+| `components/editor/TiptapEditor.vue` | Tiptap（ProseMirror）：StarterKit + CharacterCount + Placeholder；自动保存（`autosave_interval_sec`，不产生快照）；保存走 `PUT content` 携 `base_version`；★v1031 **回退编辑**：800ms 防抖把连续输入并成一个撤销点，入 `editor` store 的栈（**最多 5 条**），AI 改写「接受」与 AI 标记回滚前先落一个撤销点 |
 | `components/editor/aiSourceMark.ts` | Tiptap Mark 扩展：标记 AI 生成/改写的文本，**点击可回滚为原文** |
 | `components/editor/RewriteDiffDialog.vue` | 选区改写 diff 预览：**句级 LCS diff** 高亮（增/删/改三色），用户「接受」才落盘 |
 | `components/editor/ConflictBanner.vue` | 409/40901 时弹出：展示服务端最新 content/version/updated_at/**last_writer**(manual\|agent)，让用户选「查看 diff 合并」或「强制覆盖」（强制覆盖需再次带最新 `base_version`） |
 | `components/agent/GateStatusBar.vue` | 订阅 `gate.update` 渲染 G0→G3 阶段流转 + 重试计数 + 各阶段判定摘要 |
 | `components/agent/ApprovalCard.vue` | 渲染 `interrupt.request`：工具名 + 参数 + 风险说明 + 四决策按钮（批准/编辑后批准/拒绝/回复补充），`edit` 时参数可编辑，`reject`/`respond` 时可填说明 |
 | `components/agent/ConsultCard.vue` | 渲染 `consult.request`：问题 + `options` 选项按钮 + 自由输入框（`allow_text`），回复走同一 resolve 接口（`decision=option\|text`） |
-| `components/sidebar/WeatherWidget.vue` | 宠物**两态**动画（写作中敲键盘 / 久无进展打瞌睡，阈值 `pet_idle_minutes`）+ 城市 + 当前天气。★浏览器定位需 HTTPS 或 localhost 且用户可拒绝 → 拒绝/失败/超时回落 `user_settings.city` → 再失败只显示宠物与占位天气；**坐标不入库、不写审计** |
-| `components/editor/VolumeChapterTree.vue` | 卷章树，★**只读顺序**（无拖拽、无上移下移按钮）——顺序是大纲派生值 |
+| `components/sidebar/WeatherWidget.vue` | 宠物**两态**动画（写作中敲键盘 / 久无进展打瞌睡，阈值 `pet_idle_minutes`）+ 城市 + 当前天气（★v1031：天气描述与 AQI 同行基线对齐，去掉城市悬停提示）。★浏览器定位需 HTTPS 或 localhost 且用户可拒绝 → 拒绝/失败/超时回落 `user_settings.city` → 再失败只显示宠物与占位天气；**坐标不入库、不写审计** |
+| `components/editor/EditorActionBar.vue` | ★v1029 编辑模式右上的卷章结构操作条：往前/往后插入卷、往前/往后插入章节、重命名、删除。插入规则：大纲节点只能「往后插入卷」（大纲在最前）；插入章节需先定位到某一章；插入卷**必须同时给出第一章章节名**（★不支持空卷）；序号自动推算（大纲节点插卷=第 1 位），★v1031 弹窗不再显示标题与提示文案 |
+| `components/common/RecycleBin.vue` | ★v1031 回收站抽屉（ReaderToolbar 入口）：两级浏览（小说列表 → 卷章树），点章节弹「回收 / 删除」二次确认（回收=恢复到原位置，删除=彻底移除）；整本已删时任一章恢复会连带恢复项目与大纲 |
 
 ---
 
@@ -1080,7 +1114,7 @@ loop/streaming.py：逐 chunk 映射为 SSE
   ModelRetry → ModelFallback → ModelCallLimit → TodoList → Summarization
   → RecapInjection（注入前情提要 + 预算检查 → context.compact）
   → WorkspaceGuard（路径校验 + 审计 + tool.start/tool.result + 错误指纹阻断）
-  → FileChangeNotify（file.changed + 同步派生索引；改大纲则触发 sync_order_from_outline）
+  → FileChangeNotify（file.changed + 同步派生索引；★v1029 改大纲只重建索引，不再回填顺序）
   → WriteApproval（参数级高危写入 → interrupt）
   ▼
 loop/lifecycle.py：finalize 收尾（agent_runs 汇总 + 会话状态 + 刷新字数索引 + Langfuse score）
@@ -1222,14 +1256,14 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
                         │
                         ▼
         FileChangeNotifyMiddleware 发 file.changed → 前端热更新正文与目录树
-        （变更目标是大纲文件 → 额外触发 sync_order_from_outline 回填卷章顺序）
+        （★v1029：变更目标是大纲文件 → 只重建检索索引与项目统计，不再回填卷章顺序）
 ```
 
 ### 6.7 消息树双轨持久化
 
 ```
 ① 业务库（app.db）：messages / tool_call_logs / agent_runs
-   用途：前端渲染、审计、导出会话
+   用途：前端渲染、审计（★v1031 起「导出会话为 Markdown」已从 UI 移除，落库数据仍完整可导出）
    写入：message_sync.MessageSyncer 按索引基线增量同步 graph state
 
 ② LangGraph checkpoint（agent_state.db）：AsyncSqliteSaver
@@ -1324,7 +1358,7 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
 
 | 面 | 措施 |
 | --- | --- |
-| **密钥** | API Key **只存 `.env`**，DB 仅存 `api_key_env`（变量名引用）；UI 展示掩码 `sk-****abcd`；写回走**白名单键**（`*_API_KEY`、`LANGFUSE_*`）+ 临时文件 `os.replace` 原子写 + `.env.bak` 备份 + 进程内互斥锁；日志 processor 对 `key`/`token`/`secret` 字段自动掩码 |
+| **密钥** | API Key **只存系统级环境变量**（★v1029 起；`.env` 于 v1031 续移除，仅保留读取回落兼容历史密钥），DB 仅存 `api_key_env`（变量名引用，变量名任意）；UI 展示掩码 `sk-****abcd`；Windows 写 `HKCU\Environment`、类 Unix 写 `~/.ai-writer-pro/env.json`（0600）+ 派生 shell 文件；共用保护（被多个 Provider 引用时不删）+ 换名清理孤儿键；日志 processor 对 `key`/`token`/`secret` 字段自动掩码 |
 | **文件越权** | 两道防线：① deepagents `permissions`（8 条有序规则，作用于内置文件工具）② `WorkspaceGuardMiddleware` + `services/workspace.WorkspaceGuard`（覆盖自定义工具/MCP，`resolve()` 归一化 + 白名单根约束 + 逐段符号链接检查 + 拒绝 `..` + 跨项目拒绝） |
 | **命令执行** | ★`execute` **不开放**：用 `FilesystemBackend` 时 `supports_execution()` 返回 False，deepagents 自动把 `execute` 从模型可见工具中移除。禁用 `LocalShellBackend`/`LangSmithSandbox`（会激活执行且与 permissions 冲突抛 `ValueError`） |
 | **stdio MCP** | 等价「受限的任意命令执行」→ 三重约束：可执行文件**白名单**（`npx`/`uvx`/`python`，拒绝任意路径命令）+ 用户**二次显式确认**（`mcp_servers.confirmed_at`，展示完整命令）+ **命令全文落审计**。默认不预置任何第三方 stdio MCP |
@@ -1396,8 +1430,9 @@ run 置 cancelled + ended_at，会话回 idle → 发 run.end({"status":"cancell
   parent = 该消息 id；恢复时中断前消息已全部落库 → 基线 = 当前 state 长度、parent = 会话 `active_leaf_id`；
 - **未完成消息不落库**：`status=="streaming"` 或（无内容且无 tool_calls）视为未完成，留待下次 sync；
   中断时 `force=True` 强制落库已产生的消息；
-- **分支语义**：`parent_id + branch_index`，「重新生成」= 同父兄弟分支，「编辑用户消息后重发」= 新建分支；
+- **分支语义**：`parent_id + branch_index`，同父下新增消息即成兄弟分支；
   构造 LLM 上下文时**只取 `root → active_leaf` 的活跃路径**；
+  ★v1031 面板移除了「重新生成」按钮，分支机制与 `switchBranch` 接口保留（后端能力不减）；
 - **checkpoint 体积**：`DeltaChannel(snapshot_frequency=50)` 增量存储 → O(N) 而非 O(N²)；
 - **checkpointer 必须进程内单例**：aiosqlite 连接须长生命周期持有（每个 run 重开会丢中断态）；
   `asyncio.Lock` + 双检；`DATA_ROOT` 变化时自动重开（★否则测试会串库）。
@@ -1450,7 +1485,8 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | 自动保存与 Agent 写同一章互相覆盖 | 正文**乐观锁**（`base_version` + 409/40901，`data` 回传最新内容与 `last_writer`）+ 前端 `ConflictBanner` 合并选择；Agent 写入前快照 `chapter_revisions(source="agent")`；`file.changed` 事件驱动前端提示「本章已被 AI 修改」 |
 | 修订快照爆炸 | **自动保存不快照**（`is_autosave`）；只有手动保存/Agent 写章前/章节定稿才快照；`_prune_revisions` 保留最近 20 条 |
 | Agent 改文件与派生索引不一致 | 文件为内容事实源；写入后**同步**更新派生索引，失败标 `project_index.dirty` 并告警；`writer rebuild-index` / `POST /novels/{id}/index/rebuild` 全量重建 |
-| **卷章顺序双源漂移**（大纲小节先后 vs `sort_order`） | ★**顺序只由大纲派生**：唯一写入口 `sync_order_from_outline`；前端无拖拽/上移下移，后端无 `reorder`/`move`（并有 `assert_no_manual_reorder()` 守卫 + 测试断言路由不存在）；章不可跨卷移动；★回填**不产生快照、不递增 version**（顺序是元数据而非正文变更，避免与乐观锁/自动保存互相干扰） |
+| **卷章顺序双源漂移**（大纲小节先后 vs `sort_order`） | ★v1029 起**大纲降级为参考资料**（不再回填 `sort_order`），顺序只有「插入」一个写入口：插入到第 k 位则该位及其后顺延 +1、删除后重新连续编号；前端无拖拽/上移下移，后端无 `reorder`/`move`（并有 `assert_no_manual_reorder()` 守卫 + 测试断言路由不存在）；章不可跨卷移动；`sync_order_from_outline` 仅作只读诊断（不写盘）；★序号调整**不产生快照、不递增 version**（顺序是元数据而非正文变更，避免与乐观锁/自动保存互相干扰） |
+| **误删章节/整本不可挽回** | ★v1031 **回收站**：`services/recycle.py` 在删除落盘**之前**先归档到 `data/recycle/{project_id}/`（`index.yaml` + `chapters/c{id}.md`），最多保留 20 本（超出按最旧淘汰）；整本删除登记 `novel_deleted=true` + `trash_dir`（正文留在 `data/trash/{pid}-{ts}/`，浏览时按需读取，不复制）；恢复任一章时若整本已删则先把工作区搬回并把 `novels.status` 翻回 `active`（连项目与大纲一起复原），再重建卷章；「彻底删除」才真正移除归档；★v1031 续：**卷章删干净后该本小说自动从回收站彻底删除**（含 trash 工作区），不留空条目 |
 | 同一 run 被 resolve 与进行中的任务并发写同一 thread | `RunManager._spawn` 用 **per-run `asyncio.Lock`** 串行化 |
 | 小说重命名与大纲文件名耦合（`{title}-大纲.md`） | 重命名是**事务**：同步重命名 outline 文件 + 更新 `novel.yaml.title/outline_file` + `novels.title/outline_file`（DB 值是文件值的缓存），任一步失败整体回滚；`outline_file` 为唯一寻址依据 |
 
@@ -1530,7 +1566,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | `agent/` 各 `__init__.py` 实现外提到具名模块 | 12 个子包**风格统一**（`__init__` 一律纯 re-export），找代码时可预期实现落点 |
 | `schemas/`（424 行）与 `db/models/`（335 行）按域拆 4 文件 | 可发现性提升；`__init__` re-export 使既有 `from app.schemas import X` 写法零改动 |
 | `services → agent` import | **9 → 6 处**（余下为 LLM/MCP/可观测基础设施 + 2 处文档化能力型例外） |
-| 函数内延迟导入 | **172 → 161 处**（大头需消环后才能继续上提到模块顶层） |
+| 函数内延迟导入 | **161 → 86 处**（★v1031 续：批量上移非环、非受控导入到模块顶层；余下 85 处是 `try:` 内的**可选/平台依赖守卫**（tiktoken、各 langchain provider SDK、winreg、langfuse 等，上移会破坏缺依赖降级）+ 1 处成环延迟导入（`builder → runner`）） |
 
 **明确保留的现状**：`agent/llm/factory.py`、`agent/mcp/adapter.py`、`agent/tracing/` 仍在 `agent/` 内。
 彻底消环需把它们下沉到 `core/`，但那会把 Agent 基础设施迁出 `agent/`，
@@ -1538,9 +1574,9 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 函数内延迟导入作为代价。
 
 **验证方式**（确保是纯重构、零行为变更）：用独立 git worktree 检出改动前版本，
-把 SQLAlchemy metadata（16 表 × 列/类型/默认值/索引/约束/命名约定）与 OpenAPI（81 操作）
+把 SQLAlchemy metadata（16 表 × 列/类型/默认值/索引/约束/命名约定）与 OpenAPI（81 操作，★重构当时；v1031 已增至 89）
 分别 dump 成 JSON **逐字比对**，确认完全一致；39 个 schema class 做逐类正文比对；
-全量测试 399 passed / 1 skipped 与基线一致。
+全量测试与基线一致（★重构当时 399 passed / 1 skipped；v1031 为 496 passed / 1 skipped）。
 
 ---
 
@@ -1548,7 +1584,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 
 ### 9.1 测试策略
 
-**18 个测试文件 / 399 用例 / 1 skipped**，`pytest-asyncio` `asyncio_mode=auto`。
+**21 个测试文件 / 497 用例 / 1 skipped**，`pytest-asyncio` `asyncio_mode=auto`。
 
 核心手法：
 
@@ -1558,7 +1594,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 - `register_model_override()` / `clear_model_overrides()` 在工厂层注入替身；
 - 每测试独立 `DATA_ROOT`（tmp 目录）+ `reset_engine()` + `reset_checkpointer()` +
   `get_settings.cache_clear()` 做隔离（★否则 checkpointer 会跨 DATA_ROOT 串库）；
-- `conftest.py` 重定向 `env_file_path` 并还原 `os.environ`（★防测试污染真实 `.env`）。
+- `conftest.py` 重定向 `env_file_path` 并还原 `os.environ`（★防测试污染真实系统环境与历史 `.env` 回落文件）。
 
 ### 9.2 覆盖域
 
@@ -1566,7 +1602,7 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | --- | --- |
 | `test_permissions.py` | ★8 条权限规则**逐条越权** + **顺序回归**（断言 `PERMISSION_RULES` 常量数组与设计表逐行一致）+ `_TOOL_OPERATION` 映射 |
 | `test_workspace_guard.py` | 路径穿越、符号链接越界、跨项目拒绝、`summaries/` 只允许 `summarize_chapter` 写（`allow_summaries=True`） |
-| `test_outline_order.py` | 大纲严格解析（含 `## 第三章 卷土重来` 陷阱用例）、归一化匹配、`sync_order_from_outline` 顺序派生、★**断言 reorder/move 路由不存在** |
+| `test_outline_order.py` | 大纲严格解析（含 `## 第三章 卷土重来` 陷阱用例）、归一化匹配、★**v1029：调换大纲顺序只产出差异报告、`sort_order` 不被改写**、回填不改 ID/文件名、不产生快照不递增 version、未登记项警告 |
 | `test_fts_search.py` | FTS5 二元切分、查询侧同函数、`project_id` 隔离、LIKE 降级 |
 | `test_content_lock.py` | 乐观锁（`base_version` 不符 → 409/40901 + 回传最新内容）、修订快照触发策略、`finalize` 建快照、自动保存不快照 |
 | `test_gates.py` | G0 两类缺失、G1 预检通过与强制跳过、G2 需 graph、G3 不匹配自动重生成 ≤2 次、`ConsultRequired` 信号、`GateState` 序列化往返 |
@@ -1580,14 +1616,16 @@ Agent 改文件后派生索引可能与文件不一致；卷章顺序若有两�
 | `test_mcp_widgets.py` | stdio 白名单 8 种拒绝形态、确认流转、命令全文落审计、probe、widgets 回落链、内置天气 MCP |
 | `test_rewrite.py` | 四模式、参数校验（选区 ≤8000）、上下文注入、**不落盘**、审计、错误可读、★中文引号剥离（不对称对） |
 | `test_novels_api.py` | 项目 CRUD、显式命名 42201、软删除入回收站、复制、重命名事务 |
-| `test_volumes_chapters.py` | 卷章 CRUD、短 ID 恒定、无重排能力 |
+| `test_recycle.py` | ★v1031 回收站：删章自动归档、恢复重建被级联删除的卷、彻底删除移除归档、整本删除→恢复（含大纲与 `novels.status` 翻回 `active`）、20 本上限淘汰最旧、★**URL 里的 ID 路径穿越被拒**（回收站不经 WorkspaceGuard，故 ID 白名单校验）、★**卷章删干净→整本从回收站彻底删除（含 trash 工作区）**、trash 被手工清空的脏条目自动剪枝 |
+| `test_volumes_chapters.py` | 卷章 CRUD、短 ID 恒定、★v1029 按 `ordinal` 插入并顺延 / 删末章连卷删除并重新编号 / 非法 ordinal 拒绝、★**断言 reorder/move 路由与 OpenAPI 路径均不存在** + `assert_no_manual_reorder()` 守卫、派生索引与 rebuild |
+| `test_system_env.py` | ★v1029 密钥存储：系统级环境变量（用户作用域）+ 任意变量名校验（`DATA_ROOT` 覆盖时重定向到 `{DATA_ROOT}/system-env.json`，**绝不触碰真实系统环境**） |
 | `test_export.py` | 4 种格式产物结构、EPUB 结构校验、calibre 缺失 → 50301 |
 | `test_naming.py` | 显式命名各违规形态 |
 
 ### 9.3 静态质量
 
 ```powershell
-uv run python -m pytest -q     # 399 passed / 1 skipped
+uv run python -m pytest -q     # 496 passed / 1 skipped
 uv run ruff check src tests    # ruff：line-length 110，select = E,F,W,I,UP,B,SIM
                                #   ignore = E501,B008,UP009（UP009 豁免：刻意保留 coding 声明）
 cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
@@ -1602,8 +1640,9 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 | 权限规则顺序即语义 | `PERMISSION_RULES` 常量数组 + 顺序回归测试（断言与设计表逐行一致） |
 | 错误码规范 | `ErrorCode` 常量 + `CODE_TO_HTTP` / `CODE_TO_MESSAGE` **双映射表** |
 | 路径与编码统一 | `core/paths.py` 集中解析，全部 `pathlib` + 显式 `encoding="utf-8"` |
-| ID 稳定、顺序派生 | `sort_order` 唯一写入口 `sync_order_from_outline`，**无 reorder 接口**（测试断言路由不存在）+ `assert_no_manual_reorder()` 守卫函数 |
+| ID 稳定、顺序单一写入口 | ★v1029 起顺序由**插入**维护（`ordinal` 顺延 / 删除重编号），**无 reorder / move 接口**（测试断言路由与 OpenAPI 路径均不存在）+ `assert_no_manual_reorder()` 守卫函数 |
 | 内置技能合规 | 测试遍历 8 个 `SKILL.md` 校验 frontmatter 约束 + 子代理引用的技能路径真实存在 |
+| 回收站不丢数据 | ★v1031 `data/recycle/` 归档 + 20 本上限淘汰；`test_recycle.py` 断言「删章必归档」「恢复可重建级联删除的卷」「整本恢复连大纲与 `novels.status` 一起复原」 |
 
 ---
 
@@ -1617,7 +1656,7 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 | **不用向量库 / Embedding** | FTS5 二元切分对小说检索足够；零 Embedding 费用、零额外服务、零冷启动 |
 | **不自研 Agent 框架** | deepagents 已提供主循环/沙箱/权限/子代理/技能/压缩；自研只增加维护面 |
 | **写作业务函数不作为 Agent 工具** | 收窄「permissions 不覆盖自定义工具」的越权面；Agent 只用文件工具碰内容 |
-| **章不可跨卷移动、无手工重排** | 顺序单一事实源（大纲）优于双源；批量改 frontmatter 会放大写入并撞乐观锁 |
+| **章不可跨卷移动、无手工重排** | 顺序单一写入口（★v1029 起为「插入」）优于双源；批量改 frontmatter 会放大写入并撞乐观锁 |
 | **`services → agent` 保留 6 处依赖** | 彻底消环需把 LLM/MCP/可观测基础设施迁出 `agent/`，与「Agent 作为整体」定位冲突 |
 | **敏感内容检查仅预留挂载位** | MVP 不实现（`RecapInjectionMiddleware._check_sensitive` 是空挂载点） |
 
@@ -1634,7 +1673,7 @@ cd src/web; npm run build      # vue-tsc --noEmit 类型检查 + vite 构建
 
 | 方向 | 说明 |
 | --- | --- |
-| **基础设施下沉** | 把 `agent/llm/`（factory/params/budget）与 `agent/mcp/adapter` 传输层下沉到 `core/`，可消除剩余 3 处主要反向依赖，并使约 150 处函数内延迟导入大部分提升到模块顶层（IDE 跳转与静态分析随之改善）。**代价**：需同步修订目录边界约定（Agent 基础设施将不再全部位于 `agent/` 内） |
+| **基础设施下沉** | 把 `agent/llm/`（factory/params/budget）与 `agent/mcp/adapter` 传输层下沉到 `core/`，可消除剩余 3 处主要反向依赖；函数内延迟导入已收敛到 86 处（85 处为 `try:` 可选依赖守卫 + 1 处成环），进一步上提需先消环。**代价**：需同步修订目录边界约定（Agent 基础设施将不再全部位于 `agent/` 内） |
 | **架构契约自动化** | 引入 import-linter，把「services 不得静态 import agent（白名单例外除外）」写成 CI 契约，防止架构再度漂移（当前靠文档约定 + code review） |
 | **多用户 / 鉴权** | 现为单用户；若要多用户需引入认证层、把 `project_id` 隔离升级为 `user_id + project_id`、并重新审视 WorkspaceGuard 的白名单根 |
 | **敏感内容检查** | `RecapInjectionMiddleware._check_sensitive` 挂载位已预留，可接入内容安全服务 |

@@ -50,26 +50,27 @@ export const zh = {
     /** v1029：书名左上角用 * 标记必填；输入框内不再有任何提示词 */
     titlePlaceholder: '',
     titleRuleHint: '书籍名称不允许为空，不允许全部为阿拉伯数字，不允许出现#$%等特殊字符，可以出现标点符号',
-    authorLabel: '作者',
     genreLabel: '题材',
     /** v1031：题材「最少 1 最多 3」改为隐藏逻辑，界面不再展示提示文案 */
     genreRequired: '请至少选择一个题材',
     genreTooMany: '题材最多只能选择 3 个',
-    /** v1030续：题材末尾的「+」新增自定义题材（最多 5 个字，仅本次弹窗有效，提交后不保留） */
+    /** v1030续：题材末尾的「+」新增自定义题材（最多 5 个字，仅本次弹窗有效，提交后不保留）
+     *  ★v1031：标签「题材名」改为「题材」，并去掉标签下方的提示语 */
     genreAddTitle: '自定义题材',
-    genreAddLabel: '题材名',
-    genreAddHint: '最多 5 个字；仅本次新建/编辑有效，保存小说后不再保留',
+    genreAddLabel: '题材',
     genreAddOk: '题材「{name}」已添加',
     genreAddFailed: '题材添加失败：{reason}',
     synopsisLabel: '简介',
     /** v1029：简介输入框内不再有任何提示词 */
     synopsisPlaceholder: '',
     deleteConfirmTitle: '删除小说',
-    deleteConfirm: '删除后项目会移入回收站（data/trash/），列表不再显示。确定删除「{title}」吗？',
+    /** v1031：文案改为「删除后《X》会移入回收站，但不建议这么做！确定删除吗？」 */
+    deleteConfirm: '删除后《{title}》会移入回收站，但不建议这么做！确定删除吗？',
     duplicateTitle: '复制小说',
     duplicateLabel: '副本书名',
     created: '小说「{title}」创建成功',
-    deleted: '小说已删除（软删除，可在 data/trash/ 恢复）',
+    /** v1031：删除即进回收站，提示与确认框口径一致（不再暴露 data/trash/ 内部路径） */
+    deleted: '小说已移入回收站',
     /** v1030：编辑小说成功（名称 / 题材 / 简介） */
     edited: '已保存修改',
     editTitle: '编辑小说',
@@ -89,6 +90,11 @@ export const zh = {
   editor: {
     wordCount: '字数',
     unsaved: '有未保存的修改',
+    /** ★v1031：[回退编辑]（保存左侧 icon，最多回退 5 次） */
+    undoEdit: '回退编辑',
+    undoEditHint: '回退本章编辑（最多 5 次）',
+    undoEmpty: '没有可回退的编辑',
+    undoDone: '已回退一步编辑',
     aiRewrite: 'AI 改写',
     aiExpand: 'AI 扩写',
     aiCondense: 'AI 缩写',
@@ -130,14 +136,9 @@ export const zh = {
     ordinalLabel: '卷序号',
     chapterOrdinalLabel: '章节序号',
     ordinalHint: '正整数，不可与已有{kind}序号重复；1 = 插到最前面',
-    /** v1030续：卷序号按插入位置自动填好，其后各卷自动顺延 */
-    ordinalAutoHint: '已按插入位置自动填好；该位置及其后的卷会自动顺延 +1',
-    /** v1030续：插入卷必须带上第一章（★不支持空卷） */
-    firstChapterLabel: '第一章章节名',
+    /** v1030续：插入卷必须带上第一章（★不支持空卷）；★v1031：标签「第一章章节名」改为「章节名」 */
+    firstChapterLabel: '章节名',
     firstChapterRequired: '请填写第一章的章节名（不支持空卷）',
-    noEmptyVolumeHint: '插入卷时一并创建它的第一章，避免出现空卷',
-    /** v1030续：章节序号自动增减，界面上不再填写 */
-    chapterOrdinalAutoHint: '章节序号自动推算：该章及其后的章节自动顺延 +1',
     /** v1030续：大纲节点只支持往后插入卷 */
     insertVolumeOutlineAfterOnly: '大纲在最前面，只能往后插入小说卷',
     /** v1030续：插入章节必须先定位到某一章 */
@@ -187,6 +188,24 @@ export const zh = {
     lastWriter: '最后修改方',
     writerManual: '手动编辑',
     writerAgent: 'AI',
+  },
+  /** ★v1031：回收站（入口在 AI 写作助手左边，最多 20 本，卷/章浏览，回收 or 彻底删除） */
+  recycle: {
+    title: '回收站',
+    tooltip: '回收站：找回被删除的章节（只保留最近删除的 20 本）',
+    empty: '回收站是空的',
+    back: '返回回收站',
+    novelDeletedTag: '整本已删除',
+    chaptersUnit: '个被删章节',
+    chapterCount: '共 {n} 个被删章节',
+    restore: '回收',
+    purge: '删除',
+    askTitle: '回收还是删除？',
+    askMessage: '《{title}》要回收到小说里，还是从回收站彻底删除？',
+    restored: '已回收《{title}》',
+    restoredNovel: '整本小说已恢复：《{title}》已回到左边栏（含大纲）',
+    purged: '已彻底删除《{title}》',
+    loadFailed: '回收站读取失败',
   },
   export: {
     title: '导出小说',
@@ -319,7 +338,7 @@ export const zh = {
     newSession: '新建会话',
     renameSession: '重命名会话',
     deleteSession: '删除会话',
-    exportSession: '导出会话',
+    /** ★v1031：删除「导出会话」功能 */
     deleteSessionConfirm: '删除会话会同时删除其消息记录（不影响小说内容）。确定吗？',
     /** v1028：空态提示 */
     noNovel: '还没有小说项目哦~',
@@ -329,6 +348,8 @@ export const zh = {
     inputPlaceholder: '描述你的需求，例如：帮我扩写第三章的打斗场面…',
     send: '发送',
     stop: '停止',
+    /** ★v1031：底部按键的「追加消息」形态（运行中且已输入内容） */
+    appendMessage: '追加消息',
     running: 'AI 正在思考…',
     /** v1030续(2)：运行中发送消息的三种模式（模仿主流大模型 / AI Agent） */
     sendAnyway: '停止后发送',
@@ -343,7 +364,7 @@ export const zh = {
     /** v1030续(4)：报错卡片 */
     errorFoot: '本次回复已中断',
     errorDismiss: '知道了',
-    regenerate: '重新生成',
+    /** ★v1031：删除[重新生成]功能 */
     copyMessage: '复制',
     usage: '用量：入 {in} / 出 {out} tokens',
     planTitle: '计划',
@@ -398,6 +419,19 @@ export const zh = {
   health: {
     backendOffline: '后端未连接（请确认 uvicorn 已在 127.0.0.1:8000 运行）',
     fts5Degraded: 'FTS5 不可用，检索已降级为 LIKE 模糊匹配',
+  },
+  /** ★v1031：HTTP 层错误的简短中文文案（替代 axios 的英文 error.message） */
+  httpError: {
+    badRequest: '请求不正确，请检查后重试',
+    unauthorized: '登录已失效，请重新登录后再试',
+    forbidden: '没有权限执行该操作',
+    notFound: '请求的内容不存在或已被删除',
+    conflict: '内容与最新状态冲突，请刷新后重试',
+    serverError: '服务暂时不可用，请稍后重试',
+    timeout: '请求超时，请检查网络后重试',
+    unknown: '请求失败，请稍后重试',
+    /** ★v1031 续：后端路由缺失被 SPA 回落成页面（200 + HTML）时的提示 */
+    htmlResponse: '后端接口未就绪（返回了页面而非数据）：后端可能是旧版本，请重启后端服务后重试',
   },
 } as const
 

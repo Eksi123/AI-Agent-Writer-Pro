@@ -3,7 +3,7 @@ data/
 .env
 .env.local
 .env.*.local
-!.env.example
+config.ini
 
 # ---- Python ----
 __pycache__/

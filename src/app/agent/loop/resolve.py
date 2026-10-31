@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.resolve
 文件名: resolve.py
@@ -18,7 +18,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.knowledge import build_pinned_chapters, build_recap
+from app.agent.llm.factory import get_chat_model, get_default_chat_model, get_fallback_chain
+from app.agent.tracing import build_callback_handler
 from app.core.logging import get_logger
+from app.db.models import AgentSession, SubagentConfig
 from app.db.session import session_scope
 
 logger = get_logger(__name__)
@@ -26,7 +30,6 @@ logger = get_logger(__name__)
 
 async def resolve_models(run_id: str, model_ref: str | None) -> tuple[Any, str | None, list[Any]]:
     """解析主模型 + 降级链。未配置模型时抛 LlmProviderError（由上层转 error 事件）。"""
-    from app.agent.llm.factory import get_chat_model, get_default_chat_model, get_fallback_chain
 
     async with session_scope() as db:
         if model_ref:
@@ -55,7 +58,6 @@ def max_context_of(model: Any) -> int:
 
 def attach_langfuse(config: dict[str, Any], **metadata: Any) -> None:
     """挂 langchain CallbackHandler（未配置 Key 时自动跳过）。"""
-    from app.agent.tracing import build_callback_handler
 
     handler = build_callback_handler(**metadata)
     if handler is not None:
@@ -64,7 +66,6 @@ def attach_langfuse(config: dict[str, Any], **metadata: Any) -> None:
 
 def make_recap_provider(project_id: str, session_id: str) -> Any:
     async def _provider(_context: Any) -> str:
-        from app.agent.knowledge import build_recap
 
         async with session_scope() as db:
             recap = await build_recap(db, project_id)
@@ -78,8 +79,6 @@ def make_recap_provider(project_id: str, session_id: str) -> Any:
 
 
 async def _pinned_chapters_of(db: AsyncSession, session_id: str, project_id: str) -> str:
-    from app.agent.knowledge import build_pinned_chapters
-    from app.db.models import AgentSession
 
     sess = await db.get(AgentSession, session_id)
     if sess is None or not sess.context_chapter_ids_json:
@@ -103,7 +102,6 @@ async def session_context_of(db: AsyncSession, session_id: str) -> tuple[set[str
     - 子代理 id → `subagent_configs.name`；
     - 技能 id 可为 DB uuid（用户技能 → name）或 `builtin:{name}`（内置技能 → name）。
     """
-    from app.db.models import AgentSession, SubagentConfig
 
     sess = await db.get(AgentSession, session_id)
     if sess is None:

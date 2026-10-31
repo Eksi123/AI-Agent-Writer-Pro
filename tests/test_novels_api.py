@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_novels_api.py
@@ -10,7 +10,13 @@
 from __future__ import annotations
 
 import pytest
+import yaml
+from sqlalchemy import select
 from tests.conftest import workspace_of
+
+from app.core.paths import logs_root, trash_root
+from app.db.models import AuditLog
+from app.db.session import get_sessionmaker
 
 
 @pytest.mark.asyncio
@@ -90,7 +96,6 @@ async def test_rename_novel_renames_outline_file(client, novel_id):
     assert new.is_file()
 
     # novel.yaml 与 DB 均同步
-    import yaml
 
     meta = yaml.safe_load((ws / "novel.yaml").read_text(encoding="utf-8"))
     assert meta["title"] == "银河拾荒记"
@@ -111,7 +116,6 @@ async def test_rename_to_invalid_title_rejected(client, novel_id):
 @pytest.mark.asyncio
 async def test_soft_delete_moves_workspace_to_trash(client, novel_id):
     """软删除：工作区移入 data/trash/ + status=deleted，列表不可见。"""
-    from app.core.paths import trash_root
 
     ws = workspace_of(novel_id)
     assert ws.exists()
@@ -209,10 +213,7 @@ async def test_settings_font_size_bounds(client):
 @pytest.mark.asyncio
 async def test_audit_logs_written(client, novel_id):
     """关键动作落审计：SQLite 表 + JSONL 备份双写。"""
-    from sqlalchemy import select
 
-    from app.db.models import AuditLog
-    from app.db.session import get_sessionmaker
 
     async with get_sessionmaker()() as s:
         actions = (
@@ -221,7 +222,6 @@ async def test_audit_logs_written(client, novel_id):
 
     assert "novel.create" in actions
 
-    from app.core.paths import logs_root
 
     audit_files = list(logs_root().glob("audit-*.jsonl"))
     assert audit_files, "审计必须有 JSONL 备份"

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.exporters
 文件名: exporters.py
@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import contextlib
 import html
+import json
 import re
 import shutil
 import subprocess
+import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -253,7 +255,6 @@ def build_export(project_id: str, fmt: ExportFormat, *, progress: Any = None) ->
 
 
 def _manifest_json(title: str, fmt: str, vols: list[ExportVolume], has_outline: bool) -> str:
-    import json
 
     payload = {
         "title": title,
@@ -551,7 +552,6 @@ def _convert_to_mobi(zip_path: Path, title: str) -> None:
     if exe is None:
         raise DependencyUnavailableError("未检测到 calibre `ebook-convert`，无法生成 mobi")
 
-    import tempfile
 
     with tempfile.TemporaryDirectory(prefix="writer-mobi-") as tmp:
         tmp_dir = Path(tmp)

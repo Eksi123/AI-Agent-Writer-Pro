@@ -107,6 +107,9 @@ const CODE_RULES: Partial<Record<number, AgentErrorInfo>> = {
  * 把 `{code, message}` 归一成「中文提示 + 处置建议」。
  * @param code 后端错误码（可为 null）
  * @param message 后端原始错误文案（可为空）
+ *
+ * ★v1031：会话里只给**简短中文**提示——原始文案是英文（或未识别的外文）时不再拼接展示，
+ * 避免把大模型 / 三方库的英文异常直接抛给用户。
  */
 export function describeAgentError(code?: number | null, message?: string | null): AgentErrorInfo {
   const raw = (message ?? '').trim()
@@ -118,14 +121,24 @@ export function describeAgentError(code?: number | null, message?: string | null
   }
 
   return {
-    title: raw ? `AI 运行出错：${raw}` : 'AI 运行出错，未能返回结果',
+    // 认不出来的错误一律给统一中文文案，不回显英文原文
+    title: 'AI 运行出错，未能返回结果',
     advice: '请稍后重试；若反复失败，请到「AI 设置」检查大模型配置（密钥 / 地址 / 模型名）后再试。',
   }
 }
 
-/** 保留后端原始文案作为补充细节，便于排查（不丢失信息） */
+/** 是否含中文（判定原始文案能否直接展示给用户） */
+function hasChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text)
+}
+
+/**
+ * 保留后端原始文案作为补充细节，便于排查。
+ * ★v1031：只在原文是**中文且足够短**时拼接；英文原文丢弃（提示仍为纯中文）。
+ */
 function withDetail(info: AgentErrorInfo, raw: string): AgentErrorInfo {
   if (!raw || info.title.includes(raw)) return info
-  const short = raw.length > 160 ? `${raw.slice(0, 160)}…` : raw
+  if (!hasChinese(raw)) return info
+  const short = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
   return { title: `${info.title}（${short}）`, advice: info.advice }
 }

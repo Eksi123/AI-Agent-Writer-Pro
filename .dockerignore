@@ -6,6 +6,7 @@ data
 .env
 .env.bak
 .env.example
+config.ini
 node_modules
 src/web/node_modules
 src/web/dist

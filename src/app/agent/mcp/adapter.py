@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.mcp.adapter
 文件名: adapter.py
@@ -20,10 +20,13 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import AsyncExitStack
 from typing import Any
 
 from langchain_core.tools import StructuredTool
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from app.core.errors import BadRequestError, DependencyUnavailableError
 from app.core.logging import get_logger
@@ -58,8 +61,6 @@ def validate_stdio_command(command: str, args: list[str]) -> tuple[str, list[str
 
 async def probe_stdio(command: str, args: list[str], *, env: dict[str, str] | None = None) -> list[dict[str, Any]]:
     """探测 stdio MCP 的工具列表（拉起子进程 → initialize → list_tools → 关闭）。"""
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
 
     cmd, cmd_args = validate_stdio_command(command, args)
     params = StdioServerParameters(command=cmd, args=cmd_args, env=env or None)
@@ -107,7 +108,6 @@ class _http_session:
         self.transport = transport
 
     async def __aenter__(self) -> Any:
-        from mcp import ClientSession
 
         self._stack = AsyncExitStack()
         try:
@@ -173,7 +173,6 @@ async def wrap_tools_async(row: Any) -> list[StructuredTool]:
 
 
 def _safe(text: str) -> str:
-    import re
 
     return re.sub(r"[^a-z0-9_]", "_", (text or "").lower()).strip("_") or "x"
 
@@ -189,8 +188,6 @@ def _make_coro(invoker: Any, tool_name: str) -> Any:
 
 
 async def _call_stdio(command: str, args: list[str], tool_name: str, arguments: dict[str, Any]) -> str:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
 
     params = StdioServerParameters(command=command, args=args)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as client:

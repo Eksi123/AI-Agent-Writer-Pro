@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: root
 文件名: main.py
@@ -29,6 +29,8 @@ import time
 import threading
 import webbrowser
 from pathlib import Path
+from shutil import which
+import socket
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "src" / "web"
@@ -63,7 +65,6 @@ def _open_browser(url: str, port: int, *, timeout: float = 40.0) -> None:
 
 
 def _has_uv() -> bool:
-    from shutil import which
 
     return which("uv") is not None
 
@@ -136,7 +137,6 @@ def _ensure_frontend_deps() -> bool:
 
 def _wait_port(port: int, timeout: float = 30.0) -> bool:
     """轮询等待端口就绪。"""
-    import socket
 
     deadline = time.time() + timeout
     while time.time() < deadline:

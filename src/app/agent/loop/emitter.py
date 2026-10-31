@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.emitter
 文件名: emitter.py
@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent.llm.budget import budget_report
 from app.agent.loop.events import sse_bus
 
 
@@ -32,7 +33,6 @@ class Emitter:
         return sse_bus.schedule(self.run_id, self.session_id, event, data or {})
 
     def budget_report(self, current_tokens: int) -> dict[str, Any]:
-        from app.agent.llm.budget import budget_report
 
         return budget_report(
             current_tokens,

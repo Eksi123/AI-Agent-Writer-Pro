@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_session_context.py
@@ -17,14 +17,20 @@ from langchain_core.messages import AIMessage
 from tests.fake_model import ScriptedFakeChatModel
 from tests.test_agent_e2e import _setup_provider_model
 
+from app.agent.knowledge import build_pinned_chapters
 from app.agent.llm.factory import register_model_override
+from app.agent.loop.builder import build_agent
+from app.agent.loop.resolve import make_recap_provider, session_context_of
 from app.core.paths import session_skills_dir
+from app.db.models import AgentRun
+from app.db.session import session_scope
+from app.services.agent import project_usage, session_usage
+from app.services.skills import materialize_session_skills
 
 
 class TestPinnedChapters:
     async def test_build_pinned_chapters_includes_selected(self, session, client, novel_id, volume_id):
         """选中的章节出现在 pinned 上下文（标题 + 节选）。"""
-        from app.agent.knowledge import build_pinned_chapters
 
         resp = await client.post(
             f"/api/v1/volumes/{volume_id}/chapters",
@@ -38,14 +44,12 @@ class TestPinnedChapters:
         assert "用户指定的上下文章节" in text
 
     async def test_pinned_empty_for_unknown_ids(self, session, novel_id):
-        from app.agent.knowledge import build_pinned_chapters
 
         assert await build_pinned_chapters(session, novel_id, ["nope"]) == ""
         assert await build_pinned_chapters(session, novel_id, []) == ""
 
     async def test_recap_includes_pinned_via_session_context(self, client, novel_id, volume_id):
         """会话设置了 context_chapter_ids 后，recap provider 输出包含该章。"""
-        from app.agent.loop.resolve import make_recap_provider
 
         resp = await client.post(
             f"/api/v1/volumes/{volume_id}/chapters",
@@ -68,8 +72,6 @@ class TestPinnedChapters:
 
     async def test_session_context_of_resolves_ids_to_names(self, client, novel_id):
         """subagent/skill 的 DB id 被解析为 name（builtin: 前缀也支持）。"""
-        from app.agent.loop.resolve import session_context_of
-        from app.db.session import session_scope
 
         subs = (await client.get("/api/v1/subagents")).json()["data"]
         writer = next(s for s in subs if s["name"] == "writer")
@@ -91,9 +93,6 @@ class TestPinnedChapters:
 class TestProjectUsage:
     async def test_usage_counts_runs_not_messages(self, client, novel_id):
         """★v1029：token 按 `agent_runs` 汇总，子代理（独立上下文，不进消息树）的用量也算进来。"""
-        from app.db.models import AgentRun
-        from app.db.session import session_scope
-        from app.services.agent import project_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -123,9 +122,6 @@ class TestProjectUsage:
 
     async def test_usage_sums_multiple_runs_without_double_count(self, client, novel_id):
         """每个 run 的 tokens 是收尾时整体赋值，逐 run 求和不会重复计数。"""
-        from app.db.models import AgentRun
-        from app.db.session import session_scope
-        from app.services.agent import project_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -154,9 +150,6 @@ class TestProjectUsage:
 
     async def test_usage_scoped_to_project(self, client, novel_id):
         """用量按项目隔离：其它项目的 run 不计入。"""
-        from app.db.models import AgentRun
-        from app.db.session import session_scope
-        from app.services.agent import project_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -196,8 +189,6 @@ class TestSessionUsage:
 
     @staticmethod
     async def _add_run(session_id: str, project_id: str, run_id: str, *, tokens_in: int, started_at: str):
-        from app.db.models import AgentRun
-        from app.db.session import session_scope
 
         async with session_scope() as db:
             db.add(
@@ -215,7 +206,6 @@ class TestSessionUsage:
 
     async def test_no_runs_returns_zero(self, client, novel_id):
         """全新会话没有任何 run → 占用 0（前端显示剩余 100%）。"""
-        from app.services.agent import session_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -226,15 +216,12 @@ class TestSessionUsage:
         assert usage.json()["data"] == {"session_id": sid, "tokens_in": 0, "tokens_out": 0}
 
         # service 层同构
-        from app.db.session import session_scope
 
         async with session_scope() as db:
             assert (await session_usage(db, sid))["tokens_in"] == 0
 
     async def test_returns_most_recent_run_not_sum(self, client, novel_id):
         """★取**最后一次** run 的 tokens_in，而非历史累加（累加会严重高估占用）。"""
-        from app.db.session import session_scope
-        from app.services.agent import session_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -259,8 +246,6 @@ class TestSessionUsage:
 
     async def test_scoped_to_session(self, client, novel_id):
         """按会话隔离：同项目其它会话的 run 不计入。"""
-        from app.db.session import session_scope
-        from app.services.agent import session_usage
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
@@ -282,8 +267,6 @@ class TestSessionUsage:
 
     async def test_unknown_session_returns_zero(self, client, novel_id):
         """不存在的会话 → 0（不抛异常，前端保持 100%）。"""
-        from app.db.session import session_scope
-        from app.services.agent import session_usage
 
         async with session_scope() as db:
             assert (await session_usage(db, "no-such-session"))["tokens_in"] == 0
@@ -292,7 +275,6 @@ class TestSessionUsage:
 class TestSessionSkillsMaterialization:
     async def test_materialize_selected_skills(self, client, session, novel_id):
         """会话精选技能物化到 data/session-skills/{sid}/（内置复制 + 用户技能复制）。"""
-        from app.services.skills import materialize_session_skills
 
         # 建一个用户技能
         resp = await client.post(
@@ -311,14 +293,12 @@ class TestSessionSkillsMaterialization:
         assert "name: naming" in text
 
     async def test_materialize_skips_missing(self, client, session):
-        from app.services.skills import materialize_session_skills
 
         count = await materialize_session_skills(session, "s-x", {"no-such-skill"})
         assert count == 0
 
     async def test_rematerialize_clears_stale(self, client, session):
         """重新物化会清空旧选择（会话上下文变化后不留残影）。"""
-        from app.services.skills import materialize_session_skills
 
         sid = "test-session-2"
         await materialize_session_skills(session, sid, {"naming", "prose-writing"})
@@ -334,7 +314,6 @@ class TestSubagentFiltering:
     async def test_build_agent_filters_by_session_selection(self, client, session, novel_id):
         """会话只选 writer → 装配的 subagents 只有 writer（general-purpose 由 deepagents 自动追加）。"""
 
-        from app.agent.loop.builder import build_agent
 
         _pid, model_ref = await _setup_provider_model(client)
         register_model_override(model_ref, ScriptedFakeChatModel(responses=[AIMessage(content="ok")]))
@@ -351,7 +330,6 @@ class TestSubagentFiltering:
         assert agent["subagent_names"] == ["writer"]
 
     async def test_build_agent_default_includes_all(self, client, session, novel_id):
-        from app.agent.loop.builder import build_agent
 
         fake = ScriptedFakeChatModel(responses=[AIMessage(content="ok")])
         agent = await build_agent(

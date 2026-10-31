@@ -1,115 +1,62 @@
 # AI Agent Writer Pro
 
-大纲驱动的 AI 小说写作工作台 —— **单用户本地应用**，无需注册登录，数据全部保存在自己电脑上。
+大纲驱动的 AI 小说写作工作台 —— **单用户应用**，无需注册登录，你的小说全部保存在自己的机器上。
 
-支持**手动撰写**与 **AI 生成**两种写作模式：先写大纲，再逐章成文。让 AI 写正文时，
-它会严格按照大纲的章简介来写，并在生成前后自动做衔接检查与要点核对，不会天马行空。
+先写大纲，再逐章成文：既可以自己动手写，也可以让 AI 按大纲生成正文（生成前后自动做衔接检查与要点核对）。
 
-> 架构与实现细节（面向开发 / 维护者）见 [`Project-Develop.md`](./Project-Develop.md)。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
+[![Vue](https://img.shields.io/badge/Vue-3-42b883.svg)](https://vuejs.org/)
 
----
-
-## 一、应用功能介绍
-
-AI Agent Writer Pro 是一款**大纲驱动**的 AI 小说写作工作台。核心使用方式是：先为小说建立项目，
-在一份大纲里规划好每一卷、每一章的剧情简介，然后既可以自己动手写正文，也可以让 AI 按照大纲
-逐章生成正文。所有内容都保存在你自己的电脑上（正文为 Markdown 文件），随时可整目录备份或打包导出。
-
-整个应用只有一个主界面——**三栏工作台**，外加「通用设置」与「AI 工具」两个独立页面。三栏工作台自左到右：
-
-- **左栏**：项目列表（管理多部小说）+ 左上角宠物·城市·天气组件 + 「设置 / AI 工具」入口；
-- **中栏**：阅读模式 / 编辑模式（目录抽屉 + 正文 / 大纲 / 卷章）；
-- **右栏**：AI 助手面板（可收起）。
-
-### 1.1 项目管理
-
-- **多项目**：左侧项目列表管理多部小说，显示各自总字数；
-- **新建 / 重命名 / 复制 / 删除**：项目右键菜单提供全部操作。新建与重命名要求**显式命名**
-  （不接受空白或「未命名小说」这类默认名）；删除为软删除，项目移入本地回收站，保留恢复机会；
-- **导出成书**：整部小说一键打包为 zip，含 markdown / epub / mobi / txt 四种正文格式 +
-  大纲原件（mobi 需本机安装 calibre，未安装时该选项置灰）。
-
-### 1.2 大纲（全应用的「纲」）
-
-- 每部小说有**一份大纲文件**（Markdown）：`# 卷标题` → `## 章标题` → 每章写「简介」「衔接要点」，
-  文末可附世界观 / 人物等设定附录；
-- **卷章顺序由大纲决定**：界面上不提供拖拽重排，调整卷章先后直接在大纲里挪动小节即可；
-- **AI 生成的前提**：只有大纲里写好了某章的简介，AI 才能生成该章正文；
-- 保存大纲时自动**校验格式**（层级、命名是否对得上，问题会标出行号），并把新顺序**回填**到所有卷章。
-
-### 1.3 正文写作（编辑模式）
-
-- **富文本编辑器**：支持 Markdown 快捷输入，自动保存（间隔可在设置里调），实时字数统计；
-- **AI 来源标记**：AI 生成或改写的文字带特殊底色标记，点击标记即可回滚为原文；
-- **版本冲突保护**：若 AI 改了你正在编辑的章、而你本地有未保存修改，会弹出冲突横幅，
-  由你决定「查看差异合并」还是「以我的为准覆盖」，不会静默丢稿；
-- **修订快照**：AI 每次写入正文前都会自动存一份快照，可随时一键回滚；
-- **选区 AI 改写**：选中一段文字后可执行 改写 / 扩写 / 缩写 / 润色，结果先以**句级差异预览**
-  （增 / 删 / 改三色高亮）呈现，确认接受才真正写入。
-
-### 1.4 阅读模式
-
-- **目录抽屉**：顶端固定「大纲」节点，其下按顺序列出卷与章，点击即读；定稿章带「定稿」标记；
-- **翻页与进度记忆**：上一章 / 下一章翻页，自动记住上次阅读位置，下次打开接着读；
-- **夜间模式**与可自定义的页宽、字号、字体，长时间阅读更舒适。
-
-### 1.5 AI 助手（右栏面板）
-
-- **多会话**：会话按小说项目隔离，可新建 / 重命名 / 删除，也可把整段会话导出为 Markdown 留存；
-- **流式对话**：回复逐字输出，工具调用过程、子代理工作「泳道」、待办计划实时可见；
-- **上下文 Chips**：可主动把「某个子代理 / 某项写作技能 / 某些已读章节」加入会话上下文，
-  让 AI 带着你指定的参考资料来写；
-- **消息分支**：对同一条消息「重新生成」或「编辑后重发」会产生分支，可来回切换对比不同版本；
-- **审批卡片**：AI 要做高危操作（覆盖整章、大范围改动、批量删除）时先弹卡片征求同意，
-  你可以 批准 / 编辑参数后批准 / 拒绝 / 回复补充说明；
-- **咨询卡片**：流程走到需要你拍板的节点（比如大纲缺简介、衔接不合理）时，AI 会给出选项让你选；
-- **「生成本章」**：在目录中选中某章后点「生成本章」，AI 按四步生成正文——
-  ① 检查大纲有没有这章的简介 → ② 预检与上一章的衔接 → ③ 生成正文（写前自动快照，可回滚）→
-  ④ 核对正文是否覆盖简介要点（不符会自动重生成，最多两次）。面板上的**状态条**全程显示当前进行到哪一步。
-
-### 1.6 子代理与技能
-
-- **写作子代理**：内置 策划（planner）、撰写（writer）、润色（editor）、连贯性审查（continuity-checker）、
-  资料检索（researcher）五个，另自动追加一个通用子代理；每个都能单独设置使用的模型、专属提示词、
-  可用技能，以及启用 / 停用；
-- **写作技能**：内置 8 项（小说策划、行文写作、润色、连贯性检查、命名，以及玄幻 / 都市 / 奇幻题材写法），
-  也可自建技能（保存为 Markdown 文件），AI 在需要时自行取用。
-
-### 1.7 模型与集成（「AI 工具」页）
-
-- **多厂商模型接入**：支持 OpenAI、Anthropic、Google、Azure OpenAI、OpenRouter，以及各类
-  OpenAI 兼容服务（通义千问 / DashScope、DeepSeek、Moonshot、智谱、硅基流动、vLLM、自建网关等）；
-  可测试连接、设默认模型、配降级链（主模型失败自动切换备用）；
-- **密钥安全**：API Key 只写入本地 `.env` 文件，界面上只显示掩码（如 `sk-****abcd`），不回显明文；
-- **参数分层**：模型参数支持 全局 → 项目 → 会话 → 单条消息 四级覆盖；每次运行后展示 token 用量；
-- **MCP 工具**：内置天气 MCP（免费无需密钥）；也可添加第三方 MCP 服务扩展 AI 能力
-  （以命令行方式启动的服务需通过白名单 + 二次确认，保障安全）。
-
-### 1.8 界面陪伴组件与通用设置
-
-- **动态组件**：左上角宠物动画（写作时敲键盘、久无进展时打瞌睡）+ 定位城市 + 当前天气；
-- **通用设置**：主题（浅色 / 深色 / 跟随系统）、主题色、字体大小、字体风格、阅读页宽、
-  自动保存间隔、回落城市、宠物发呆阈值——保存后即时生效并持久化；
-- 设置页还展示运行状态（后端版本、全文检索 / calibre / Langfuse 等依赖是否可用）。
-
-### 1.9 全文检索
-
-对整部小说的正文做全文检索，中文按二元切分建索引；环境不支持时自动降级为普通匹配，使用上无感。
+> 面向开发 / 维护者的架构与实现细节见 [`Project-Develop.md`](./Project-Develop.md)。
 
 ---
 
-## 二、快速启动
+## 一、功能介绍
 
-### 2.1 环境要求
+打开应用就是一个**三栏工作台**：左边是你的小说项目和一只陪你写作的小宠物（带城市天气），中间是写作区，右边是 AI 写作助手。另有「通用设置」和「AI 设置」两个独立页面。
 
-| 项      | 要求                                                           |
-| ------- | -------------------------------------------------------------- |
-| Python  | 3.12+                                                          |
-| Node.js | 20+（仅前端开发 / 构建需要）                                   |
-| uv      | 推荐（`pyproject.toml` + `uv.lock` 是依赖唯一事实源）      |
-| calibre | 可选，未安装则 mobi 导出置灰（markdown / epub / txt 不受影响） |
+### 写一本书的完整流程
 
-### 2.2 一键启动（推荐，日常调试）
+1. **建项目**：起个书名、选 1–3 个题材标签、写一段简介，左栏就会出现这本书。
+2. **写大纲**：一份 Markdown 文档，`# 卷` → `## 章` → 每章简介。它是全书的骨架，也是 AI 生成正文时的依据；保存时会自动校验格式并提示问题。
+3. **搭卷章**：在目录上「往前 / 往后插入卷或章节」，插到第几位就排在第几位，后面的自动顺延；把一卷的章节删空，这一卷会一并消失。
+4. **写正文**：富文本编辑器，边写边自动保存、实时字数统计；写错了可以**回退编辑**（最多 5 次，和 Word 的撤销一样）；每次手动保存都会留一份**修订快照**，随时可以回滚到旧版本。
+5. **读成书**：阅读模式有目录抽屉、上一章 / 下一章翻页、记住你读到哪一行、独立的夜间模式；写完还能一键**导出成书**（Markdown / TXT / EPUB / MOBI 四种格式打包下载）。
+
+### 让 AI 帮你写
+
+- **AI 写作助手**（右栏）：多会话、按项目隔离，回复像聊天一样逐字流出来；它调用了什么工具、列了什么写作计划，都实时展示给你看。
+- **一个发送键，三种形态**：空闲时是发送箭头；AI 思考中且你没打字时变成红色停止方块；你打了字则变成「追加消息」，可以选 *停止后发送 / 添加到队列 / 作为引导插入*，不打断它当前的工作。
+- **生成本章**：选中某一章点「生成本章」，AI 会走四道关卡——先检查大纲里有没有这章的简介、再做与上一章的衔接预检、然后生成正文、最后核对剧情要点；要点不符会自动重写（最多两次）。
+- **选区 AI 润色**：在正文里选中一段话，选区上方浮出「✨ AI 润色」按钮；点一下，这段文字连同它所在的章节、段落范围、前后文一起进入对话，AI 就知道该改哪一段、只改这一段。工具栏上还有**改写 / 扩写 / 缩写**，结果先给你看句级差异对比，确认后才落盘。
+- **该你拍板时会问你**：AI 要做大范围改写、覆盖已有正文等高危操作前，先弹审批卡片（批准 / 改参数后批准 / 拒绝 / 补充说明）；拿不准的设定问题会弹咨询卡片问你。
+- **出错说人话**：任何报错都是简短中文提示 + 该怎么做的建议，不会甩一串英文异常给你。
+- **子代理与技能**：内置策划、撰写、润色、连贯性审查、资料检索 5 个子代理和 8 项写作技能，都可以自建、改提示词、换模型。
+
+### 后悔药：回收站
+
+误删的章节不会立刻消失。顶部工具栏「回收站」里保留**最近删除过章节的 20 本小说**，点进去能看到「卷 → 被删章节」：
+
+- **回收**：章节还原回原来的卷（卷若已被删空会按快照重建）；如果整本小说都被删了，回收其中任意一章会**连书带大纲一起找回来**；
+- **删除**：红色警示的彻底删除，不可恢复。某本书的被删章节全部删干净后，这本书也会从回收站彻底移除。
+
+### 写作之外的陪伴与掌控
+
+- **宠物与天气**：左栏一只生肖宠物，你写作时它敲键盘、久不动笔它打瞌睡；旁边是所在城市实时天气与空气质量。
+- **三种主题**：浅色 / 深色 / 护眼，主题色、字号、字体、页宽都能调，改完即时生效。
+- **全文检索**：整本书搜一句话，中文也能搜得准。
+- **模型自由接**：OpenAI / Anthropic / Google / Azure / OpenRouter 以及任何 OpenAI 兼容服务都能接；可以测连接、设默认模型、配降级链；密钥存在你本机的系统级环境变量里（界面填写、变量名随便起），界面上只显示掩码。
+- **审计日志**：AI 的每一次文件操作都有据可查（只读）。
+- **数据在你手里**：正文就是一份份本地 Markdown 文件，整个数据目录复制走就是备份。
+
+---
+
+## 二、启动与部署
+
+### 2.1 本地一键启动（推荐日常使用）
+
+环境要求：Python 3.12+；Node.js 20+（仅构建前端需要）；推荐装 [uv](https://docs.astral.sh/uv/)；calibre 可选（不装则 MOBI 导出置灰）。
 
 ```powershell
 python main.py                 # 同时拉起后端(8000) + 前端 Vite(5173)，Ctrl+C 一起停
@@ -120,9 +67,9 @@ python main.py --port 9000     # 自定义后端端口（前端代理自动跟�
 ```
 
 访问 `http://localhost:5173`（开发模式，前端热更新）或 `http://127.0.0.1:8000`（单体模式）。
-脚本会自动 `npm install` / 构建前端、探测端口就绪；无 uv 时回落 `PYTHONPATH=src` 直跑。
+脚本会自动安装依赖、构建前端、等待端口就绪；没有 uv 时自动回落为直跑。
 
-### 2.3 常规手动启动
+### 2.2 本地手动启动
 
 ```powershell
 # 1. 安装后端依赖（自动创建 .venv）
@@ -140,93 +87,219 @@ npm install
 npm run dev
 ```
 
-**首次使用**：左下角「AI 工具」→「大模型 API」添加 Provider 与模型（密钥会写入 `.env`，DB 只存变量名），
-之后即可在右侧 AI 助手面板对话，或在正文页用「生成本章」让 AI 按大纲生成正文。
+**首次使用**：左下角「AI 设置」→「大模型 API」添加 Provider 与模型（密钥写入系统级环境变量，变量名随便起），之后就能在右栏和 AI 对话、或用「生成本章」。
 
-### 2.4 单体部署（生产）
+**可选配置**：应用配置（端口 / 数据目录 / 日志级别等）全部有默认值，无需任何配置文件。
+若想接 Langfuse 可观测，编辑根目录 `config.ini` 的 `[langfuse]` 段（`public_key` / `secret_key` / `host`）；
+三项全空或不建该文件时，追踪自动降级为本地结构化日志，功能不受影响。
+
+### 2.3 服务器部署（Linux + Nginx，从零到上线）
+
+以 Ubuntu 22.04 / Debian 12 为例，全程约 10 分钟。
+
+**① 装基础软件**
+
+```bash
+sudo apt update && sudo apt install -y git curl nginx build-essential
+# Python 3.12（系统自带版本过低时用 deadsnakes 源）
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt install -y python3.12 python3.12-venv
+# uv（依赖管理）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+# Node.js 20（仅构建前端需要，构建完可留可不留）
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+**② 取代码并装后端依赖**
+
+```bash
+sudo mkdir -p /srv && sudo chown $USER /srv
+git clone <你的仓库地址> /srv/ai-writer-pro && cd /srv/ai-writer-pro
+uv sync                      # 创建 .venv 并安装依赖
+# 可选：编辑 config.ini 的 [langfuse] 段接入 Langfuse（不配则追踪降级为本地日志）
+uv run writer migrate        # 建表 / 迁移
+```
+
+**③ 构建前端**
+
+```bash
+cd src/web && npm ci && npm run build && cd ../..
+# 产出 src/web/dist/，后端会自动挂载它（单页应用 history 回落）
+```
+
+**④ 用 systemd 托管后端**
+
+```bash
+sudo tee /etc/systemd/system/ai-writer.service > /dev/null <<'EOF'
+[Unit]
+Description=AI Agent Writer Pro backend
+After=network.target
+
+[Service]
+WorkingDirectory=/srv/ai-writer-pro
+Environment=DATA_ROOT=/srv/ai-writer-pro/data
+ExecStart=/srv/ai-writer-pro/.venv/bin/python -m uvicorn app.main:app \
+          --host 127.0.0.1 --port 8000 --app-dir src --no-reload
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now ai-writer
+systemctl status ai-writer --no-pager      # 应看到 active (running)
+curl -s http://127.0.0.1:8000/api/v1/health # 应返回 {"code":0,...}
+```
+
+**⑤ Nginx 反向代理（含 SSE 长连接调优）**
+
+```bash
+sudo tee /etc/nginx/sites-available/ai-writer > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name _;                 # 有域名就换成你的域名
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # SSE 流式回复必需：关缓冲、放宽超时、禁用缓存
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+EOF
+sudo ln -sf /etc/nginx/sites-available/ai-writer /etc/nginx/sites-enabled/ai-writer
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**⑥ 放行防火墙并验收**
+
+```bash
+sudo ufw allow 80/tcp && sudo ufw reload     # 用云安全组的记得同步放行
+curl -sI http://127.0.0.1/ | head -1         # HTTP/1.1 200 OK
+```
+
+浏览器打开 `http://服务器IP/` 即可使用。要上 HTTPS 用 `certbot --nginx` 一条命令搞定。
+数据默认落在 `/srv/ai-writer-pro/data/`，备份 = 停服后整目录打包。
+
+### 2.4 Docker 部署
+
+仓库自带多阶段构建（node 构建前端 → python-slim 运行）与 compose 编排：
+
+```bash
+docker compose up -d            # 构建并启动，容器内自动 migrate
+docker compose logs -f app      # 看日志
+docker compose down             # 停止（数据卷保留）
+```
+
+数据持久化在命名卷 `writer-data`（容器内 `/data`）；默认只绑 `127.0.0.1:8000`，
+局域网访问把 `docker-compose.yml` 里端口改成 `"8000:8000"`（或前面再套一层 Nginx，SSE 调优同 2.3 ⑤）。
+备份示例：
+
+```bash
+docker run --rm -v writer-data:/data -v "${PWD}:/backup" alpine tar czf /backup/writer-data.tgz -C /data .
+```
+
+### 2.5 怎么测试
 
 ```powershell
-cd src/web; npm ci; npm run build   # 产出 dist/，FastAPI 自动挂载（SPA history 回落）
-uv run writer dev --no-reload       # 访问 http://127.0.0.1:8000
+uv run python -m pytest -q     # 全量测试（497 用例，假模型驱动，不触网 / 不打真实 LLM）
+uv run ruff check src tests    # 后端 lint
+cd src/web; npm run build      # 前端类型检查 + 构建
+uv run writer doctor           # 环境自检（FTS5 / 二元切分 / calibre / Langfuse / 依赖版本）
 ```
 
-### 2.5 Docker
-
-```powershell
-docker compose up -d          # 多阶段构建（node:24 构建前端 → python:3.12-slim 运行）+ 启动
-docker compose logs -f app    # 看日志；数据持久化在 writer-data 卷
-```
-
-### 2.6 CLI
-
-```powershell
-uv run writer dev             # 启动开发服务器（uvicorn --reload）
-uv run writer migrate         # alembic upgrade head（无迁移文件时回落 create_all）
-uv run writer rebuild-index   # 全量重建 story_fts / project_index（DB 与文件不一致时）
-uv run writer doctor          # 环境自检（FTS5 / 二元切分 / calibre / Langfuse / 依赖版本）
-```
-
-### 2.7 `.env` 配置
-
-复制 `.env.example` 为 `.env`，按需填写：
-
-```ini
-APP_HOST=127.0.0.1
-APP_PORT=8000
-DATA_ROOT=./data
-LOG_LEVEL=INFO
-
-# LLM（密钥只进 .env，DB 只存变量名）
-DASHSCOPE_API_KEY=
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-GOOGLE_API_KEY=
-AZURE_OPENAI_API_KEY=
-OPENROUTER_API_KEY=
-
-# Langfuse（三项全空则追踪自动降级为本地日志）
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-LANGFUSE_HOST=https://cloud.langfuse.com
-```
-
-### 2.8 测试
-
-```powershell
-uv run python -m pytest -q     # 全量测试（399 用例，假模型驱动，不触网 / 不打真实 LLM）
-uv run ruff check src tests    # lint
-cd src/web; npm run build      # vue-tsc 类型检查 + vite 构建
-```
+手工冒烟建议顺序：启动 → 「AI 设置」加一个模型并测连接 → 新建小说 → 插入卷章 → 写两段正文（看自动保存与回退编辑）→ 选中一段点「AI 润色」→ 右栏发一句话看流式回复 → 删一章去回收站找回 → 导出成书。
 
 ---
 
-## 三、功能层次总览
+## 三、项目设计总览
+
+### 3.1 项目模块与大纲
 
 ```
-AI Agent Writer Pro
-│
-├─ 写作业务（人工撰写）
-│   ├─ 项目管理：新建 / 重命名 / 复制 / 软删除（回收站）/ 导出成书
-│   ├─ 卷章管理：卷章增删改，顺序由大纲决定
-│   ├─ 正文写作：自动保存 / 字数统计 / 修订快照回滚 / 选区 AI 改写
-│   ├─ 大纲维护：单文件大纲 / 格式校验 / 保存后顺序自动回填
-│   ├─ 阅读模式：目录 / 翻页 / 进度记忆 / 夜间模式
-│   └─ 全文检索
-│
-├─ AI 创作（AI 生成与对话）
-│   ├─ AI 助手对话：多会话 / 流式回复 / 消息分支对比 / 会话导出
-│   ├─ 按章生成正文：以大纲章简介为前提，生成前后自动检查与核对
-│   ├─ 人为介入：高危操作先经审批卡片，关键节点用咨询卡片请你拍板
-│   ├─ 写作子代理：策划 / 撰写 / 润色 / 连贯性审查 / 资料检索
-│   ├─ 写作技能：8 个内置 + 用户自建
-│   ├─ 上下文管理：前情提要 / 上下文 Chips（子代理·技能·已读章节）
-│   └─ 模型接入：多厂商 / 降级链 / 参数分层覆盖 / 密钥安全
-│
-└─ 平台支撑
-    ├─ 通用设置：主题 / 字体 / 页宽 / 自动保存间隔 / 回落城市等
-    ├─ 动态组件：宠物动画 / 城市定位 / 当前天气
-    ├─ 审计日志：AI 的每次文件操作都有记录（只读）
-    └─ 数据本地化：正文为本地 Markdown 文件，整目录即备份
+ai-agent-writer-pro/
+├─ main.py                  本地一键启动脚本（后端 + 前端 Vite 一起拉）
+├─ pyproject.toml / uv.lock 依赖唯一事实源；writer CLI（dev/migrate/rebuild-index/doctor）
+├─ Dockerfile / docker-compose.yml   多阶段镜像与编排
+├─ src/
+│  ├─ app/                  后端（Python / FastAPI）
+│  │  ├─ api/               路由层：15 个模块 / 89 个端点，只做协议转换，不写业务
+│  │  ├─ services/          业务编排层：17 个模块（项目/卷章/正文/大纲/检索/导出/回收站/天气…）
+│  │  ├─ agent/             AI Agent（本项目技术核心）：主循环 / 四阶段门禁 / 子代理 / 技能 /
+│  │  │                     MCP / 记忆（消息树）/ 沙箱与权限 / LLM 工厂 / 可观测
+│  │  ├─ core/ db/ schemas/ 基础设施：配置 / 错误码 / 路径 / 密钥、ORM 与迁移、DTO
+│  └─ web/                  前端（Vue 3 + TS + Vite 单页应用）
+│     ├─ views/ components/ 三栏工作台 + 通用设置 + AI 设置；回收站 / 导出 / 审批卡片等组件
+│     ├─ stores/            Pinia：project / editor / reader / agent / settings
+│     ├─ api/ i18n/ styles/ 类型化接口封装与 SSE 客户端、中文文案集中管理、主题变量
+├─ tests/                   pytest 21 个文件 / 497 用例（httpx 直连 ASGI + 假模型）
+└─ data/                    运行时数据（见 3.3）
 ```
 
-> 架构设计、模块实现、运行流程等技术细节见 [`Project-Develop.md`](./Project-Develop.md)。
+分层铁律：`api → services` 是唯一取数路径；`services` 不碰 HTTP 概念；Agent 与写作业务
+通过文件工具和 REST 两条受控通道交互；所有文件写入收敛到 `WorkspaceGuard` 一个入口
+（路径白名单 + 越权拦截 + 审计埋点 + 派生索引同步）。
+
+### 3.2 项目运行逻辑框架
+
+```
+浏览器(Vue SPA)
+   │  REST：/api/v1/**（取数 / 写数）          SSE：/api/v1/agent/runs/{id}/stream
+   ▼
+FastAPI（api/ 路由层，拆信封 {code,message,data}）
+   ▼
+services/（业务编排：校验 → 事务 → 文件/DB 写入 → 审计 → 派生索引同步）
+   │                                  │
+   ▼                                  ▼
+Markdown 文件（内容事实源）        SQLite（登记 / 快照 / 会话 / 消息树 / 审计）
+```
+
+- **启动**：进程起来 → 建表/打迁移戳 → 探测 FTS5 → 挂载前端 `dist/`（单页应用回落）→ 就绪。
+- **写作链路**：前端编辑 → `PUT /chapters/{id}/content` 携 `base_version` → 乐观锁校验
+  （冲突回 409 让前端弹合并横幅）→ 按策略留修订快照 → 写文件 + 更新索引。
+- **AI 链路**：发消息 → 后端立刻回 `202 + run_id` → 后台跑 Agent 主循环 → 事件经 SSE 推给前端
+  （token 增量 / 工具调用 / 泳道 / 计划 / 门禁阶段 / 用量）→ run 结束消息树落库、前端重拉合并。
+  生成正文走四阶段门禁（G0 简介存在 → G1 衔接预检 → G2 生成 → G3 要点核对），
+  高危写入触发 interrupt 审批，拿不准触发 consult 咨询，都在右栏卡片里闭环。
+- **可观测**：Langfuse 配置齐全时全链路上报；全空自动降级为本地结构化日志，功能不受影响。
+
+### 3.3 数据存储
+
+```
+data/
+├─ app.db                     SQLite：项目登记 / 修订快照 / 会话 / 消息树 / 运行 / 中断 / 审计 / 配置 / 派生索引
+├─ agent_state.db             LangGraph checkpoint（Agent 运行态，跨库不建外键）
+├─ workspaces/{project_id}/   ★内容事实源：novel.yaml / volumes.yaml / chapters/**/*.md / outline/ / summaries/
+├─ skills/                    用户自建技能（Markdown 物化）
+├─ session-skills/{sid}/      会话选中技能的物化副本
+├─ exports/                   导出任务产物（zip）
+├─ trash/{project_id}-{ts}/   整本小说被删除时的工作区归档
+├─ recycle/{project_id}/      回收站：index.yaml + chapters/（被删章节，最多 20 本）
+└─ logs/                      app / audit / error 三类 JSONL 日志
+```
+
+设计要点：**正文与知识库以 Markdown 文件为唯一事实源**，数据库只是登记、快照与可重建的索引
+（`writer rebuild-index` 可全量重建）；派生索引写失败不阻断写入，只标脏待重建。
+删掉 `data/` 即完全清空，整目录复制即备份。
+
+---
+
+## 四、开源协议
+
+本项目基于 **MIT License** 开源，完整条款见 [`LICENSE`](./LICENSE)。
+
+你可以自由地使用、复制、修改、合并、发布、分发本软件，甚至出售副本，只需在所有副本中保留
+版权声明与许可声明。本软件按「原样」提供，不附带任何明示或暗示的担保。

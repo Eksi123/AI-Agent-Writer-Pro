@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: conftest.py
@@ -12,11 +12,23 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+import httpx
 import pytest
+
+from app.agent.llm.factory import clear_model_overrides
+from app.agent.loop import checkpointer as cp
+from app.agent.loop.events import sse_bus
+from app.core.config import get_settings
+from app.core.paths import data_root, workspace_dir
+from app.db.bootstrap import init_database
+from app.db.fts import probe_fts5
+from app.db.session import get_sessionmaker, reset_engine
+from app.main import app
 
 
 @pytest.fixture(autouse=True)
@@ -27,8 +39,6 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     Agent 侧全局单例（checkpointer / SSE 总线 / 模型缓存）也一并重置。
     ★同时快照并还原 `os.environ`：`set_env_key` 会直接写进程环境（密钥类测试会污染）。
     """
-    import copy
-    import os
 
     env_snapshot = copy.deepcopy(os.environ)
 
@@ -42,15 +52,10 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     # 测试默认关闭子代理（聚焦主循环；子代理装配有专项测试）
     monkeypatch.setenv("AGENT_SUBAGENTS_ENABLED", "false")
 
-    from app.core.config import get_settings
-    from app.db.fts import probe_fts5
 
     get_settings.cache_clear()
     probe_fts5.cache_clear()
     yield
-    from app.agent.llm.factory import clear_model_overrides
-    from app.agent.loop import checkpointer as cp
-    from app.agent.loop.events import sse_bus
 
     # 同步 teardown：直接释放全局态（连接对象交由 GC；测试用临时目录）
     clear_model_overrides()
@@ -68,14 +73,11 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
 @pytest.fixture
 async def client(_isolate_data_root: None) -> AsyncIterator:
     """httpx AsyncClient 直连 ASGI app（含 lifespan 启动/关闭）。"""
-    import httpx
 
     # 重新导入以拿到隔离后的 settings（engine 单例需重置）
-    from app.db.session import reset_engine
 
     await reset_engine()
 
-    from app.main import app
 
     transport = httpx.ASGITransport(app=app)
     # 单层 with：退出顺序仍为 client → lifespan，语义与嵌套写法一致
@@ -90,8 +92,6 @@ async def client(_isolate_data_root: None) -> AsyncIterator:
 @pytest.fixture
 async def session(_isolate_data_root: None) -> AsyncIterator:
     """裸 AsyncSession（服务层单测用）。"""
-    from app.db.bootstrap import init_database
-    from app.db.session import get_sessionmaker, reset_engine
 
     await reset_engine()
     await init_database()
@@ -136,13 +136,11 @@ async def chapter_id(client, volume_id: str) -> str:
 
 def workspace_of(project_id: str) -> Path:
     """返回当前测试的临时工作区路径。"""
-    from app.core.paths import workspace_dir
 
     return workspace_dir(project_id)
 
 
 def data_root_of() -> Path:
-    from app.core.paths import data_root
 
     return data_root()
 

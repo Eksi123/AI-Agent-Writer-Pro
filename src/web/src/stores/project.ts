@@ -96,6 +96,8 @@ export const useProjectStore = defineStore('project', () => {
    * 新建卷。
    * v1029：`ordinal` 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
    * v1030续：`firstChapterTitle` = 随卷一并创建的第一章名（★不允许产生空卷）。
+   * ★v1031：**任何入口新建卷都必须带上第一章**——调用方漏传时回落到 `第一章`，
+   * 保证「新建卷的同时也初始化创建该卷下的第一章」，目录里不会出现找不到章节的空卷。
    */
   async function createVolume(
     title: string,
@@ -109,7 +111,7 @@ export const useProjectStore = defineStore('project', () => {
       title,
       summary,
       ordinal,
-      firstChapterTitle,
+      firstChapterTitle?.trim() || '第一章',
     )
     await loadVolumes()
     return vol

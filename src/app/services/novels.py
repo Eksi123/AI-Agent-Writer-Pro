@@ -34,7 +34,7 @@ from app.core.paths import (
 )
 from app.db.base import new_id, utcnow
 from app.db.models import Novel, ProjectIndex
-from app.services import audit, files
+from app.services import audit, files, recycle
 from app.services.naming import validate_novel_title
 from app.services.outline import render_template
 from app.services.workspace import WorkspaceGuard
@@ -280,7 +280,7 @@ def _rename_outline_file(guard: WorkspaceGuard, old_rel: str, new_rel: str) -> N
 async def delete_novel(session: AsyncSession, novel_id: str) -> dict[str, Any]:
     """软删除：工作区移入 `data/trash/{id}-{ts}/` + `status="deleted"`。
 
-    保留可恢复窗口，不做恢复 UI（手册「三、(3)」）。
+    保留可恢复窗口；★v1031：登记进回收站（可在回收站里恢复整本小说及其大纲）。
     """
     novel = await get_novel(session, novel_id)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
@@ -296,6 +296,11 @@ async def delete_novel(session: AsyncSession, novel_id: str) -> dict[str, Any]:
     novel.status = "deleted"
     novel.updated_at = utcnow()
     await session.flush()
+
+    # ★v1031：进回收站（整本被删 → 回收其中任一章节时连同小说项目与大纲一起恢复）
+    recycle.archive_novel(
+        novel_id, novel_title=novel.title, trash_dir=str(trash_dir) if moved else None
+    )
 
     await audit.record(
         session,

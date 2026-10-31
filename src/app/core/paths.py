@@ -12,6 +12,7 @@
         ├── skills/{name}/SKILL.md
         ├── exports/
         ├── trash/{project_id}-{ts}/
+        ├── recycle/{project_id}/{index.yaml,chapters/}   ← v1031 回收站（最多 20 本）
         └── logs/
 """
 
@@ -120,6 +121,35 @@ def trash_root() -> Path:
     p = data_root() / "trash"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+#: v1031：回收站根目录（被删除的**章节**按小说归档在这里）
+RECYCLE_DIR = "recycle"
+
+
+def recycle_root() -> Path:
+    """回收站根：`data/recycle/`。
+
+    布局（v1031）：
+        data/recycle/{project_id}/index.yaml        ← 该小说被删章节清单（含书名/卷名快照）
+        data/recycle/{project_id}/chapters/c{id}.md ← 被删章节原文件（frontmatter + 正文）
+    """
+    p = data_root() / RECYCLE_DIR
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def recycle_novel_dir(project_id: str) -> Path:
+    """某本小说在回收站里的归档目录。"""
+    return recycle_root() / project_id
+
+
+def recycle_chapters_dir(project_id: str) -> Path:
+    return recycle_novel_dir(project_id) / CHAPTERS_DIR
+
+
+def recycle_index_file(project_id: str) -> Path:
+    return recycle_novel_dir(project_id) / "index.yaml"
 
 
 def logs_root() -> Path:

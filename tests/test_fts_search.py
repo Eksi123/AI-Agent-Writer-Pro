@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_fts_search.py
@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.db import fts as fts_module
 from app.db.fts import bigram_tokenize, probe_fts5
+from app.services import search as search_service
 
 # ---------------------------------------------------------------------------
 # 二元切分
@@ -165,8 +167,6 @@ async def test_search_scope_filter(client, novel_id):
 @pytest.mark.asyncio
 async def test_search_like_degradation(client, novel_id, monkeypatch):
     """★FTS5 不可用时降级 LIKE，返回结构不变且 `data.degraded=true`。"""
-    from app.db import fts as fts_module
-    from app.services import search as search_service
 
     await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": OUTLINE})
 

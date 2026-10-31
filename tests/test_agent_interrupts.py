@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_agent_interrupts.py
@@ -18,6 +18,8 @@ from tests.test_agent_e2e import (
     _post_message,
     _setup_provider_model,
 )
+
+from app.core.paths import chapter_file
 
 
 async def _new_session(client, novel_id: str) -> str:
@@ -45,7 +47,6 @@ class TestApprovalDecisions:
 
     async def test_approve_executes_tool(self, client, novel_id, volume_id, chapter_id):
         """approve → 工具真实执行（文件确实被删）。"""
-        from app.core.paths import chapter_file
 
         _pid, model_ref = await _setup_provider_model(client)
         fake = _install_fake(model_ref, [])
@@ -114,7 +115,6 @@ class TestApprovalDecisions:
         assert resp.json()["code"] == 0
         await _wait_status(client, run_id, ("completed", "failed"))
 
-        from app.core.paths import chapter_file
 
         assert not chapter_file(novel_id, real_vol, real_ch).exists()
 

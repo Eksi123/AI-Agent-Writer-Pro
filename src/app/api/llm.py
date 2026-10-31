@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.api.llm
 文件名: llm.py
@@ -24,7 +24,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_session
+from app.core.errors import NotFoundError
 from app.core.response import ok
+from app.db.models import LlmModel
 from app.schemas import (
     LlmModelCreate,
     LlmModelUpdate,
@@ -82,7 +84,6 @@ async def get_provider(provider_id: str, session: AsyncSession = Depends(get_ses
     for p in providers:
         if p["id"] == provider_id:
             return ok(p)
-    from app.core.errors import NotFoundError
 
     raise NotFoundError(f"Provider 不存在：{provider_id}")
 
@@ -185,7 +186,6 @@ async def delete_model(model_pk: str, session: AsyncSession = Depends(get_sessio
 @router.get("/llm/models/{model_pk}/fallback-chain")
 async def fallback_chain(model_pk: str, session: AsyncSession = Depends(get_session)) -> dict:
     """降级链（有序 model_ref）。"""
-    from app.db.models import LlmModel
 
     row: Any = await session.get(LlmModel, model_pk)
     if row is None:

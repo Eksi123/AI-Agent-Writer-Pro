@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.files
 文件名: files.py
@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -145,7 +146,6 @@ def list_chapter_files(project_id: str, vol_id: str) -> list[Path]:
 
 def count_words(text: str) -> int:
     """中文字数统计：去除 markdown 标记与空白后按字符计。"""
-    import re
 
     cleaned = re.sub(r"[#>*`\-\[\]!|]", "", text)
     cleaned = re.sub(r"\s+", "", cleaned)

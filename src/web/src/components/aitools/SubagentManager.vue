@@ -1,14 +1,10 @@
 <script setup lang="ts">
 /**
- * 写作子代理管理（v1028）：内置 + 用户自建。
+ * 写作子代理管理：内置 + 用户自建。
  *
- * v1028 变更：
- * - 顶部提示语不再展示，改为「启用/停用」开关的悬浮说明；
- * - 卡片只展示职责（描述），删除技能展示；
- * - 开关旁加「启用/停用」文字；编辑按钮加外框；「恢复出厂」→「恢复默认」（仅内置）；
- * - 弹窗删除顶部标题、删除模型覆盖、删除启用开关（启用在创建后使用）；
- *   名称提示改「如my-writer」；「职责描述」→「描述」并删提示；系统提示词必填；
- *   可用技能改为多选（支持全选），来源为写作技能（含内置工具 read/edit/list/grep/glob/web_search）。
+ * 卡片只展示职责描述 + 启用/停用开关（悬浮说明）；编辑按钮带外框；内置可「恢复默认」。
+ * 弹窗（无标题）：名称（如 my-writer）、描述、系统提示词（必填）、可用技能多选
+ * （含内置工具 read/edit/list/grep/glob/web_search，支持全选）；启用在创建后使用。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.mcp.server
 文件名: server.py
@@ -23,6 +23,7 @@ from langchain_core.tools import tool
 from mcp.server.mcpserver import MCPServer
 
 from app.core.logging import get_logger
+from app.services import weather
 
 logger = get_logger(__name__)
 
@@ -39,7 +40,6 @@ def build_weather_server() -> MCPServer:
     @server.tool(name="get_current_weather", description="查询指定城市的当前天气（温度/体感/湿度/风速/天气状况/空气质量 AQI）。")
     async def get_current_weather(city: str) -> str:
         """city: 城市名（中文或英文，如「杭州」「Beijing」）。"""
-        from app.services import weather
 
         try:
             data = await weather.current_weather(city)
@@ -50,7 +50,6 @@ def build_weather_server() -> MCPServer:
     @server.tool(name="get_forecast", description="查询指定城市未来 1-7 天的天气预报（每日最高/最低温、降水概率）。")
     async def get_forecast(city: str, days: int = 3) -> str:
         """city: 城市名；days: 预报天数（1-7）。"""
-        from app.services import weather
 
         try:
             data = await weather.forecast(city, days=days)
@@ -73,7 +72,6 @@ async def get_current_weather_tool(city: str) -> str:
     Args:
         city: 城市名（中文或英文，如「杭州」「Beijing」）。
     """
-    from app.services import weather
 
     try:
         data = await weather.current_weather(city)
@@ -90,7 +88,6 @@ async def get_forecast_tool(city: str, days: int = 3) -> str:
         city: 城市名（中文或英文）。
         days: 预报天数（1-7，默认 3）。
     """
-    from app.services import weather
 
     try:
         data = await weather.forecast(city, days=days)

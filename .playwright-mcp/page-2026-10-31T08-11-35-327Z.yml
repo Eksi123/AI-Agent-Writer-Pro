@@ -1,0 +1,107 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e7]:
+        - generic "生肖宠物与日期" [ref=f6e8]:
+          - generic [ref=f6e9]: 🐵
+          - generic [ref=f6e10]: 2026年10月31日
+          - generic [ref=f6e11]: 星期六
+        - generic [ref=f6e12]:
+          - generic [ref=f6e13]: 北京
+          - generic [ref=f6e15]:
+            - generic [ref=f6e16]:
+              - generic [ref=f6e17]: ☁️
+              - generic [ref=f6e18]: 阴
+            - generic [ref=f6e19]:
+              - generic [ref=f6e20]: 轻度污染
+              - generic [ref=f6e21]: "130"
+          - generic [ref=f6e22]:
+            - generic [ref=f6e23]: 温度 11°
+            - generic [ref=f6e24]: 湿度 47%
+            - generic [ref=f6e25]: 风速 1级
+      - button "新建小说" [ref=f6e27] [cursor=pointer]
+      - generic [ref=f6e30] [cursor=pointer]:
+        - generic [ref=f6e34]:
+          - generic [ref=f6e35]: 霸道总裁爱上我
+          - generic [ref=f6e36]:
+            - generic [ref=f6e37]: 都市
+            - generic [ref=f6e38]: 现代言情
+        - button "···" [ref=f6e40]
+      - generic [ref=f6e41]:
+        - button "通用设置" [ref=f6e42] [cursor=pointer]
+        - button "AI 设置" [ref=f6e44] [cursor=pointer]
+  - main [ref=f6e46]:
+    - generic [ref=f6e47]:
+      - generic [ref=f6e48]:
+        - radiogroup "radio-group" [ref=f6e49]:
+          - generic [ref=f6e50]:
+            - radio "阅读模式" [checked] [ref=f6e51]
+            - generic [ref=f6e52] [cursor=pointer]: 阅读模式
+          - generic [ref=f6e53]:
+            - radio "编辑模式" [ref=f6e54]
+            - generic [ref=f6e55] [cursor=pointer]: 编辑模式
+        - generic [ref=f6e56]: 霸道总裁爱上我
+      - generic [ref=f6e58]:
+        - button "回收站" [ref=f6e59] [cursor=pointer]
+        - button [ref=f6e63] [cursor=pointer]
+    - generic [ref=f6e67]:
+      - button "目录" [ref=f6e70] [cursor=pointer]
+      - article [ref=f6e77]:
+        - generic [ref=f6e78]:
+          - heading "霸道总裁爱上我_大纲" [level=1] [ref=f6e79]
+          - blockquote [ref=f6e80]:
+            - paragraph [ref=f6e81]:
+              - text: 本文件是
+              - strong [ref=f6e82]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=f6e83]: "#"
+              - text: 为卷或附录，
+              - code [ref=f6e84]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=f6e85]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=f6e86]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=f6e87]
+          - list [ref=f6e88]:
+            - listitem [ref=f6e89]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=f6e90]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=f6e91]
+          - list [ref=f6e92]:
+            - listitem [ref=f6e93]: 世界背景：
+            - listitem [ref=f6e94]: 力量体系：
+            - listitem [ref=f6e95]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=f6e96]
+          - list [ref=f6e97]:
+            - listitem [ref=f6e98]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=f6e99]
+          - list [ref=f6e100]:
+            - listitem [ref=f6e101]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=f6e102]
+          - list [ref=f6e103]:
+            - listitem [ref=f6e104]: 视角与人称：
+            - listitem [ref=f6e105]: 文风与节奏：
+            - listitem [ref=f6e106]: 禁忌与雷区：
+  - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=f6e107]
+  - complementary [ref=f6e109]:
+    - generic [ref=f6e110]:
+      - generic [ref=f6e111]:
+        - generic "会话记录" [ref=f6e112]: 2个会话
+        - generic "用量：入 0 / 出 0 tokens" [ref=f6e115]: 50.2K Token
+      - generic [ref=f6e118]:
+        - generic [ref=f6e119] [cursor=pointer]:
+          - generic [ref=f6e120]:
+            - generic [ref=f6e121]: "2"
+            - generic [ref=f6e122]: 2026-10-31
+          - button "···" [ref=f6e124]
+        - generic [ref=f6e125] [cursor=pointer]:
+          - generic [ref=f6e126]:
+            - generic [ref=f6e127]: "1"
+            - generic [ref=f6e128]: 2026-10-31
+          - button "···" [ref=f6e130]
+      - generic [ref=f6e132]:
+        - textbox [ref=f6e134]
+        - generic [ref=f6e135]:
+          - button "＋" [ref=f6e136] [cursor=pointer]
+          - button "工具" [ref=f6e137] [cursor=pointer]
+          - button "Model Off" [ref=f6e139] [cursor=pointer]
+          - button "发送" [disabled] [ref=f6e140]

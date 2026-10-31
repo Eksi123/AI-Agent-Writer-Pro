@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.api.novels
 文件名: novels.py
@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,7 +197,6 @@ async def get_export_task(novel_id: str, task_id: str) -> dict:
 
 @router.get("/{novel_id}/export-tasks/{task_id}/download")
 async def download_export(novel_id: str, task_id: str) -> Any:
-    from fastapi.responses import FileResponse
 
     task = _tasks.get(task_id)
     if task is None or task.novel_id != novel_id:

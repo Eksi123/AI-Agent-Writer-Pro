@@ -1,0 +1,88 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - generic "生肖宠物与日期" [ref=f1e8]:
+          - generic [ref=f1e9]: 🐵
+          - generic [ref=f1e10]: 2026年10月31日
+          - generic [ref=f1e11]: 星期六
+        - generic [ref=f1e12]:
+          - generic [ref=f1e13]: 北京市
+          - generic [ref=f1e15]:
+            - generic [ref=f1e16]:
+              - generic [ref=f1e17]: ☁️
+              - generic [ref=f1e18]: 阴
+            - generic [ref=f1e19]:
+              - generic [ref=f1e20]: 良
+              - generic [ref=f1e21]: "93"
+          - generic [ref=f1e22]:
+            - generic [ref=f1e23]: 温度 11°
+            - generic [ref=f1e24]: 湿度 47%
+            - generic [ref=f1e25]: 风速 1级
+      - button "新建小说" [ref=f1e27] [cursor=pointer]
+      - generic [ref=f1e30] [cursor=pointer]:
+        - generic [ref=f1e34]:
+          - generic [ref=f1e35]: 霸道总裁爱上我
+          - generic [ref=f1e36]:
+            - generic [ref=f1e37]: 都市
+            - generic [ref=f1e38]: 现代言情
+        - button "···" [ref=f1e40]
+      - generic [ref=f1e41]:
+        - button "通用设置" [ref=f1e42] [cursor=pointer]
+        - button "AI 设置" [ref=f1e44] [cursor=pointer]
+  - main [ref=f1e46]:
+    - generic [ref=f1e47]:
+      - generic [ref=f1e48]:
+        - radiogroup "radio-group" [ref=f1e49]:
+          - generic [ref=f1e50]:
+            - radio "阅读模式" [checked] [ref=f1e51]
+            - generic [ref=f1e52] [cursor=pointer]: 阅读模式
+          - generic [ref=f1e53]:
+            - radio "编辑模式" [ref=f1e54]
+            - generic [ref=f1e55] [cursor=pointer]: 编辑模式
+        - generic [ref=f1e56]: 霸道总裁爱上我
+      - generic [ref=f1e58]:
+        - button "回收站" [ref=f1e59] [cursor=pointer]
+        - button "AI写作助手" [ref=f1e63] [cursor=pointer]
+    - generic [ref=f1e68]:
+      - button "目录" [ref=f1e71] [cursor=pointer]
+      - article [ref=f1e78]:
+        - generic [ref=f1e79]:
+          - heading "霸道总裁爱上我_大纲" [level=1] [ref=f1e80]
+          - blockquote [ref=f1e81]:
+            - paragraph [ref=f1e82]:
+              - text: 本文件是
+              - strong [ref=f1e83]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=f1e84]: "#"
+              - text: 为卷或附录，
+              - code [ref=f1e85]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=f1e86]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=f1e87]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=f1e88]
+          - list [ref=f1e89]:
+            - listitem [ref=f1e90]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=f1e91]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=f1e92]
+          - list [ref=f1e93]:
+            - listitem [ref=f1e94]: 世界背景：
+            - listitem [ref=f1e95]: 力量体系：
+            - listitem [ref=f1e96]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=f1e97]
+          - list [ref=f1e98]:
+            - listitem [ref=f1e99]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=f1e100]
+          - list [ref=f1e101]:
+            - listitem [ref=f1e102]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=f1e103]
+          - list [ref=f1e104]:
+            - listitem [ref=f1e105]: 视角与人称：
+            - listitem [ref=f1e106]: 文风与节奏：
+            - listitem [ref=f1e107]: 禁忌与雷区：
+  - dialog "回收站" [ref=f1e109]:
+    - banner [ref=f1e110]:
+      - heading "回收站" [level=2] [ref=f1e111]
+      - button "关闭此对话框" [ref=f1e112] [cursor=pointer]
+    - generic [ref=f1e116]: 回收站是空的

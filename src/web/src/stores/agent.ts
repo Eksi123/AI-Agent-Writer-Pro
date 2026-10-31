@@ -72,8 +72,9 @@ export const useAgentStore = defineStore('agent', () => {
    * v1030续(1)：刚发出的用户消息（乐观回显）。
    * 主流 AI Agent 的行为是「发出去就立刻出现在会话里」，而后端消息树要等 run 收尾才刷新，
    * 因此先本地回显，`refreshMessages()` 拿到真实消息后自动置空替换。
+   * ★v1031：改为对象，带上本地时间戳，使乐观回显的用户消息下方也能显示日期时间。
    */
-  const pendingUserMessage = ref<string | null>(null)
+  const pendingUserMessage = ref<{ content: string; sentAt: string } | null>(null)
   /**
    * v1030续：错误码（与后端 ErrorCode 对齐）。
    * 会话框据此给出**中文提示 + 用户该怎么做**，并以灰色（异常不可用）呈现。
@@ -267,6 +268,11 @@ export const useAgentStore = defineStore('agent', () => {
       activeLeafId.value = tree.active_leaf_id ?? null
       // v1030续：真实消息已到，撤掉乐观回显
       pendingUserMessage.value = null
+      /**
+       * ★v1031：同时清空流式缓冲——否则 run 收尾后「已持久化的回复」与
+       * 「流式回复」会同时渲染，界面上出现两条一模一样的消息。
+       */
+      streaming.value = []
     } catch (err) {
       setError(err)
     }
@@ -302,7 +308,8 @@ export const useAgentStore = defineStore('agent', () => {
     }
     clearError()
     // v1030续(1)：乐观回显——发出的用户消息立即出现在会话里（run 收尾刷新后替换）
-    pendingUserMessage.value = content
+    // ★v1031：同时记下发送时刻，乐观回显期间也能显示日期时间
+    pendingUserMessage.value = { content, sentAt: new Date().toISOString() }
     try {
       const { run_id: runId } = await agentApi.postMessage(currentSessionId.value, {
         content,
@@ -313,6 +320,9 @@ export const useAgentStore = defineStore('agent', () => {
       // v1029：**不**清零 lastUsage——上下文只增不减，清零会让百分比闪回 100%；
       // 保留上一次的值直到本次 run 的 usage 事件刷新它。
       startStream(runId)
+      // ★v1031 续：首条消息发出后后端即刻把会话标题改为「首条消息文字」，
+      // 这里轻量刷新会话列表，让标题/列表立刻生效（不必等 run 结束）。
+      void refreshSessionsLight()
     } catch (err) {
       // v1030续：发送失败 → 撤掉乐观回显，避免留下未真正发出的消息
       pendingUserMessage.value = null
@@ -342,18 +352,15 @@ export const useAgentStore = defineStore('agent', () => {
       running.value = true
       // v1029：同 postMessage，不清零（避免百分比闪回 100%）
       startStream(runId)
+      // ★v1031 续：同 sendMessage——首条消息即改标题，立刻轻量刷新会话列表
+      void refreshSessionsLight()
     } catch (err) {
       setError(err)
       gateStage.value = null
     }
   }
 
-  /** 重新生成：以最后一条用户消息的父节点重发（形成兄弟分支） */
-  async function regenerate(modelRef?: string): Promise<void> {
-    const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
-    if (!lastUser) return
-    await sendMessage(String(lastUser.content), modelRef)
-  }
+  /** ★v1031：删除[重新生成]功能（store 侧 regenerate 一并移除） */
 
   function startStream(runId: string, lastEventId?: number): void {
     stopStream()
@@ -614,7 +621,6 @@ export const useAgentStore = defineStore('agent', () => {
     switchBranch,
     sendMessage,
     generateChapter,
-    regenerate,
     resolveInterrupt,
     resolveConsult,
     cancelRun,

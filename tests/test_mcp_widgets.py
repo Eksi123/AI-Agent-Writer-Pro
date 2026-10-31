@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_mcp_widgets.py
@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 
 from app.agent.mcp.adapter import STDIO_COMMAND_WHITELIST, validate_stdio_command
-from app.core.errors import BadRequestError
+from app.agent.mcp.server import build_weather_server, weather_tools
+from app.core.errors import BadRequestError, DependencyUnavailableError
 from app.services import weather
 
 # ---------------------------------------------------------------------------
@@ -87,13 +89,11 @@ class TestWeatherService:
 
     async def test_geocode_not_found(self, fake_http):
         fake_http.registry["geocoding-api"] = {"results": []}
-        from app.core.errors import DependencyUnavailableError
 
         with pytest.raises(DependencyUnavailableError):
             await weather.geocode("不存在城")
 
     async def test_geocode_empty_city(self, fake_http):
-        from app.core.errors import DependencyUnavailableError
 
         with pytest.raises(DependencyUnavailableError):
             await weather.geocode("  ")
@@ -125,10 +125,8 @@ class TestWeatherService:
         assert data["city"] == "北京"
 
     async def test_weather_http_error_degrades(self, fake_http):
-        import httpx
 
         fake_http.registry["api.open-meteo.com"] = httpx.ConnectError("网络不可达")
-        from app.core.errors import DependencyUnavailableError
 
         with pytest.raises(DependencyUnavailableError):
             await weather.current_weather_by_coords(1, 1)
@@ -142,7 +140,6 @@ class TestWeatherService:
         assert first == second
 
     async def test_reverse_geocode_failure_returns_none(self, fake_http):
-        import httpx
 
         fake_http.registry["bigdatacloud"] = httpx.ConnectError("x")
         assert await weather.reverse_geocode(30.0, 120.0) is None
@@ -185,7 +182,6 @@ class TestWeatherService:
 
     async def test_aqi_failure_does_not_break_weather(self, fake_http):
         """v1028：空气质量接口异常时天气主数据照常返回（aqi 为空）。"""
-        import httpx
 
         fake_http.registry["air-quality-api"] = httpx.ConnectError("AQI 不可达")
         fake_http.registry["api.open-meteo.com"] = {
@@ -281,7 +277,6 @@ class TestWeatherService:
 
     async def test_current_weather_address_failure_does_not_break(self, fake_http):
         """地址是锦上添花：反向地理编码挂了也**必须**返回天气主数据（回落 admin1）。"""
-        import httpx
 
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "杭州", "admin1": "浙江省", "latitude": 30.25, "longitude": 120.17}]
@@ -298,7 +293,6 @@ class TestWeatherService:
 
     async def test_current_weather_dedups_municipality_address(self, fake_http):
         """直辖市：省名与城市名重合（北京/北京市）→ 地址不重复展示城市名。"""
-        import httpx
 
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "北京", "admin1": "北京市", "latitude": 39.9, "longitude": 116.4}]
@@ -465,7 +459,6 @@ class TestMcpApi:
 
     async def test_builtin_weather_tools_available(self, client):
         """内置天气 MCP 工具（LangChain tool 形式）齐备且 schema 正确。"""
-        from app.agent.mcp.server import build_weather_server, weather_tools
 
         tools = weather_tools()
         assert {t.name for t in tools} == {"get_current_weather", "get_forecast"}
@@ -530,7 +523,6 @@ class TestWidgetsApi:
         assert data["source"] == "reverse_geocode"
 
     async def test_city_fallback(self, client, fake_http):
-        import httpx
 
         fake_http.registry["bigdatacloud"] = httpx.ConnectError("x")
         await client.put("/api/v1/settings", json={"city": "兜底城"})

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.middleware.write_approval
 文件名: write_approval.py
@@ -32,6 +32,7 @@ from langgraph.types import interrupt
 
 from app.core.logging import get_logger
 from app.core.paths import workspaces_root
+from app.db.base import new_id, utcnow
 
 logger = get_logger(__name__)
 
@@ -251,7 +252,6 @@ class WriteApprovalMiddleware(AgentMiddleware):
 
     async def _create_interrupt(self, context: Any, payload: dict[str, Any]) -> str:
         """幂等创建中断行：同 (run_id, tool_call_id) 未决行直接复用。"""
-        from app.db.base import new_id, utcnow
 
         run_id = getattr(context, "run_id", "") or ""
         session_id = getattr(context, "session_id", "") or ""

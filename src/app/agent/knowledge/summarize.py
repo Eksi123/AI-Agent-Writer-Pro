@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.knowledge.summarize
 文件名: summarize.py
@@ -21,6 +21,7 @@ import frontmatter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.knowledge.chapters import list_chapters_ordered
+from app.agent.tracing import observation
 from app.core.logging import get_logger
 from app.core.paths import summary_file
 from app.db.base import utcnow
@@ -104,7 +105,6 @@ async def summarize_chapter(
         content=text[:24000],
     )
 
-    from app.agent.tracing import observation
 
     with observation("summarize_chapter", metadata={"project_id": project_id, "chapter_id": chapter_id}):
         try:

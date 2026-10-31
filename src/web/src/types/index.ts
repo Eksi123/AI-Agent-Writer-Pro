@@ -418,3 +418,42 @@ export interface RewriteResult {
   word_counts: { original: number; rewritten: number }
   prompt_version: string
 }
+
+// ---------------------------------------------------------------------------
+// v1031：回收站
+// ---------------------------------------------------------------------------
+
+/** 回收站首页的一条（最近删除过章节的小说，最多 20 本） */
+export interface RecycledNovel {
+  novel_id: string
+  title: string
+  /** true = 整本小说被删除（回收任一章节会连同小说项目与大纲一起恢复） */
+  novel_deleted: boolean
+  chapter_count: number
+  updated_at?: string | null
+}
+
+/** 回收站二级页：被删除的章节 */
+export interface RecycledChapter {
+  id: string
+  title: string
+  volume_id: string
+  sort_order: number
+  word_count: number
+  deleted_at?: string | null
+}
+
+/** 回收站二级页：卷 → 该卷下被删除的章节 */
+export interface RecycledVolume {
+  id: string
+  title: string
+  sort_order: number
+  chapters: RecycledChapter[]
+  chapter_count: number
+}
+
+/** 回收站二级页 DTO */
+export interface RecycledContents extends RecycledNovel {
+  volumes: RecycledVolume[]
+  total_chapters: number
+}

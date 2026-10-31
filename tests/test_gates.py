@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_gates.py
@@ -29,7 +29,9 @@ from app.agent.gates.orchestrator import (
     resolve_target,
 )
 from app.agent.gates.state import ConsultRequired, GateState
+from app.core.errors import NotFoundError
 from app.services import files
+from app.services.workspace import WorkspaceGuard
 
 
 def _json_model(payload: dict[str, Any]) -> Any:
@@ -54,7 +56,6 @@ def _write_outline(project_id: str, content: str) -> None:
 
     ★写 `novel.yaml.outline_file` 记录的相对路径（G0 经 DB/novel.yaml 寻址大纲）。
     """
-    from app.services.workspace import WorkspaceGuard
 
     meta = files.read_novel_meta(project_id)
     outline_file = str(meta.get("outline_file") or "")
@@ -334,7 +335,6 @@ class TestStateSerialization:
 
 class TestResolveTarget:
     async def test_resolve_unknown_chapter(self, session, novel_id):
-        from app.core.errors import NotFoundError
 
         with pytest.raises(NotFoundError):
             await resolve_target(session, novel_id, "deadbeef")

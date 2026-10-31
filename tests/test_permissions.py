@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_permissions.py
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
+from app.agent.loop.middleware.workspace_guard import _TOOL_OPERATION, WorkspaceGuardMiddleware
 from app.agent.sandbox.permissions import PERMISSION_RULES, build_permissions
 
 PID = "p" * 36
@@ -57,7 +57,6 @@ class TestPermissionOrderRegression:
 
     def test_operations_mapping(self):
         """ls/read_file/glob/grep → read；write_file/edit_file/delete → write。"""
-        from app.agent.loop.middleware.workspace_guard import _TOOL_OPERATION
 
         for tool in ("ls", "read_file", "glob", "grep"):
             assert _TOOL_OPERATION[tool] == "read"
@@ -82,7 +81,6 @@ class TestGuardPathMatrix:
     # 规则 2：其它项目写被拒（含 write_file/edit_file/delete 三个工具 → 同为 write 操作）
     @pytest.mark.parametrize("tool", ["write_file", "edit_file", "delete"])
     def test_other_project_write_denied_all_write_tools(self, guard, tool):
-        from app.agent.loop.middleware.workspace_guard import _TOOL_OPERATION
 
         op = _TOOL_OPERATION[tool]
         result = guard.check_path(f"/projects/{OTHER}/chapters/v1/c1.md", op, PID)

@@ -30,6 +30,37 @@ export const useEditorStore = defineStore('editor', () => {
   const saveRequestTick = ref(0)
 
   /**
+   * ★v1031：[回退编辑]（类似 Word 的撤销）——保存当前章节的编辑快照，最多 5 次。
+   * 快照由正文编辑器在「一次连续输入的停顿处」压入（见 TiptapEditor 的防抖记录），
+   * 工具栏 icon 点击后自增 `undoEditTick`，编辑器据此弹出最近一份快照还原。
+   * 只在章节编辑态有效（大纲编辑器不参与）。
+   */
+  const MAX_UNDO = 5
+  const undoStack = ref<string[]>([])
+  const undoEditTick = ref(0)
+
+  const canUndo = computed(() => undoStack.value.length > 0)
+
+  /** 压入一份「回退目标」快照；与栈顶相同则忽略；超出 5 份丢弃最旧的 */
+  function pushUndoSnapshot(html: string): void {
+    if (undoStack.value[undoStack.value.length - 1] === html) return
+    undoStack.value = [...undoStack.value, html].slice(-MAX_UNDO)
+  }
+
+  function requestUndo(): void {
+    if (!undoStack.value.length) return
+    undoEditTick.value += 1
+  }
+
+  /** 取出最近一份快照（供编辑器还原），栈空返回 null */
+  function popUndoSnapshot(): string | null {
+    if (!undoStack.value.length) return null
+    const snapshot = undoStack.value[undoStack.value.length - 1]
+    undoStack.value = undoStack.value.slice(0, -1)
+    return snapshot
+  }
+
+  /**
    * v1031：大纲编辑器的脏状态（正文用 dirty）。
    * 工具栏保存 icon 据此置灰——没有任何待保存内容时不可点击。
    */
@@ -57,6 +88,8 @@ export const useEditorStore = defineStore('editor', () => {
     lastWriter.value = data.last_writer
     wordCount.value = data.word_count
     dirty.value = false
+    // ★v1031：换章即清空回退栈（回退只针对「当前章节」的编辑）
+    undoStack.value = []
   }
 
   function markDirty(): void {
@@ -154,6 +187,7 @@ export const useEditorStore = defineStore('editor', () => {
     revisions.value = []
     error.value = null
     dirtyOutline.value = false
+    undoStack.value = []
   }
 
   return {
@@ -172,7 +206,12 @@ export const useEditorStore = defineStore('editor', () => {
     hasConflict,
     saveRequestTick,
     dirtyOutline,
+    undoEditTick,
+    canUndo,
     requestSave,
+    pushUndoSnapshot,
+    requestUndo,
+    popUndoSnapshot,
     openChapter,
     markDirty,
     save,

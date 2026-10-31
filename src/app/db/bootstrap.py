@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.db.bootstrap
 文件名: bootstrap.py
@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -110,10 +113,7 @@ async def _upgrade_if_behind() -> None:
     if current is None or current == head:
         return
 
-    import asyncio
 
-    from alembic import command
-    from alembic.config import Config
 
     def _run_upgrade() -> None:
         cfg = Config()

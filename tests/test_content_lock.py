@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_content_lock.py
@@ -15,6 +15,10 @@
 from __future__ import annotations
 
 import pytest
+
+from app.core.config import get_settings
+from app.db.session import get_sessionmaker
+from app.services import volumes as volumes_service
 
 
 @pytest.mark.asyncio
@@ -151,7 +155,6 @@ async def test_invalid_status_rejected(client, chapter_id):
 @pytest.mark.asyncio
 async def test_snapshot_pruning_keeps_newest(client, chapter_id, monkeypatch):
     """超过保留上限时清理最旧的非定稿快照。"""
-    from app.core.config import get_settings
 
     monkeypatch.setattr(get_settings(), "chapter_revision_keep", 3, raising=False)
 
@@ -233,8 +236,6 @@ async def test_word_count_updates(client, chapter_id):
 @pytest.mark.asyncio
 async def test_agent_write_source_recorded(client, chapter_id):
     """Agent 写入路径（source="agent"）产生 agent 快照并记 last_writer。"""
-    from app.db.session import get_sessionmaker
-    from app.services import volumes as volumes_service
 
     async with get_sessionmaker()() as s:
         result = await volumes_service.write_content(

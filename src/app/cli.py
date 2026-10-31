@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.cli
 文件名: cli.py
@@ -18,12 +18,25 @@ import asyncio
 import sys
 from typing import Any
 
+import uvicorn
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import select
+
+from app.core.config import PROJECT_ROOT, get_settings
+from app.core.paths import data_root
+from app.db.bootstrap import init_database
+from app.db.fts import bigram_tokenize, probe_fts5
+from app.db.models import Novel
+from app.db.session import get_sessionmaker, reset_engine
+from app.services import novels as novels_service
+from app.services import search as search_service
+from app.services.exporters import find_calibre
+
 
 def _cmd_dev(args: argparse.Namespace) -> int:
     """起 uvicorn（默认 127.0.0.1:8000）。"""
-    import uvicorn
 
-    from app.core.config import get_settings
 
     settings = get_settings()
     host = args.host or settings.app_host
@@ -40,10 +53,7 @@ def _cmd_dev(args: argparse.Namespace) -> int:
 
 def _cmd_migrate(_args: argparse.Namespace) -> int:
     """封装 `alembic upgrade head`。"""
-    from alembic import command
-    from alembic.config import Config
 
-    from app.core.config import PROJECT_ROOT
 
     ini = PROJECT_ROOT / "alembic.ini"
     if not ini.exists():
@@ -62,13 +72,7 @@ def _cmd_migrate(_args: argparse.Namespace) -> int:
 
 def _cmd_rebuild_index(_args: argparse.Namespace) -> int:
     """全量重建派生索引（`story_fts` + `project_index`），清 dirty。"""
-    from sqlalchemy import select
 
-    from app.db.bootstrap import init_database
-    from app.db.models import Novel
-    from app.db.session import get_sessionmaker, reset_engine
-    from app.services import novels as novels_service
-    from app.services import search as search_service
 
     async def _run() -> dict[str, Any]:
         await init_database()
@@ -95,10 +99,6 @@ def _cmd_rebuild_index(_args: argparse.Namespace) -> int:
 
 def _cmd_doctor(_args: argparse.Namespace) -> int:
     """环境自检：FTS5 / calibre / 数据目录 / 关键依赖版本。"""
-    from app.core.config import get_settings
-    from app.core.paths import data_root
-    from app.db.fts import bigram_tokenize, probe_fts5
-    from app.services.exporters import find_calibre
 
     settings = get_settings()
     fts = probe_fts5()

@@ -22,6 +22,8 @@ import type {
   ProviderTestResult,
   ProviderType,
   ReadingProgress,
+  RecycledContents,
+  RecycledNovel,
   Revision,
   RewriteResult,
   SearchResult,
@@ -532,6 +534,33 @@ export const exportApi = {
       await new Promise((r) => setTimeout(r, 300))
     }
   },
+}
+
+// ---------------------------------------------------------------------------
+// v1031：回收站（被删章节的归档 / 回收 / 彻底删除，最多 20 本小说）
+// ---------------------------------------------------------------------------
+
+export const recycleApi = {
+  /** 首页：最近删除过章节的小说（含整本被删的），只保留最近 20 本 */
+  list: () => get<{ items: RecycledNovel[]; max: number }>('/recycle'),
+
+  /** 二级页：某本小说的「卷 → 被删章节」目录 */
+  contents: (novelId: string) => get<RecycledContents>(`/recycle/${novelId}`),
+
+  /** 回收一个章节；整本小说被删时同时恢复小说项目与它的大纲（novel_restored=true） */
+  restore: (novelId: string, chapterId: string) =>
+    post<{
+      novel_id: string
+      chapter_id: string | null
+      restored: boolean
+      novel_restored: boolean
+    }>(`/recycle/${novelId}/chapters/${chapterId}/restore`),
+
+  /** 彻底删除回收站里的一个章节（不可恢复） */
+  purge: (novelId: string, chapterId: string) =>
+    del<{ novel_id: string; chapter_id: string; purged: boolean }>(
+      `/recycle/${novelId}/chapters/${chapterId}`,
+    ),
 }
 
 /** 触发浏览器下载导出产物 */

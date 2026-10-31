@@ -1,15 +1,13 @@
 <script setup lang="ts">
 /**
- * 左上角动态组件（v1028 重做 / v1029 重排）：生肖宠物 + 天气卡片。
+ * 左上角动态组件：生肖宠物 + 天气卡片。
  *
  * 数据流：浏览器定位 → /widgets/weather?lat&lon&refresh=true（含反向地理编码）；
  * 定位失败/被拒 → /widgets/weather?refresh=true（回落通用设置的回落城市）。
- * ★城市靠定位取得；天气、温度、空气质量在**页面刷新时**都取实时数据（refresh 跳过后端缓存）。
+ * 天气、温度、空气质量在页面刷新时取实时数据；组件自身 10 分钟兜底刷新。
  *
- * v1030 天气卡片三排布局：
- *   1) 城市**居中**独占最上排（大字号）；光标停留城市 → 悬浮显示完整地址
- *   2) 天气 icon + 天气说明 + 污染程度 + AQI 数值**同一条横线**（v1031 排齐并收紧字号）
- *   3) 温度{X°} 湿度{Y%} 风速{Z级}（蒲福风力等级），小字号不超出卡片边框
+ * 卡片三排：1) 城市居中独占一行；2) 天气组（icon+说明）在排开头、空气质量组
+ * （等级+数值）居中在排宽 3/5 处，四元素同一水平线；3) 温度/湿度/风速（带单位小字）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { widgetsApi, type WeatherDto } from '@/api'
@@ -27,9 +25,6 @@ const REFRESH_MS = 10 * 60 * 1000 // 组件自身 10 分钟兜底刷新（实时
 let timer: ReturnType<typeof setInterval> | null = null
 
 const cityLabel = computed(() => weather.value?.city || settings.settings.city || '—')
-
-/** v1030：完整地址只在「城市」上悬浮展示（反向地理编码给出，可为空） */
-const addressLabel = computed(() => weather.value?.address || '')
 
 /** v1030：第三排三项都带单位前缀（温度 X° / 湿度 Y% / 风速 Z 级） */
 const tempLabel = computed(() => {
@@ -124,7 +119,7 @@ onBeforeUnmount(() => {
     <div class="widget-row">
       <ZodiacPet />
       <div class="wx-card" :class="{ 'wx-loading': loading }">
-        <!-- 第一排：城市居中最上排（光标停留 → 悬浮显示完整地址） -->
+        <!-- 第一排：城市居中独占一行（★v1031：不再悬浮展示完整地址） -->
         <div class="wx-row wx-head">
           <span
             v-if="locating"
@@ -133,19 +128,20 @@ onBeforeUnmount(() => {
           <span
             v-else
             class="wx-city"
-            :class="{ 'has-address': !!addressLabel }"
-            :title="addressLabel || undefined"
           >{{ cityLabel }}</span>
         </div>
 
-        <!-- 第二排：天气 icon + 说明 + 污染程度 + AQI 数值，全部排在同一条横线上 -->
-        <div class="wx-row wx-main">
-          <span v-if="weather" class="wx-icon">{{ weather.icon }}</span>
-          <span v-if="weather" class="wx-desc muted">{{ weather.description }}</span>
-          <template v-if="weather && weather.aqi != null">
+        <!-- 第二排：★v1031 续：天气组在排**开头**、空气质量组居中在排宽 **3/5** 处（不挤在一起）；
+             icon / 天气情况 / 等级 / AQI 数值四个元素在同一条水平线上 -->
+        <div class="wx-main">
+          <span v-if="weather" class="wx-group wx-group-weather">
+            <span class="wx-icon">{{ weather.icon }}</span>
+            <span class="wx-sub muted">{{ weather.description }}</span>
+          </span>
+          <span v-if="weather && weather.aqi != null" class="wx-group wx-group-air">
             <span class="wx-aqi-level" :class="aqiClass">{{ aqiText }}</span>
-            <span class="wx-aqi muted">{{ weather.aqi }}</span>
-          </template>
+            <span class="wx-sub muted">{{ weather.aqi }}</span>
+          </span>
         </div>
 
         <!-- 第三排：温度 X° / 湿度 Y% / 风速 Z 级（v1030 带单位） -->
@@ -214,44 +210,60 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* 有完整地址可悬浮时才给「可交互」光标提示 */
-.wx-city.has-address {
-  cursor: help;
-  border-bottom: 1px dashed color-mix(in srgb, var(--text-muted) 55%, transparent);
+/* 第二排：天气组在排**开头**；空气质量组绝对定位、居中在排宽 **3/5** 处，两组不挤在一起（★v1031 续） */
+.wx-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 18px;
 }
 
-/* 第二排：icon / 说明 / 污染程度 / AQI 数值同一条横线（字号收紧保证排得下） */
-.wx-main {
-  gap: 5px;
+.wx-group-weather {
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+}
+
+/* 水平中心 = 排宽 60%（3/5），垂直方向与天气组同一条水平线 */
+.wx-group-air {
+  position: absolute;
+  left: 60%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* 组内：icon / 文字 / 等级 / 数值**同一条水平线**，垂直居中对齐 */
+.wx-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wx-group-weather .wx-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wx-icon {
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
 }
 
-.wx-desc {
+.wx-sub {
   font-size: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1;
 }
 
 .wx-aqi-level {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.2px;
-  white-space: nowrap;
-  color: var(--text);
-  flex-shrink: 0;
-}
-
-.wx-aqi {
-  font-size: 9px;
   line-height: 1;
   white-space: nowrap;
-  flex-shrink: 0;
+  color: var(--text);
 }
 
 /* 第三排：温度 / 湿度 / 风速（小字号 + 均分，避免超出卡片边框） */

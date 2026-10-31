@@ -24,6 +24,7 @@ import EditorActionBar from '@/components/editor/EditorActionBar.vue'
 import OutlineEditor from '@/components/editor/OutlineEditor.vue'
 import AgentPanel from '@/components/agent/AgentPanel.vue'
 import ExportDialog from '@/components/common/ExportDialog.vue'
+import RecycleBin from '@/components/common/RecycleBin.vue'
 import { errorMessage } from '@/api/http'
 import { useAgentStore } from '@/stores/agent'
 import { useEditorStore } from '@/stores/editor'
@@ -44,6 +45,22 @@ const agentStore = useAgentStore()
 const agentOpen = ref(false)
 const exportVisible = ref(false)
 const exportNovel = ref<Novel | null>(null)
+/** ★v1031：回收站抽屉（入口在顶部工具栏 AI写作助手左边） */
+const recycleVisible = ref(false)
+
+/** 回收站里回收了整本小说 → 重新拉项目列表并选中它（大纲随之回来） */
+async function onNovelRestored(novelId: string): Promise<void> {
+  await project.loadNovels()
+  const found = project.novels.find((n) => n.id === novelId)
+  if (found) await project.selectNovel(found.id)
+  else if (project.novels.length && !project.currentNovelId) await project.selectNovel(project.novels[0].id)
+}
+
+/** 回收站里回收了某个章节 → 刷新当前项目的卷章树 */
+async function onChapterRestored(novelId: string): Promise<void> {
+  await project.loadNovels()
+  if (project.currentNovelId === novelId) await project.loadVolumes()
+}
 
 /** v1029：右栏 AI 会话框宽度（px），可向左拉伸；默认沿用 --agent-width，上限 = 主页面宽度的 2/5 */
 const AGENT_DEFAULT_WIDTH = 340
@@ -235,7 +252,11 @@ window.addEventListener('beforeunload', (e) => {
 
     <!-- 中栏 -->
     <main class="main-panel">
-      <ReaderToolbar :agent-open="agentOpen" @toggle-agent="agentOpen = !agentOpen" />
+      <ReaderToolbar
+        :agent-open="agentOpen"
+        @toggle-agent="agentOpen = !agentOpen"
+        @open-recycle="recycleVisible = true"
+      />
 
       <!-- v1028：没有小说项目时不展示目录，提示文案改为「点击「新建小说」开始创作」 -->
       <div v-if="!hasNovel" class="empty-state">
@@ -254,6 +275,22 @@ window.addEventListener('beforeunload', (e) => {
               <span class="tb-sep" />
               <EditorActionBar v-if="hasNovel" />
               <span class="tb-sep" />
+
+              <!-- ★v1031：[回退编辑]（icon，保存左边）——回退当前章节的编辑，最多 5 次，类似 Word 撤销 -->
+              <el-tooltip
+                :content="editorStore.canUndo ? t('editor.undoEditHint') : t('editor.undoEmpty')"
+                placement="bottom"
+              >
+                <button
+                  class="tb-icon-btn"
+                  :disabled="!editorStore.canUndo || editingOutline"
+                  @click="editorStore.requestUndo()"
+                >
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
+                    <path d="M12.5 8c-2.6 0-4.9 1-6.6 2.7L3 8v7h7l-2.7-2.7A7.5 7.5 0 0 1 12.5 10c4.1 0 7.5 3.2 7.5 7h2c0-4.9-4.3-9-9.5-9z" />
+                  </svg>
+                </button>
+              </el-tooltip>
 
               <!-- 保存（icon）：v1031 无待保存内容时置灰，有待保存内容恢复可点 -->
               <el-tooltip :content="t('common.save')" placement="bottom">
@@ -311,6 +348,13 @@ window.addEventListener('beforeunload', (e) => {
     </template>
 
     <ExportDialog v-model="exportVisible" :novel="exportNovel" />
+
+    <!-- ★v1031：回收站抽屉（被删章节的归档 / 回收 / 彻底删除） -->
+    <RecycleBin
+      v-model="recycleVisible"
+      @novel-restored="onNovelRestored"
+      @chapter-restored="onChapterRestored"
+    />
   </div>
 </template>
 
@@ -420,7 +464,8 @@ window.addEventListener('beforeunload', (e) => {
 }
 
 /* v1029：右栏拉伸把手
-   v1030续：把手标记随主题变化——浅色 / 护眼主题为黑色，深色主题为白色（--resize-handle） */
+   v1030续：把手标记随主题变化——浅色 / 护眼主题为黑色，深色主题为白色（--resize-handle）
+   ★v1031 续：恢复单竖杠标记；悬浮高亮色也跟随主题（由 --resize-handle 调出，不再用主题色） */
 .resize-handle {
   position: relative;
   width: 7px;
@@ -430,7 +475,7 @@ window.addEventListener('beforeunload', (e) => {
   transition: background 0.15s;
 }
 
-/* 竖排三个小点，让「可拖拽」这一标记在三种主题下都看得见 */
+/* 竖杠标记：浅色/护眼=纯黑，深色=纯白 */
 .resize-grip {
   position: absolute;
   top: 50%;
@@ -440,16 +485,11 @@ window.addEventListener('beforeunload', (e) => {
   transform: translate(-50%, -50%);
   border-radius: 2px;
   background: var(--resize-handle);
-  opacity: 0.45;
-  transition: opacity 0.15s;
 }
 
+/* ★v1031 续：悬浮高亮 = 标记色（黑/白）的低透明度调出，三种主题下都协调 */
 .resize-handle:hover {
-  background: color-mix(in srgb, var(--el-color-primary) 30%, transparent);
-}
-
-.resize-handle:hover .resize-grip {
-  opacity: 0.9;
+  background: color-mix(in srgb, var(--resize-handle) 14%, transparent);
 }
 
 /* v1029：宽度由拖拽把手控制（内联 style），默认 340px；

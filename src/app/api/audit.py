@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.api.audit
 文件名: audit.py
@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -60,7 +61,6 @@ async def list_audit_logs(
     )
     rows = (await session.execute(stmt)).scalars().all()
 
-    import json
 
     items = []
     for r in rows:

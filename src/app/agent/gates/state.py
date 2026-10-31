@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.gates.state
 文件名: state.py
@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -124,7 +125,6 @@ def llm_json(text: str) -> dict[str, Any]:
     """容错解析模型返回的 JSON（可能带代码块标记或前后解释文字）。"""
     if not text:
         return {}
-    import re
 
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)

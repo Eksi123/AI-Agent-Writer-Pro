@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.llm
 文件名: llm.py
@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 from typing import Any
 
 from sqlalchemy import select
@@ -27,12 +29,15 @@ from app.agent.llm.factory import (
     invalidate_model_cache,
     provider_key_status,
 )
-from app.core.config import get_settings, reload_settings
+from app.agent.tracing import reset_client
+from app.core.config import current_config_version, get_settings, reload_settings
 from app.core.errors import BadRequestError, LlmProviderError, NotFoundError
 from app.core.logging import get_logger
-from app.core.security import get_api_key, is_valid_secret_key_name, mask
+from app.core.security import configured_provider_keys, get_api_key, is_valid_secret_key_name, mask
+from app.core.system_env import system_env_delete, system_env_set
 from app.db.base import new_id, utcnow
 from app.db.models import LlmModel, LlmProvider
+from app.schemas.llm import validate_provider_params
 from app.services import audit
 
 logger = get_logger(__name__)
@@ -135,7 +140,6 @@ def model_to_dto(row: LlmModel) -> dict[str, Any]:
 
 def _check_params(type_: str, *, temperature: float, timeout_sec: int, max_tokens: int) -> None:
     """v1028：大模型必填参数校验（协议类型决定 temperature 取值范围）。"""
-    from app.schemas.llm import validate_provider_params
 
     try:
         validate_provider_params(type_, temperature, timeout_sec, max_tokens)
@@ -566,7 +570,6 @@ async def delete_model(session: AsyncSession, model_pk: str) -> dict[str, Any]:
 
 async def test_provider(session: AsyncSession, provider_id: str, *, model_id: str | None = None) -> dict[str, Any]:
     """极小请求连接测试（1 token）。返回 ok/latency_ms/model/message。"""
-    import time
 
     provider = await session.get(LlmProvider, provider_id)
     if provider is None:
@@ -662,13 +665,11 @@ async def test_provider(session: AsyncSession, provider_id: str, *, model_id: st
 
 async def reload_config(session: AsyncSession) -> dict[str, Any]:
     """重读 `.env` + `config_version += 1`，使 Agent 工厂与模型缓存失效。"""
-    from app.core.config import current_config_version
 
     settings = reload_settings()  # 内部已 bump config_version
     version = current_config_version()
     invalidate_model_cache()
 
-    from app.agent.tracing import reset_client
 
     reset_client()
 
@@ -688,7 +689,6 @@ async def reload_config(session: AsyncSession) -> dict[str, Any]:
 
 
 def _provider_key_overview() -> dict[str, bool]:
-    from app.core.security import configured_provider_keys
 
     return configured_provider_keys()
 
@@ -704,7 +704,6 @@ def _derive_env_name(name: str) -> str:
     v1029：密钥变量名可任意命名，这里只是「用户没填时」的默认值；
     派生结果若与应用配置键冲突则回落到 `CUSTOM_API_KEY`。
     """
-    import re
 
     slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper() or "CUSTOM"
     candidate = f"{slug}_API_KEY"
@@ -734,7 +733,6 @@ def _write_secret(session: AsyncSession, env_name: str, value: str) -> None:
     """
     if not is_valid_secret_key_name(env_name):
         raise BadRequestError(_env_name_error(env_name))
-    from app.core.system_env import system_env_set
 
     if not system_env_set(env_name, value):
         raise BadRequestError(
@@ -765,7 +763,6 @@ async def _forget_secret(
         logger.info("llm_api_key_kept_shared", env_name=name)
         return
 
-    from app.core.system_env import system_env_delete
 
     try:
         removed = system_env_delete(name)
@@ -847,7 +844,6 @@ async def chain_of(session: AsyncSession, model_ref: str) -> list[str]:
 
 def settings_snapshot() -> dict[str, Any]:
     """非敏感配置快照（供 /llm/overview 与前端展示）。"""
-    from app.core.config import current_config_version
 
     s = get_settings()
     return {

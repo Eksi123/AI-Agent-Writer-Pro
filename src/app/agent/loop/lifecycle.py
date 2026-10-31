@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.lifecycle
 文件名: lifecycle.py
@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop.events import sse_bus
 from app.agent.memory import thread_id_of
-from app.core.errors import ErrorCode
+from app.agent.tracing import create_score, current_trace_id
+from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.db.base import utcnow
 from app.db.models import AgentRun, AgentSession
@@ -30,7 +31,6 @@ logger = get_logger(__name__)
 
 def error_of(exc: Exception) -> tuple[int, str]:
     """ApiError 保留业务错误码（如 LlmProviderError → 50201），其余归 50001。"""
-    from app.core.errors import ApiError
 
     if isinstance(exc, ApiError):
         return exc.code, exc.message
@@ -89,7 +89,6 @@ async def finalize(
 
     手册「二、(2)」：收尾不在中间件里做（无 on_run_end 钩子），由 runner 统一执行。
     """
-    from app.agent.tracing import create_score, current_trace_id
 
     paused = status in ("awaiting_approval", "awaiting_consult")
 
@@ -136,7 +135,6 @@ async def finalize(
 
 
 def run_state_conflict(run: AgentRun) -> Any:
-    from app.core.errors import ApiError
 
     return ApiError(
         f"运行已结束（{run.status}），无法继续操作",

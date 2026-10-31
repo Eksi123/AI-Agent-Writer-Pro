@@ -1,0 +1,85 @@
+- generic [active] [ref=f12e1]:
+  - generic [ref=f12e3]:
+    - complementary [ref=f12e4]:
+      - generic [ref=f12e5]:
+        - generic [ref=f12e7]:
+          - generic "生肖宠物与日期" [ref=f12e8]:
+            - generic [ref=f12e9]: 🐔
+            - generic [ref=f12e10]: 2026年10月31日
+            - generic [ref=f12e11]: 星期六
+          - generic [ref=f12e12]:
+            - generic [ref=f12e13]: 北京市
+            - generic [ref=f12e67]:
+              - generic [ref=f12e68]:
+                - generic [ref=f12e69]: ☁️
+                - generic [ref=f12e70]: 阴
+              - generic [ref=f12e71]:
+                - generic [ref=f12e72]: 良
+                - generic [ref=f12e73]: "91"
+            - generic [ref=f12e74]:
+              - generic [ref=f12e75]: 温度 9°
+              - generic [ref=f12e76]: 湿度 65%
+              - generic [ref=f12e77]: 风速 1级
+        - button "新建小说" [ref=f12e18] [cursor=pointer]
+        - generic [ref=f12e78] [cursor=pointer]:
+          - generic [ref=f12e82]:
+            - generic [ref=f12e83]: "???????"
+            - generic [ref=f12e84]: "??"
+          - button "···" [ref=f12e87]
+        - generic [ref=f12e21]:
+          - button "通用设置" [ref=f12e22] [cursor=pointer]
+          - button "AI 设置" [ref=f12e24] [cursor=pointer]
+    - main [ref=f12e26]:
+      - generic [ref=f12e27]:
+        - generic [ref=f12e28]:
+          - radiogroup "radio-group" [ref=f12e29]:
+            - generic [ref=f12e30]:
+              - radio "阅读模式" [ref=f12e31]
+              - generic [ref=f12e32] [cursor=pointer]: 阅读模式
+            - generic [ref=f12e33]:
+              - radio "编辑模式" [checked] [ref=f12e34]
+              - generic [ref=f12e35] [cursor=pointer]: 编辑模式
+          - generic [ref=f12e88]: "???????"
+        - generic [ref=f12e36]:
+          - button "回收站" [ref=f12e37] [cursor=pointer]
+          - button [ref=f12e131] [cursor=pointer]
+      - generic [ref=f12e91]:
+        - generic [ref=f12e92]:
+          - button "目录" [ref=f12e94] [cursor=pointer]
+          - generic [ref=f12e196]:
+            - button [ref=f12e197] [cursor=pointer]
+            - button [disabled] [ref=f12e201]
+            - button [disabled] [ref=f12e204]
+          - button [disabled] [ref=f12e208]
+          - button [disabled] [ref=f12e211]
+          - generic [ref=f12e214]: 自动保存
+        - textbox [ref=f12e216]: "# ???????_大纲 > 本文件是**创作参考资料**：AI 生成正文时以各章「简介」为依据。 > 建议保持标题层级（`#` 为卷或附录，`##` 为章）便于阅读与检索。 > ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， > 调整本文件小节先后**不会**改变卷章顺序。 # 第一卷 卷名（请改为具体卷名） ## 第一章 章名（请改为具体章名） - 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。 - 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。 # 附录A 世界观 - 世界背景： - 力量体系： - 重要势力： # 附录B 人物角色 - 姓名｜身份｜性格｜目标｜关键关系： # 附录C 战力层次 - 层次划分与判定标准： # 附录D 写作要求 - 视角与人称： - 文风与节奏： - 禁忌与雷区："
+    - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=f12e134]
+    - complementary [ref=f12e136]:
+      - generic [ref=f12e137]:
+        - generic [ref=f12e138]:
+          - generic "会话记录" [ref=f12e139]: 1个会话
+          - generic "用量：入 6229 / 出 104 tokens" [ref=f12e217]: 6.3K Token
+        - generic [ref=f12e218]:
+          - button [ref=f12e219] [cursor=pointer]
+          - generic [ref=f12e223]: 帮我看看今天天气怎么样
+        - generic [ref=f12e224]:
+          - generic [ref=f12e225]:
+            - generic [ref=f12e226]: 帮我看看今天天气怎么样
+            - generic [ref=f12e227]: 2026-10-31 17:55
+          - generic [ref=f12e229]:
+            - generic [ref=f12e230]: 好的！不过在查天气之前，我想先确认一下——**你在哪个城市？** 这样我才能给你查到准确的天气。
+            - generic [ref=f12e231]:
+              - generic [ref=f12e232]: 2026-10-31 17:55
+              - button "复制" [ref=f12e233] [cursor=pointer]
+        - generic [ref=f12e153]:
+          - textbox "描述你的需求，例如：帮我扩写第三章的打斗场面…" [ref=f12e235]
+          - generic [ref=f12e156]:
+            - button "＋" [ref=f12e157] [cursor=pointer]
+            - button "工具" [ref=f12e158] [cursor=pointer]
+            - button "Model Off" [ref=f12e160] [cursor=pointer]
+            - button "发送" [disabled] [ref=f12e192]
+  - menu "Model Off" [ref=f12e240]:
+    - menuitem "qwen3.7-plus · 33K" [ref=f12e241] [cursor=pointer]:
+      - text: qwen3.7-plus
+      - generic [ref=f12e242]: · 33K
