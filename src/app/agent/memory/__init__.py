@@ -19,6 +19,7 @@ from __future__ import annotations
 from app.agent.memory.tree import (
     active_path_to_langchain,
     add_message,
+    history_messages_for_seed,
     load_tree,
     set_active_leaf,
     sibling_branches,
@@ -28,6 +29,7 @@ from app.agent.memory.tree import (
 __all__ = [
     "active_path_to_langchain",
     "add_message",
+    "history_messages_for_seed",
     "load_tree",
     "set_active_leaf",
     "sibling_branches",

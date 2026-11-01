@@ -244,7 +244,7 @@ def wind_level(speed_kmh: float | None) -> int | None:
     return 12
 
 
-async def current_weather(city: str, *, force_refresh: bool = False) -> dict[str, Any]:
+async def current_weather(city: str, *, force_refresh: bool = False, source: str = "city") -> dict[str, Any]:
     """按城市名取当前天气（geocode → forecast）。
 
     v1029：组件第一排要展示「具体地址」。城市名路径先 geocode 拿到坐标，再
@@ -274,6 +274,7 @@ async def current_weather(city: str, *, force_refresh: bool = False) -> dict[str
         city_label=label,
         address_label=address,
         force_refresh=force_refresh,
+        source=source,
     )
 
 
@@ -284,14 +285,17 @@ async def current_weather_by_coords(
     city_label: str = "",
     address_label: str = "",
     force_refresh: bool = False,
+    source: str = "located",
 ) -> dict[str, Any]:
     """按坐标取当前天气（含空气质量 AQI；AQI 失败不影响天气主数据）。
 
     `force_refresh=True` 时跳过缓存，保证「刷新页面即取实时数据」。
+    ★v1101：`source` 标明坐标来源（located=浏览器定位 / fallback_city=定位失败回落
+    设置城市 / city=按城市名查询），随数据返回供组件提示「当前为回落城市」。
     """
-    # 缓存键含地址标签：同一坐标可能被「坐标路径（精确地址）」和「城市名路径
-    # （admin1 粗地址）」分别调用，天气数据相同但展示地址不同，分开缓存避免串味。
-    key = f"cw:{round(latitude, 2)}:{round(longitude, 2)}:{address_label}"
+    # 缓存键含地址标签与来源：同一坐标可能被「坐标路径（精确地址）」和「城市名路径
+    # （admin1 粗地址）」分别调用，天气数据相同但展示地址/来源不同，分开缓存避免串味。
+    key = f"cw:{round(latitude, 2)}:{round(longitude, 2)}:{address_label}:{source}"
     cached = None if force_refresh else _cache_get(key)
     if cached is not None:
         return cached
@@ -323,6 +327,8 @@ async def current_weather_by_coords(
         "address": address_label,
         "latitude": latitude,
         "longitude": longitude,
+        #: ★v1101：坐标来源（located / fallback_city / city），组件据此提示回落城市
+        "source": source,
         "temperature": current.get("temperature_2m"),
         "apparent_temperature": current.get("apparent_temperature"),
         "humidity": current.get("relative_humidity_2m"),
@@ -360,8 +366,10 @@ def aqi_level(aqi: int | None) -> str:
 
 
 async def air_quality(latitude: float, longitude: float, *, force_refresh: bool = False) -> dict[str, Any]:
-    """按坐标取当前空气质量（Open-Meteo Air Quality，us_aqi）。
+    """按坐标取当前空气质量（Open-Meteo Air Quality）。
 
+    ★v1101：取 **european_aqi**——其数值口径与中国 AQI（HJ 633-2012）一致，
+    与国内天气 App 可对上；此前取 us_aqi 再套中国六级阈值，数值系统性偏高。
     失败返回空 dict（空气质量是增强信息，不阻断天气主流程）。
     """
     key = f"aq:{round(latitude, 2)}:{round(longitude, 2)}"
@@ -375,7 +383,7 @@ async def air_quality(latitude: float, longitude: float, *, force_refresh: bool 
                 params={
                     "latitude": latitude,
                     "longitude": longitude,
-                    "current": "us_aqi,pm2_5,pm10",
+                    "current": "european_aqi,pm2_5,pm10",
                     "timezone": "auto",
                 },
             )
@@ -386,7 +394,7 @@ async def air_quality(latitude: float, longitude: float, *, force_refresh: bool 
         return {}
 
     current = payload.get("current") or {}
-    aqi_value = current.get("us_aqi")
+    aqi_value = current.get("european_aqi")
     aqi_int = int(round(aqi_value)) if aqi_value is not None else None
     out = {
         "aqi": aqi_int,

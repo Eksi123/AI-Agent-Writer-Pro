@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from app.agent.knowledge.chapters import list_chapters_ordered
 from app.agent.knowledge.recap import build_pinned_chapters, build_recap
-from app.agent.knowledge.summarize import summarize_chapter, summarize_finalized_chapters
+from app.agent.knowledge.summarize import summarize_all_chapters, summarize_chapter
 
 __all__ = [
     "build_pinned_chapters",
     "build_recap",
     "list_chapters_ordered",
     "summarize_chapter",
-    "summarize_finalized_chapters",
+    "summarize_all_chapters",
 ]

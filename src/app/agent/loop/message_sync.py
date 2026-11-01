@@ -29,8 +29,8 @@ class MessageSyncer:
     与业务库 uuid 无对应关系；而 state 的 messages 是**追加式**的，故只需记录「已同步到的下标」，
     之后每次 sync 只处理新增部分。
 
-    基线确定：
-    - 首轮：用户消息已由 API 层落库，state 里它将成为 messages[0] → 基线 = 1，parent = 该消息 id；
+    基线确定（★v1101：checkpoint 跨轮保留历史，基线恒为当前 state 长度）：
+    - 新消息：基线 = state 长度；本轮用户消息已由 API 层落库，sync 时按正文跳过其副本一次；
     - 恢复：中断前的消息已全部落库 → 基线 = 当前 state 长度，parent = 会话 active_leaf_id。
     """
 
@@ -38,6 +38,8 @@ class MessageSyncer:
         self.session_id = session_id
         self._index = 0
         self._last_leaf: str | None = None
+        #: ★v1101：本轮 API 已落库的用户消息正文（跳过它在 state 里的副本，仅一次）
+        self._api_user_text: str | None = None
         #: 门禁 G2：跳过下一条 human 消息（内部生成指令不入消息树）
         self.skip_human_once = False
 
@@ -49,14 +51,20 @@ class MessageSyncer:
         user_message_id: str | None,
         resumed: bool,
     ) -> None:
-        """确定同步基线与父节点。"""
+        """确定同步基线与父节点。
+
+        ★v1101：基线 = **当前 state 长度**（checkpoint 跨轮保留历史）。
+        旧实现假设线程全新（`index = 1`），导致同会话第二轮起把整段历史
+        当作「新增」重复落库——前端看起来就是「一条消息回了两次」。
+        本轮用户消息已由 API 层落库：记住正文，sync 时跳过它在 state 里的副本。
+        """
+        self._index = await self._state_len(graph, config)
         if resumed:
-            self._index = await self._state_len(graph, config)
             self._last_leaf = await self._active_leaf()
         else:
-            # 首轮：state 尚无 checkpoint（长度 0），我们的用户消息将成为 messages[0]
-            self._index = 1 if user_message_id else await self._state_len(graph, config)
             self._last_leaf = user_message_id
+            if user_message_id:
+                self._api_user_text = await self._user_text_of(user_message_id)
 
     async def sync(self, graph: Any, config: dict[str, Any], *, force: bool = False) -> None:
         try:
@@ -77,6 +85,24 @@ class MessageSyncer:
             self.skip_human_once = False
             if not new_messages:
                 return
+
+        # ★v1101：中间件注入的 system（前情提要等）与**本轮 API 已落库的用户消息副本**
+        # 不入消息树——只推进指针。否则前端会把前情提要渲染成一条「回复」，
+        # 重复 user 还会把一轮问答拆成两轮。
+        filtered: list[Any] = []
+        for msg in new_messages:
+            role = _role_of(msg)
+            if role == "system":
+                self._index += 1
+                continue
+            if role == "user" and self._api_user_text is not None and _text_of(msg) == self._api_user_text:
+                self._api_user_text = None  # 只跳过一次
+                self._index += 1
+                continue
+            filtered.append(msg)
+        new_messages = filtered
+        if not new_messages:
+            return
 
         # 未完成的流式消息不落库（留待下次 sync）
         if not force and _is_incomplete(new_messages[-1]):
@@ -124,6 +150,15 @@ class MessageSyncer:
         except Exception:  # pragma: no cover - 首轮无 checkpoint
             return 0
 
+    @staticmethod
+    async def _user_text_of(message_id: str) -> str | None:
+        """取业务库中某条消息的正文（首轮基线去重用）。"""
+        from app.db.models import Message
+
+        async with session_scope() as db:
+            row = await db.get(Message, message_id)
+            return _text_of(row.content_json) if row is not None else None
+
     async def _active_leaf(self) -> str | None:
         async with session_scope() as db:
             sess = await db.get(AgentSession, self.session_id)
@@ -135,6 +170,31 @@ def _is_incomplete(msg: Any) -> bool:
     if getattr(msg, "status", None) == "streaming":
         return True
     return not getattr(msg, "content", "") and not getattr(msg, "tool_calls", None)
+
+
+def _text_of(msg_or_raw: Any) -> str:
+    """消息对象或落库的 content_json 字符串 → 纯文本（去重比较用）。"""
+    content = msg_or_raw
+    if not isinstance(content, str):
+        content = getattr(msg_or_raw, "content", "")
+    raw = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
+    # 落库格式可能是 JSON 字符串化的 list/dict，这里只做轻量解析
+    if isinstance(raw, str) and raw[:1] in ("[", "{"):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return raw
+        if isinstance(parsed, list):
+            parts = []
+            for block in parsed:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict):
+                    parts.append(str(block.get("text") or block.get("content") or ""))
+            return "".join(parts)
+        if isinstance(parsed, dict):
+            return str(parsed.get("text") or parsed.get("content") or "")
+    return raw if isinstance(raw, str) else str(raw)
 
 
 def _role_of(msg: Any) -> str:

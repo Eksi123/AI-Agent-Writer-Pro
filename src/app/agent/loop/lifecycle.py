@@ -114,6 +114,18 @@ async def finalize(
                 sess.updated_at = utcnow()
 
     if not paused:
+        # ★v1101：释放本 run 持有的「AI 编辑锁」并通知前端解锁（暂停态不释放——run 还可能续写）
+        try:
+            from app.services.content_lock import content_locks
+
+            freed = await content_locks.release_for_run(run_id)
+            for cid in freed:
+                await sse_bus.publish(
+                    run_id, session_id, "content.lock", {"chapter_id": cid, "run_id": run_id, "locked": False}
+                )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("content_lock_release_failed", run_id=run_id, error=str(exc))
+
         # 字数统计刷新（Agent 可能写了正文）
         try:
             async with session_scope() as db:

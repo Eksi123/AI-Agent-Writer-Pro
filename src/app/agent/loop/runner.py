@@ -45,7 +45,7 @@ from app.agent.loop.resolve import (
     session_context_of,
 )
 from app.agent.loop.streaming import interrupt_status, stream_graph
-from app.agent.memory import add_message
+from app.agent.memory import add_message, history_messages_for_seed
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
@@ -66,6 +66,8 @@ class RunManager:
         self._sessions: dict[str, str] = {}
         #: v1028：运行中「通过消息引导发送」的引导消息队列（run 级，中间件每次模型调用前取用）
         self._steer_queues: dict[str, list[str]] = {}
+        #: ★v1101：run 级隐藏上下文（选区润色提示词等）——只注入模型请求，不落库不展示
+        self._hidden_contexts: dict[str, str] = {}
 
     def running_ids(self) -> list[str]:
         return [rid for rid, t in self._tasks.items() if not t.done()]
@@ -83,6 +85,16 @@ class RunManager:
         """取出并清空该 run 的引导消息（中间件调用）。"""
         return self._steer_queues.pop(run_id, [])
 
+    # ---- ★v1101：run 级隐藏上下文（润色提示词等，不入消息树/不展示） ----
+
+    def set_hidden_context(self, run_id: str, text: str) -> None:
+        if text:
+            self._hidden_contexts[run_id] = text
+
+    def hidden_context_of(self, run_id: str) -> str:
+        """读取该 run 的隐藏上下文（中间件每次模型调用读取；run 结束随 _cleanup 清除）。"""
+        return self._hidden_contexts.get(run_id, "")
+
     # ---- 对外入口 ----
 
     async def start(
@@ -95,8 +107,12 @@ class RunManager:
         parent_id: str | None = None,
         gate_stage: str = "",
         target_chapter_id: str = "",
+        hidden_context: str = "",
     ) -> str:
-        """新建 run（落库 + 起后台任务），返回 run_id。对应用户发新消息。"""
+        """新建 run（落库 + 起后台任务），返回 run_id。对应用户发新消息。
+
+        ★v1101：`hidden_context`（如选区润色提示词）只注入模型请求，不入消息树、不展示。
+        """
         async with session_scope() as db:
             agent_session = await agent_service.require_session(db, session_id)
 
@@ -119,6 +135,7 @@ class RunManager:
             )
 
             run_id = new_id()
+            self.set_hidden_context(run_id, hidden_context)
             db.add(
                 AgentRun(
                     id=run_id,
@@ -187,6 +204,17 @@ class RunManager:
             sess = await db.get(AgentSession, session_id)
             if sess is not None and sess.status == "running":
                 sess.status = "idle"
+        # ★v1101：取消同样释放「AI 编辑锁」（finalize 不会为取消路径执行）
+        try:
+            from app.services.content_lock import content_locks
+
+            freed = await content_locks.release_for_run(run_id)
+            for cid in freed:
+                await sse_bus.publish(
+                    run_id, session_id, "content.lock", {"chapter_id": cid, "run_id": run_id, "locked": False}
+                )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("content_lock_release_on_cancel_failed", run_id=run_id, error=str(exc))
         await sse_bus.publish(run_id, session_id, "run.end", {"status": "cancelled"})
         await sse_bus.close(run_id)
         return {"run_id": run_id, "cancelled": True}
@@ -235,6 +263,8 @@ class RunManager:
         self._cancel_flags.pop(run_id, None)
         self._locks.pop(run_id, None)
         self._sessions.pop(run_id, None)
+        self._hidden_contexts.pop(run_id, None)
+        self._steer_queues.pop(run_id, None)
 
     async def _run_serialized(self, lock: asyncio.Lock, **kwargs: Any) -> None:
         async with lock:
@@ -321,11 +351,17 @@ async def _execute_run(
                 session_id=session_id,
                 subagent_names=sub_names or None,
                 skill_names=sk_names or None,
+                # ★v1101：run 级隐藏上下文（润色提示词等）请求级注入，不落库不展示
+                hidden_context_provider=run_manager.hidden_context_of,
             )
             graph = agent["graph"]
 
         config = graph_config(project_id, session_id, agent.get("recursion_limit", 60))
         attach_langfuse(config, project_id=project_id, session_id=session_id, run_id=run_id)
+
+        # ★v1101：checkpoint 为空（进程重启 / 清理）时从业务库回填会话历史，
+        # 保证 Agent 不「失忆」；回填内容只进 state，不会被重复落库（基线=state 长度）。
+        await seed_history_if_empty(graph, config, session_id, exclude_id=user_message_id)
 
         await sse_bus.publish(
             run_id,
@@ -395,3 +431,29 @@ async def _execute_run(
 
 #: 进程内单例
 run_manager = RunManager()
+
+
+async def seed_history_if_empty(
+    graph: Any, config: dict[str, Any], session_id: str, *, exclude_id: str | None = None
+) -> None:
+    """★v1101：checkpoint 为空时从业务库回填会话历史（进程重启 / 清理后不「失忆」）。
+
+    回填只写 graph state（`as_node="__start__"` 不触发任何节点）；MessageSyncer 的
+    基线 = 回填后的 state 长度，故历史不会被重复落库。checkpoint 已有内容时直接跳过。
+    """
+    try:
+        state = await graph.aget_state(config)
+    except Exception as exc:  # pragma: no cover
+        logger.debug("seed_state_read_failed", error=str(exc))
+        return
+    if state is not None and (state.values or {}).get("messages"):
+        return
+    async with session_scope() as db:
+        history = await history_messages_for_seed(db, session_id, exclude_id=exclude_id)
+    if not history:
+        return
+    try:
+        await graph.aupdate_state(config, {"messages": history}, as_node="__start__")
+        logger.info("history_seeded", session_id=session_id, messages=len(history))
+    except Exception as exc:  # pragma: no cover - 回填失败不阻断本轮运行
+        logger.warning("history_seed_failed", session_id=session_id, error=str(exc))

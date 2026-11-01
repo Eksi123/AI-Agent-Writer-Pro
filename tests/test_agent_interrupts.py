@@ -266,3 +266,38 @@ class TestConcurrentMessageRejected:
         )
         assert resp.status_code == 409
         assert resp.json()["code"] == 40902
+
+
+class TestConcurrencyLimit:
+    """★v1101：同时「AI 思考执行中」的会话上限 5 个；列表带 is_running 标记。"""
+
+    async def test_sixth_session_rejected_and_list_flags(self, client, novel_id):
+        _pid, model_ref = await _setup_provider_model(client)
+        slow = _install_fake(model_ref, [AIMessage(content="慢答")])
+        slow.sleep = 3.0
+
+        sids = [await _new_session(client, novel_id) for _ in range(6)]
+        run_ids = []
+        for sid in sids[:5]:
+            run_ids.append(await _post_message(client, sid, "跑起来"))
+        await asyncio.sleep(0.6)
+
+        # 第 6 个会话发消息 → 409 / 40904
+        resp = await client.post(f"/api/v1/agent/sessions/{sids[5]}/messages", json={"content": "我也跑"})
+        assert resp.status_code == 409
+        assert resp.json()["code"] == 40904
+
+        # 列表：前 5 个 is_running=True，第 6 个 False
+        listed = {s["id"]: s for s in (await client.get("/api/v1/agent/sessions", params={"novel_id": novel_id})).json()["data"]}
+        for sid in sids[:5]:
+            assert listed[sid]["is_running"] is True
+        assert listed[sids[5]]["is_running"] is False
+
+        # 等全部结束 → 第 6 个可以发；列表标记清零
+        for rid in run_ids:
+            await _wait_status(client, rid, ("completed", "failed", "cancelled"))
+        listed = {s["id"]: s for s in (await client.get("/api/v1/agent/sessions", params={"novel_id": novel_id})).json()["data"]}
+        assert not any(s["is_running"] for s in listed.values())
+        resp = await client.post(f"/api/v1/agent/sessions/{sids[5]}/messages", json={"content": "现在可以了"})
+        assert resp.status_code == 202, resp.text
+        await _wait_status(client, resp.json()["data"]["run_id"], ("completed", "failed", "cancelled"))

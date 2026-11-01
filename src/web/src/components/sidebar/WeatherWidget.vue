@@ -6,8 +6,9 @@
  * 定位失败/被拒 → /widgets/weather?refresh=true（回落通用设置的回落城市）。
  * 天气、温度、空气质量在页面刷新时取实时数据；组件自身 10 分钟兜底刷新。
  *
- * 卡片三排：1) 城市居中独占一行；2) 天气组（icon+说明）在排开头、空气质量组
- * （等级+数值）居中在排宽 3/5 处，四元素同一水平线；3) 温度/湿度/风速（带单位小字）。
+ * 卡片三排：1) 城市居中独占一行；2) 天气组（icon+说明）与空气质量组（等级+数值）
+ *    同一水平线自适应排布：两组之间恒留间距、互不重叠，空间不足时天气说明省略号
+ *    截断、空气质量组不压缩，保证不超出组件；3) 温度/湿度/风速（带单位小字）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { widgetsApi, type WeatherDto } from '@/api'
@@ -25,6 +26,15 @@ const REFRESH_MS = 10 * 60 * 1000 // 组件自身 10 分钟兜底刷新（实时
 let timer: ReturnType<typeof setInterval> | null = null
 
 const cityLabel = computed(() => weather.value?.city || settings.settings.city || '—')
+
+/**
+ * ★v1101：坐标来源提示——浏览器定位被拒/超时/不可用时，天气按「通用设置 → 回落城市」
+ * 查询，组件在城市名旁灰色小字标明，避免用户误以为是实时定位结果。
+ * located = 浏览器定位成功；city = 按城市名；fallback_city = 定位失败回落。
+ */
+const weatherSource = computed(() => weather.value?.source ?? '')
+const isFallbackCity = computed(() => weatherSource.value === 'fallback_city')
+const locateDenied = ref(false)
 
 /** v1030：第三排三项都带单位前缀（温度 X° / 湿度 Y% / 风速 Z 级） */
 const tempLabel = computed(() => {
@@ -79,23 +89,27 @@ async function loadWeather(force = false): Promise<void> {
 function geolocate(): Promise<{ lat: number; lon: number } | null> {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
+      locateDenied.value = true
       resolve(null)
       return
     }
     locating.value = true
     const t = setTimeout(() => {
       locating.value = false
+      locateDenied.value = true
       resolve(null)
     }, 6000)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         clearTimeout(t)
         locating.value = false
+        locateDenied.value = false
         resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude })
       },
       () => {
         clearTimeout(t)
         locating.value = false
+        locateDenied.value = true
         resolve(null)
       },
       { timeout: 5000, maximumAge: 10 * 60 * 1000 },
@@ -119,7 +133,8 @@ onBeforeUnmount(() => {
     <div class="widget-row">
       <ZodiacPet />
       <div class="wx-card" :class="{ 'wx-loading': loading }">
-        <!-- 第一排：城市居中独占一行（★v1031：不再悬浮展示完整地址） -->
+        <!-- 第一排：城市居中独占一行（★v1031：不再悬浮展示完整地址）
+             ★v1101：定位失败回落设置城市时，城市名旁灰色小字标明来源 -->
         <div class="wx-row wx-head">
           <span
             v-if="locating"
@@ -129,9 +144,15 @@ onBeforeUnmount(() => {
             v-else
             class="wx-city"
           >{{ cityLabel }}</span>
+          <span
+            v-if="!locating && isFallbackCity"
+            class="wx-source muted"
+            :title="locateDenied ? '浏览器定位未授权或超时，已按通用设置的回落城市查询' : '未使用定位，按城市名查询'"
+          >（回落城市）</span>
         </div>
 
-        <!-- 第二排：★v1031 续：天气组在排**开头**、空气质量组居中在排宽 **3/5** 处（不挤在一起）；
+        <!-- 第二排：★v1101：天气组与空气质量组自适应同行排布——恒留间距、永不重叠；
+             空间不足时天气说明省略号截断（空气质量组不压缩），不超出组件；
              icon / 天气情况 / 等级 / AQI 数值四个元素在同一条水平线上 -->
         <div class="wx-main">
           <span v-if="weather" class="wx-group wx-group-weather">
@@ -210,26 +231,32 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* 第二排：天气组在排**开头**；空气质量组绝对定位、居中在排宽 **3/5** 处，两组不挤在一起（★v1031 续） */
+/* ★v1101：城市名旁的来源小字（定位失败回落设置城市时显示） */
+.wx-source {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 第二排：★v1101 自适应布局——天气组在左、空气质量组紧随其后，两组之间恒留 10px
+   间距（flex gap，永不重叠）；空间不足时天气说明先省略号截断（min-width:0 + 可收缩），
+   空气质量组不收缩，整体不超出组件宽度 */
 .wx-main {
-  position: relative;
   display: flex;
   align-items: center;
+  gap: 10px;
   min-height: 18px;
 }
 
 .wx-group-weather {
   min-width: 0;
-  max-width: 55%;
+  flex: 0 1 auto;
   overflow: hidden;
 }
 
-/* 水平中心 = 排宽 60%（3/5），垂直方向与天气组同一条水平线 */
 .wx-group-air {
-  position: absolute;
-  left: 60%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  flex-shrink: 0;
 }
 
 /* 组内：icon / 文字 / 等级 / 数值**同一条水平线**，垂直居中对齐 */

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: tests
 文件名: test_mcp_widgets.py
@@ -169,9 +169,9 @@ class TestWeatherService:
         assert data["days"][1]["temp_max"] == 20
 
     async def test_current_weather_includes_aqi(self, fake_http):
-        """v1028：天气数据带空气质量（us_aqi + 中文等级）。"""
+        """v1028：天气数据带空气质量；★v1101：取 european_aqi（中国 AQI 口径）。"""
         fake_http.registry["air-quality-api"] = {
-            "current": {"us_aqi": 42, "pm2_5": 12.5, "pm10": 20.0, "time": "t"}
+            "current": {"european_aqi": 42, "pm2_5": 12.5, "pm10": 20.0, "time": "t"}
         }
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 20, "weather_code": 0, "time": "t"}
@@ -216,7 +216,7 @@ class TestWeatherService:
 
     async def test_current_weather_includes_wind_level(self, fake_http):
         """v1029：天气数据带风力等级字段。"""
-        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 30, "time": "t"}}
+        fake_http.registry["air-quality-api"] = {"current": {"european_aqi": 30, "time": "t"}}
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
         }
@@ -269,7 +269,7 @@ class TestWeatherService:
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
         }
-        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+        fake_http.registry["air-quality-api"] = {"current": {"european_aqi": 40}}
 
         data = await weather.current_weather("杭州")
         assert data["city"] == "杭州"
@@ -285,7 +285,7 @@ class TestWeatherService:
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
         }
-        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+        fake_http.registry["air-quality-api"] = {"current": {"european_aqi": 40}}
 
         data = await weather.current_weather("杭州")
         assert data["temperature"] == 20
@@ -301,7 +301,7 @@ class TestWeatherService:
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 18, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
         }
-        fake_http.registry["air-quality-api"] = {"current": {"us_aqi": 40}}
+        fake_http.registry["air-quality-api"] = {"current": {"european_aqi": 40}}
 
         data = await weather.current_weather("北京")
         assert data["city"] == "北京"
@@ -504,7 +504,7 @@ class TestWidgetsApi:
         assert data["wind_level"] == 3
 
     async def test_weather_falls_back_to_settings_city(self, client, fake_http):
-        """无坐标无城市 → 回落通用设置的回落城市。"""
+        """无坐标无城市 → 回落通用设置的回落城市；★v1101：source=fallback_city。"""
         await client.put("/api/v1/settings", json={"city": "回落市"})
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "回落市", "latitude": 1, "longitude": 2, "timezone": "auto"}]
@@ -514,6 +514,21 @@ class TestWidgetsApi:
         data = resp.json()["data"]
         assert data["city"] == "回落市"
         assert data["description"] == "小雪"
+        assert data["source"] == "fallback_city"
+
+    async def test_weather_source_city_and_located(self, client, fake_http):
+        """★v1101：显式 city → source=city；带坐标 → source=located。"""
+        fake_http.registry["geocoding-api"] = {
+            "results": [{"name": "杭州", "latitude": 30.25, "longitude": 120.17, "timezone": "auto"}]
+        }
+        fake_http.registry["bigdatacloud"] = {"city": "杭州"}
+        fake_http.registry["api.open-meteo.com"] = {"current": {"temperature_2m": 21, "weather_code": 2, "time": "t"}}
+        data = (await client.get("/api/v1/widgets/weather", params={"city": "杭州"})).json()["data"]
+        assert data["source"] == "city"
+        data = (
+            await client.get("/api/v1/widgets/weather", params={"latitude": 30.1, "longitude": 120.2})
+        ).json()["data"]
+        assert data["source"] == "located"
 
     async def test_city_reverse_geocode(self, client, fake_http):
         fake_http.registry["bigdatacloud"] = {"city": "某市"}
@@ -557,3 +572,4 @@ class TestWidgetsApi:
     async def test_pet_state_idle_for_unknown_novel(self, client):
         resp = await client.get("/api/v1/widgets/pet-state", params={"novel_id": "no-such"})
         assert resp.json()["data"]["state"] == "idle"
+

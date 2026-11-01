@@ -16,7 +16,6 @@ const liveCount = computed(() => {
 <template>
   <div class="word-count-bar row-between text-sm">
     <span class="muted">{{ t('editor.wordCount') }}：{{ liveCount }}</span>
-    <span v-if="editorStore.status === 'finalized'" class="finalized">定稿</span>
   </div>
 </template>
 
@@ -25,9 +24,5 @@ const liveCount = computed(() => {
   padding: 4px 16px;
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
-}
-
-.finalized {
-  color: var(--el-color-success);
 }
 </style>

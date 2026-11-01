@@ -1,29 +1,28 @@
 <script setup lang="ts">
 /**
- * Tiptap 正文编辑器：Markdown 快捷输入 + 字数统计 + 自动保存 + 选区 AI 改写。
+ * Tiptap 正文编辑器：Markdown 快捷输入 + 字数统计 + 自动保存 + 选区加入 AI 对话。
  *
  * ★乐观锁：保存携带 base_version，409 时向上抛 conflict 由 ConflictBanner 处理。
  * 自动保存不产生修订快照（autosave=true，防版本爆炸）。
  *
- * ★选区 AI 改写（手册「三、(3)【正文】」）：选中文字后「改写/扩写/缩写/润色」四按钮启用，
- * 调 POST /chapters/{id}/rewrite 取结果 → RewriteDiffDialog 做 diff 预览 →
- * 接受后替换选区并打 AI 来源标记（AiSource mark，可回滚），放弃则不改动。
+ * ★v1101 精简：写小说不需要富文本排版——移除 B/I/H1/H2/列表 格式组与
+ *   「AI 改写/扩写/缩写/润色」四按钮（及 diff 对话框）。
+ *   保留选区悬浮「AI 润色」：把选中文本作为上下文块加入模型对话，
+ *   具体怎么改由用户在对话里描述。
+ *
+ * ★v1101 AI 编辑锁：AI 修改本章期间编辑器只读，保存（手动/自动）被 store 拒绝，
+ *   工具栏旁由 WorkspaceView 展示灰色提示「AI编辑中，请稍后再试……」。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import type { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import CharacterCount from '@tiptap/extension-character-count'
 import { ElMessage } from 'element-plus'
-import { contentApi } from '@/api'
-import { errorMessage } from '@/api/http'
 import { useEditorStore } from '@/stores/editor'
 import { useSettingsStore } from '@/stores/settings'
 import { t } from '@/i18n'
-import type { RewriteResult } from '@/types'
-import { AiSource } from './aiSourceMark'
-import RewriteDiffDialog from './RewriteDiffDialog.vue'
 
 const props = defineProps<{ chapterId: string }>()
 const emit = defineEmits<{
@@ -45,7 +44,7 @@ const editorStore = useEditorStore()
 const settingsStore = useSettingsStore()
 
 // ---------------------------------------------------------------------------
-// ★v1031：[回退编辑]（工具栏 icon，最多回退 5 次，类似 Word 的撤销）
+// [回退编辑]（工具栏 icon，最多回退 5 次，类似 Word 的撤销）
 // ---------------------------------------------------------------------------
 
 /** 一次「连续输入」停顿多久算结束（结束后才把编辑前的正文压入回退栈） */
@@ -77,7 +76,7 @@ function recordUndoPoint(previousHtml: string): void {
   }, UNDO_DEBOUNCE_MS)
 }
 
-/** 立即把「本轮未停顿完的编辑」压栈（点击[回退编辑]、AI 改写等整块变更时用） */
+/** 立即把「本轮未停顿完的编辑」压栈（点击[回退编辑]等整块变更时用） */
 function flushUndoPoint(previousHtml?: string): void {
   clearUndoTimer()
   const snapshot = pendingSnapshot ?? previousHtml
@@ -91,8 +90,8 @@ const editor = useEditor({
     StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
     Placeholder.configure({ placeholder: () => t('reader.emptyChapter') }),
     CharacterCount,
-    AiSource,
   ],
+  editable: !editorStore.isChapterLocked(props.chapterId),
   onUpdate: ({ editor: ed }) => {
     // 本次更新前的正文（editorStore.draft 此刻还没被覆盖）
     const previous = editorStore.draft
@@ -102,7 +101,7 @@ const editor = useEditor({
     scheduleAutosave()
   },
   onSelectionUpdate: ({ editor: ed }) => {
-    // 记录选区（含空选区收起 AI 按钮）
+    // 记录选区（含空选区收起悬浮按钮）
     const { from, to } = ed.state.selection
     savedRange.value = from === to ? null : { from, to }
     selectedText.value = from === to ? '' : ed.state.doc.textBetween(from, to, ' ')
@@ -110,22 +109,17 @@ const editor = useEditor({
   },
 })
 
-// ---- 选区 AI 改写 ----
+// ---- 选区（供悬浮[AI润色]使用） ----
 const savedRange = ref<{ from: number; to: number } | null>(null)
 const selectedText = ref('')
-const aiLoading = ref(false)
-const diffVisible = ref(false)
-const rewriteResult = ref<RewriteResult | null>(null)
 
-const hasSelection = computed(() => !!selectedText.value.trim() && !editorStore.saving)
-
-// ---- v1031：选区上方悬浮[AI润色]按钮（点击后选中文本加入模型对话，限定修改范围） ----
+// ---- 选区上方悬浮[AI润色]按钮（点击后选中文本加入模型对话，限定修改范围） ----
 const polishBtn = ref({ top: 0, left: 0, visible: false })
 
-/** 悬浮按钮定位到选区首行上方（相对编辑容器）；空选区隐藏 */
+/** 悬浮按钮定位到选区首行上方（相对编辑容器）；空选区 / AI 编辑中隐藏 */
 function updatePolishButton(ed: Editor): void {
   const { from, to } = ed.state.selection
-  if (from === to || !selectedText.value.trim()) {
+  if (from === to || !selectedText.value.trim() || editorStore.isChapterLocked(props.chapterId)) {
     polishBtn.value.visible = false
     return
   }
@@ -183,8 +177,8 @@ function onPolishClick(): void {
   const title = editorStore.title || '章节正文'
   const rangeLabel = `第${lineStart}-${lineEnd}段（全章共${line}段）`
   const ctx = selectionContext()
-  // ★v1030续：聊天框上方的润色标签要短——`章节名_节选X`（X 由 store 按同章已有选区数补齐），
-  // 详细的段落范围放在消息正文里给模型看（要求(6)：模型要知道所在范围）。
+  // 聊天框上方的润色标签要短——`章节名_节选X`（X 由 store 按同章已有选区数补齐），
+  // 详细的段落范围放在消息正文里给模型看。
   emit('polish-selection', {
     label: title,
     text: selectedText.value,
@@ -207,95 +201,14 @@ function selectionContext(): { before: string; after: string } {
   return { before, after }
 }
 
-async function runRewrite(mode: 'rewrite' | 'expand' | 'condense' | 'polish'): Promise<void> {
-  const ed = editor.value
-  if (!ed || !savedRange.value || !selectedText.value.trim()) return
-  aiLoading.value = true
-  try {
-    const ctx = selectionContext()
-    const result = await contentApi.rewrite(props.chapterId, {
-      selected_text: selectedText.value,
-      mode,
-      context_before: ctx.before,
-      context_after: ctx.after,
-    })
-    rewriteResult.value = result
-    diffVisible.value = true
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  } finally {
-    aiLoading.value = false
-  }
-}
-
-/** 接受改写：替换选区 + 打 AI 来源标记（可回滚） */
-function acceptRewrite(rewritten: string): void {
-  const ed = editor.value
-  if (!ed || !savedRange.value) return
-  const mode = rewriteResult.value?.mode ?? 'rewrite'
-  const original = rewriteResult.value?.original ?? ''
-  // ★v1031：AI 整块替换算一次编辑，先压一个可回退点
-  flushUndoPoint(ed.getHTML())
-  ed
-    .chain()
-    .focus()
-    .setTextSelection(savedRange.value)
-    .insertContent(rewritten)
-    .run()
-  // 对刚插入的内容打标记：插入后选区即为新内容范围
-  const { from, to } = ed.state.selection
-  if (to > from) {
-    ed.chain().setTextSelection({ from, to }).setAiSource({ mode, original }).run()
-  }
-  editorStore.draft = ed.getHTML()
-  editorStore.markDirty()
-  scheduleAutosave()
-  diffVisible.value = false
-  rewriteResult.value = null
-  savedRange.value = null
-  selectedText.value = ''
-  ElMessage.success('已应用 AI 改写（标记处可点击回滚）')
-}
-
-function discardRewrite(): void {
-  rewriteResult.value = null
-}
-
-/** 点击 AI 标记 → 回滚为原文 */
-function onEditorClick(event: MouseEvent): void {
-  const target = (event.target as HTMLElement).closest('span[data-ai-source]')
-  if (!target) return
-  const ed = editor.value
-  if (!ed) return
-  const pos = ed.view.posAtDOM(target, 0)
-  const { state } = ed
-  const $pos = state.doc.resolve(pos)
-  const marks = $pos.marks()
-  const aiMark = marks.find((m) => m.type.name === 'aiSource')
-  if (!aiMark) return
-  event.preventDefault()
-  const original = (aiMark.attrs.original as string) ?? ''
-  // ★v1031：回滚 AI 改写同样记一个可回退点
-  flushUndoPoint(ed.getHTML())
-  // 选中整个标记范围并替换回原文：向后扫描同一 mark 找结束位置
-  let to = pos
-  state.doc.nodesBetween(pos, state.doc.content.size, (node, nodePos) => {
-    if (node.marks.some((m) => m.type.name === 'aiSource')) {
-      to = nodePos + node.nodeSize
-      return true
-    }
-    return false
-  })
-  ed.chain()
-    .focus()
-    .setTextSelection({ from: pos, to })
-    .insertContent(original || '')
-    .run()
-  editorStore.draft = ed.getHTML()
-  editorStore.markDirty()
-  scheduleAutosave()
-  ElMessage.success('已回滚该处 AI 改写')
-}
+// ★v1101：AI 编辑锁 → 编辑器只读（用户编辑过的内容也保存不出去，store 层同样拒绝）
+watch(
+  () => editorStore.isChapterLocked(props.chapterId),
+  (locked) => {
+    editor.value?.setEditable(!locked)
+    if (locked) polishBtn.value.visible = false
+  },
+)
 
 // 切换章节时把服务端内容灌入编辑器
 watch(
@@ -306,9 +219,11 @@ watch(
     if (ed.getHTML() !== editorStore.draft) {
       ed.commands.setContent(editorStore.draft, false)
     }
+    ed.setEditable(!editorStore.isChapterLocked(props.chapterId))
     savedRange.value = null
     selectedText.value = ''
-    // ★v1031：换章/重载后回退栈与未压入的编辑点都作废（回退只针对当前章节）
+    polishBtn.value.visible = false
+    // 换章/重载后回退栈与未压入的编辑点都作废（回退只针对当前章节）
     clearUndoTimer()
     pendingSnapshot = null
   },
@@ -332,7 +247,7 @@ function clearTimer(): void {
 
 function scheduleAutosave(): void {
   clearTimer()
-  // v1030：通用设置[自动保存]开关关闭时不再定时保存（只保留手动保存）
+  // 通用设置[自动保存]开关关闭时不再定时保存（只保留手动保存）
   if (!settingsStore.settings.autosave_enabled) return
   const sec = settingsStore.settings.autosave_interval_sec
   if (!sec || sec <= 0) return
@@ -340,7 +255,9 @@ function scheduleAutosave(): void {
 }
 
 async function doAutosave(): Promise<void> {
+  // ★v1101：AI 编辑中不自动保存（store.save 内部同样拒绝，双保险）
   if (!editorStore.dirty || editorStore.saving) return
+  if (editorStore.isChapterLocked(props.chapterId)) return
   const okSaved = await editorStore.save(true) // autosave=true：不产生快照
   if (!okSaved && editorStore.hasConflict) emit('conflict')
   if (okSaved) emit('autosaved')
@@ -349,6 +266,8 @@ async function doAutosave(): Promise<void> {
 /** 手动保存（Ctrl+S）：产生修订快照 */
 async function saveNow(): Promise<void> {
   clearTimer()
+  // ★v1101：AI 编辑中手动保存同样被拒（提示由工具栏灰色文案承载）
+  if (editorStore.isChapterLocked(props.chapterId)) return
   const okSaved = await editorStore.save(false)
   if (!okSaved && editorStore.hasConflict) emit('conflict')
   else if (okSaved) emit('autosaved')
@@ -361,7 +280,7 @@ watch(
 )
 
 /**
- * ★v1031：工具栏[回退编辑] icon → editor store 回退请求 → 还原最近一份快照（最多 5 次）。
+ * 工具栏[回退编辑] icon → editor store 回退请求 → 还原最近一份快照（最多 5 次）。
  * 还原后同样标记脏状态并触发自动保存，与 Word 的「撤销」一致（撤销也是一次编辑）。
  */
 watch(
@@ -381,15 +300,6 @@ watch(
   },
 )
 
-/** v1029：标记定稿 / 取消定稿（原【卷章】页签的入口收敛到此） */
-async function toggleFinalize(): Promise<void> {
-  try {
-    await editorStore.setStatus(editorStore.status === 'finalized' ? 'draft' : 'finalized')
-  } catch (err) {
-    ElMessage.error(errorMessage(err))
-  }
-}
-
 function onKeydown(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
@@ -403,64 +313,10 @@ defineExpose({ saveNow })
 
 <template>
   <div class="tiptap-editor" @keydown="onKeydown">
-    <div v-if="editor" class="editor-toolbar row">
-      <el-button-group size="small">
-        <el-button
-          :type="editor.isActive('bold') ? 'primary' : 'default'"
-          @click="editor.chain().focus().toggleBold().run()"
-        >B</el-button>
-        <el-button
-          :type="editor.isActive('italic') ? 'primary' : 'default'"
-          @click="editor.chain().focus().toggleItalic().run()"
-        ><i>I</i></el-button>
-        <el-button @click="editor.chain().focus().toggleHeading({ level: 1 }).run()">H1</el-button>
-        <el-button @click="editor.chain().focus().toggleHeading({ level: 2 }).run()">H2</el-button>
-        <el-button @click="editor.chain().focus().toggleBulletList().run()">• 列表</el-button>
-      </el-button-group>
-
-      <el-divider direction="vertical" />
-
-      <!-- 选区 AI 改写（选中文字后启用） -->
-      <el-tooltip
-        :content="hasSelection ? '对选中文字执行 AI 处理' : '先选中一段文字，再选择改写方式'"
-        placement="bottom"
-      >
-        <el-button-group size="small">
-          <el-button :disabled="!hasSelection" :loading="aiLoading" @click="runRewrite('rewrite')">
-            {{ t('editor.aiRewrite') }}
-          </el-button>
-          <el-button :disabled="!hasSelection" :loading="aiLoading" @click="runRewrite('expand')">
-            {{ t('editor.aiExpand') }}
-          </el-button>
-          <el-button :disabled="!hasSelection" :loading="aiLoading" @click="runRewrite('condense')">
-            {{ t('editor.aiCondense') }}
-          </el-button>
-          <el-button :disabled="!hasSelection" :loading="aiLoading" @click="runRewrite('polish')">
-            {{ t('editor.aiPolish') }}
-          </el-button>
-        </el-button-group>
-      </el-tooltip>
-      <span v-if="hasSelection" class="sel-hint muted text-sm">
-        已选 {{ selectedText.length }} 字
-      </span>
-
-      <div class="flex-fill" />
-      <!-- v1029：卷章页签移除后，定稿入口收敛到正文工具栏 -->
-      <el-button
-        size="small"
-        :type="editorStore.status === 'finalized' ? 'success' : 'default'"
-        :plain="editorStore.status !== 'finalized'"
-        @click="toggleFinalize"
-      >
-        {{ editorStore.status === 'finalized' ? t('editor.unfinalize') : t('editor.finalize') }}
-      </el-button>
-      <!-- v1030：[保存] 已移到「目录」所在工具栏（icon），正文工具栏不再重复 -->
-    </div>
-
-    <div class="editor-host" @click="onEditorClick">
+    <div class="editor-host">
       <EditorContent :editor="editor" class="tiptap-wrap novel-prose" />
 
-      <!-- v1031：选中文本时悬浮[AI润色]按钮；点击把选中文本加入模型对话（限定修改范围） -->
+      <!-- 选中文本时悬浮[AI润色]按钮；点击把选中文本加入模型对话（限定修改范围） -->
       <button
         v-if="polishBtn.visible"
         class="polish-float-btn"
@@ -472,15 +328,6 @@ defineExpose({ saveNow })
         ✨ AI 润色
       </button>
     </div>
-
-    <!-- AI 改写 diff 对话框 -->
-    <RewriteDiffDialog
-      v-model:visible="diffVisible"
-      :result="rewriteResult"
-      :loading="aiLoading"
-      @accept="acceptRewrite"
-      @discard="discardRewrite"
-    />
   </div>
 </template>
 
@@ -490,13 +337,6 @@ defineExpose({ saveNow })
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.editor-toolbar {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-  flex-shrink: 0;
 }
 
 .tiptap-wrap {
@@ -514,7 +354,7 @@ defineExpose({ saveNow })
   position: relative;
 }
 
-/* v1031：选区上方悬浮的 AI 润色按钮 */
+/* 选区上方悬浮的 AI 润色按钮 */
 .polish-float-btn {
   position: absolute;
   transform: translateX(-50%);
@@ -536,22 +376,6 @@ defineExpose({ saveNow })
 
 .polish-float-btn:hover {
   background: var(--el-color-primary-light-3);
-}
-
-.sel-hint {
-  align-self: center;
-}
-
-/* AI 来源标记：底色 + 左侧色条，可点击回滚 */
-.tiptap-wrap :deep(span[data-ai-source]) {
-  background: var(--el-color-primary-light-9);
-  border-bottom: 2px solid var(--el-color-primary-light-3);
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.tiptap-wrap :deep(span[data-ai-source]:hover) {
-  background: var(--el-color-primary-light-8);
 }
 
 .tiptap-wrap :deep(.ProseMirror) {

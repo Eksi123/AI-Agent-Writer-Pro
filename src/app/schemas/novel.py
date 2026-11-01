@@ -145,23 +145,6 @@ class ContentIn(BaseModel):
     autosave: bool = False
 
 
-class RewriteIn(BaseModel):
-    """选区 AI 改写请求体（手册「三、(3)【正文】」选中浮层）。
-
-    只做转换不落盘；用户「接受」后再走 `PUT content`（乐观锁 + 快照）。
-    """
-
-    selected_text: str = Field(min_length=1, max_length=8000, description="选中的正文（纯文本，≤8000 字符）")
-    mode: Literal["rewrite", "expand", "condense", "polish"] = Field(description="改写模式")
-    #: 单条消息级模型覆盖（仅本次生效）
-    model_ref: str | None = None
-    #: 选区前后文（帮助衔接，服务端截断到 600 字）
-    context_before: str | None = None
-    context_after: str | None = None
-    #: 用户补充指示（优先级最高）
-    instruction: str | None = Field(default=None, max_length=2000)
-
-
 class ContentOut(BaseModel):
     model_config = ConfigDict(extra="allow")
 

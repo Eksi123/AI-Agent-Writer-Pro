@@ -88,6 +88,13 @@ const hasPendingSave = computed(() => {
 })
 
 /**
+ * ★v1101：当前章节被 AI 编辑锁定 → 工具栏保存 icon 置灰 +
+ * [自动保存] 右侧展示灰色提示「AI编辑中，请稍后再试……」；
+ * 编辑器只读、手动/自动保存均被 editor store 拒绝。
+ */
+const chapterLocked = computed(() => editorStore.isChapterLocked(editorStore.chapterId))
+
+/**
  * v1030续(6)：正文选区悬浮[AI润色] → 选中文本以「上下文块」形式加入模型对话（同添加文件），
  * 并带上**章节 id + 所在段落范围 + 前后文**，让大模型知道这段文本在文章中的位置再修改；
  * 同时展开右栏会话框便于继续输入润色要求。
@@ -153,6 +160,8 @@ onMounted(async () => {
   // v1030续：窗口尺寸变化时夹住会话框宽度，避免出现「右侧留白」
   window.addEventListener('resize', onWindowResize)
   // v1028：项目列表加载与「默认选中上次打开的项目」由 ProjectList 统一负责（含 localStorage 记忆）
+  // ★v1101：启动时与后端对账 AI 编辑锁（防漏 SSE 事件导致一直灰着或一直可编辑）
+  void editorStore.refreshLocks()
 })
 
 function onWindowResize(): void {
@@ -292,11 +301,12 @@ window.addEventListener('beforeunload', (e) => {
                 </button>
               </el-tooltip>
 
-              <!-- 保存（icon）：v1031 无待保存内容时置灰，有待保存内容恢复可点 -->
+              <!-- 保存（icon）：v1031 无待保存内容时置灰，有待保存内容恢复可点；
+                   ★v1101：AI 编辑中一律置灰（用户编辑过也保存不出去） -->
               <el-tooltip :content="t('common.save')" placement="bottom">
                 <button
                   class="tb-icon-btn"
-                  :disabled="editorStore.saving || !hasPendingSave"
+                  :disabled="editorStore.saving || !hasPendingSave || chapterLocked"
                   @click="editorStore.requestSave()"
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
@@ -309,6 +319,9 @@ window.addEventListener('beforeunload', (e) => {
               <span class="autosave-badge" :class="{ on: settingsStore.settings.autosave_enabled }">
                 {{ t('settings.autosaveEnabled') }}
               </span>
+
+              <!-- ★v1101：AI 编辑中提示（灰色，位于[自动保存]右侧） -->
+              <span v-if="chapterLocked" class="ai-lock-hint">AI编辑中，请稍后再试……</span>
             </template>
           </div>
 
@@ -447,6 +460,19 @@ window.addEventListener('beforeunload', (e) => {
   color: var(--el-color-success);
   border-color: color-mix(in srgb, var(--el-color-success) 45%, transparent);
   background: color-mix(in srgb, var(--el-color-success) 10%, var(--bg-panel));
+}
+
+/* ★v1101：AI 编辑中提示（灰色弱化文案，紧跟[自动保存]标记） */
+.ai-lock-hint {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.85;
 }
 
 .empty-state {

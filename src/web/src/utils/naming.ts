@@ -34,14 +34,3 @@ export function validateName(raw: string, kind = '书籍名称'): string {
 export const validateBookTitle = (raw: string): string => validateName(raw, '书籍名称')
 export const validateVolumeName = (raw: string): string => validateName(raw, '卷名')
 export const validateChapterName = (raw: string): string => validateName(raw, '章节名')
-
-/**
- * 校验插入序号：正整数且不超出 1..N+1（N = 当前已有数量；N+1 = 追加到末尾）。
- * @returns 错误信息；合法时返回空串
- */
-export function validateOrdinal(raw: number | string, count: number, kind = '序号'): string {
-  const n = typeof raw === 'string' ? Number.parseInt(raw.trim(), 10) : raw
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return `${kind}必须是正整数`
-  if (n > count + 1) return `${kind}超出范围（当前共 ${count} 个，可填 1~${count + 1}）`
-  return ''
-}

@@ -81,6 +81,10 @@ const CODE_RULES: Partial<Record<number, AgentErrorInfo>> = {
     title: '该运行已结束，无法继续操作',
     advice: '请重新发送消息以开始新的一轮对话。',
   },
+  [ErrorCode.RUN_CONCURRENCY_LIMIT]: {
+    title: '同时思考执行的会话已达上限（5 个）',
+    advice: '请等待其中某个会话的 AI 回复完成后再发送；会话列表中带「AI思考执行中……」标记的就是正在跑的会话。',
+  },
   [ErrorCode.VERSION_CONFLICT]: {
     title: '内容已被其它端修改（版本冲突）',
     advice: '请在冲突提示条中选择保留本地修改或载入 AI 版本，再重新发送。',

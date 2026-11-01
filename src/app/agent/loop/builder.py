@@ -40,7 +40,9 @@ from app.agent.llm.factory import get_chat_model
 from app.agent.loop.checkpointer import get_checkpointer
 from app.agent.loop.context import AgentContext
 from app.agent.loop.middleware import (
+    ContentLockMiddleware,
     FileChangeNotifyMiddleware,
+    HiddenContextInjectionMiddleware,
     RecapInjectionMiddleware,
     SteerInjectionMiddleware,
     WorkspaceGuardMiddleware,
@@ -266,6 +268,7 @@ def build_middleware_stack(
     fallback_models: list[BaseChatModel],
     recap_provider: Any = None,
     steer_provider: Any = None,
+    hidden_context_provider: Any = None,
     model_call_limit: int = DEFAULT_MODEL_CALL_LIMIT,
     write_approval_enabled: bool = True,
     max_context: int | None = None,
@@ -273,10 +276,19 @@ def build_middleware_stack(
     """按手册顺序装配中间件栈。
 
     顺序（不可随意调换）：
-    ModelRetry → ModelFallback → ModelCallLimit → TodoList
-    → RecapInjection → SteerInjection → WorkspaceGuard → FileChangeNotify → WriteApproval
+    WriteApproval（★v1101 提到最外层）→ ModelRetry → ModelFallback → ModelCallLimit → TodoList
+    → RecapInjection → HiddenContext → SteerInjection → WorkspaceGuard
+    → FileChangeNotify → ContentLock
+
+    ★v1101：WriteApproval 必须最外层——其 `interrupt()` 抛出的 GraphInterrupt 若被
+    外层中间件（deepagents Filesystem 等）的 try/except 吞掉，会变成一条错误 ToolMessage，
+    审批永远无法暂停 run（resolve 后 resume 空转、Agent 反复重试）。置于最外层后
+    GraphInterrupt 直达 ToolNode，正确挂起 graph。
     """
     stack: list[Any] = []
+
+    # ⓪ 高危写入审批（最外层：保证 interrupt() 的 GraphInterrupt 不被吞）
+    stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
 
     # ① 重试：仅对超时 / 429 / 5xx / 连接错误重试（默认 retry_on 即覆盖这些）
     try:
@@ -311,12 +323,13 @@ def build_middleware_stack(
     if summarization_mw is not None:
         stack.append(summarization_mw)
 
-    # ⑥~⑨ 自定义中间件
+    # ⑥~⑩ 自定义中间件
     stack.append(RecapInjectionMiddleware(recap_provider=recap_provider))
+    stack.append(HiddenContextInjectionMiddleware(provider=hidden_context_provider))
     stack.append(SteerInjectionMiddleware(steer_provider=steer_provider))
     stack.append(WorkspaceGuardMiddleware())
     stack.append(FileChangeNotifyMiddleware())
-    stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
+    stack.append(ContentLockMiddleware())
 
     return stack
 
@@ -364,6 +377,7 @@ async def build_agent(
     session_id: str = "",
     subagent_names: set[str] | None = None,
     skill_names: set[str] | None = None,
+    hidden_context_provider: Any = None,
 ) -> dict[str, Any]:
     """构建 deep agent。返回装配结果 dict（含 graph 与元信息，供 runner 使用）。
 
@@ -417,6 +431,7 @@ async def build_agent(
         fallback_models=fallback_models or [],
         recap_provider=recap_provider,
         steer_provider=_steer_provider,
+        hidden_context_provider=hidden_context_provider,
         write_approval_enabled=write_approval_enabled,
         model_call_limit=get_settings().agent_model_call_limit,
     )

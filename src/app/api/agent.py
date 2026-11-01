@@ -56,6 +56,14 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
+#: ★v1101：同时处于「AI 思考执行中」的会话上限（超出再发消息 → 409/40902）
+MAX_CONCURRENT_RUNS = 5
+
+
+def _live_run_ids() -> list[str]:
+    """当前进程内真正在跑的 run（任务未结束）。"""
+    return [rid for rid in run_manager.running_ids() if run_manager.is_running(rid)]
+
 
 # ---------------------------------------------------------------------------
 # 会话
@@ -66,8 +74,16 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 async def get_sessions(
     novel_id: str | None = Query(default=None), session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """会话列表（按项目隔离：带 novel_id 只返回该项目会话）。"""
-    return ok(await agent_service.list_sessions(session, novel_id))
+    """会话列表（按项目隔离：带 novel_id 只返回该项目会话）。
+
+    ★v1101：每条会话附 `is_running`（进程内有活 run）——会话列表右侧据此
+    灰色小字提示「AI思考执行中……」。
+    """
+    dtos = await agent_service.list_sessions(session, novel_id)
+    running_sessions = {run_manager.session_of(rid) for rid in _live_run_ids()}
+    for dto in dtos:
+        dto["is_running"] = dto["id"] in running_sessions
+    return ok(dtos)
 
 
 @router.get("/usage")
@@ -160,26 +176,65 @@ async def post_message(
             },
         )
 
+    # ★v1101：同时「AI 思考执行中」的会话上限 5 个（本会话已在跑的不重复计数）
+    live = _live_run_ids()
+    live_sessions = {run_manager.session_of(rid) for rid in live}
+    if len(live) >= MAX_CONCURRENT_RUNS and session_id not in live_sessions:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": 40904,
+                "message": f"同时思考执行的会话已达上限（{MAX_CONCURRENT_RUNS} 个），请等待其中某个完成后再发送",
+                "data": {"running_sessions": sorted(s for s in live_sessions if s)},
+            },
+        )
+
+    # ★v1101：门禁（四阶段工作流）改为意图驱动——无「生成本章」按钮；
+    # 用户消息表达「按大纲某章简介生成/修改正文」时才把 run 标记为门禁运行。
+    target_chapter_id = body.target_chapter_id or ""
+    if not target_chapter_id:
+        target_chapter_id = await _detect_gate_target(row.project_id, body)
+
     run_id = await run_manager.start(
         project_id=row.project_id,
         session_id=session_id,
         content=body.content,
         model_ref=body.model_ref or row.model_ref,
         parent_id=body.parent_id,
-        target_chapter_id=body.target_chapter_id or "",
+        target_chapter_id=target_chapter_id,
+        hidden_context=body.hidden_context or "",
     )
     await session.commit()
     return JSONResponse(
         status_code=202,
-        content={"code": 0, "message": "accepted", "data": {"run_id": run_id, "session_id": session_id}},
+        content={
+            "code": 0,
+            "message": "accepted",
+            "data": {
+                "run_id": run_id,
+                "session_id": session_id,
+                # 前端据此展示门禁状态条（意图命中才非空）
+                "gate_target_chapter_id": target_chapter_id or None,
+            },
+        },
     )
 
 
+async def _detect_gate_target(project_id: str, body: AgentMessageIn) -> str:
+    """意图检测：命中「按大纲生成/修改正文」→ 返回目标章 id；否则空串（普通对话）。"""
+    from app.agent.gates.intent import detect_gate_target
+    from app.agent.knowledge.chapters import list_chapters_ordered
+
+    try:
+        chapters = await list_chapters_ordered(project_id)
+    except Exception as exc:  # noqa: BLE001 - 检测失败不阻断普通对话
+        logger.warning("gate_intent_chapters_failed", error=str(exc))
+        return ""
+    return detect_gate_target(body.content, chapters, body.active_chapter_id) or ""
+
+
 def _has_live_run(session_id: str) -> bool:
-    for run_id in run_manager.running_ids():
-        if run_manager.is_running(run_id) and run_manager.session_of(run_id) == session_id:
-            return True
-    return False
+    return any(run_manager.session_of(rid) == session_id for rid in _live_run_ids())
 
 
 @router.post("/sessions/{session_id}/branch")

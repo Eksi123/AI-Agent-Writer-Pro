@@ -17,6 +17,10 @@ export const ErrorCode = {
   NOT_FOUND: 40401,
   VERSION_CONFLICT: 40901,
   RUN_STATE_CONFLICT: 40902,
+  /** v1101：章节正被 AI 编辑（内容锁），保存被拒 */
+  CONTENT_LOCKED: 40903,
+  /** v1101：同时「AI 思考执行中」的会话数已达上限（5） */
+  RUN_CONCURRENCY_LIMIT: 40904,
   STREAM_BUFFER_LOST: 41001,
   NAMING_INVALID: 42201,
   OUTLINE_PARSE_FAILED: 42202,
@@ -329,6 +333,8 @@ export interface AgentSessionDto {
   title: string
   model_ref?: string | null
   status: AgentSessionStatus
+  /** ★v1101：进程内有活 run（会话列表右侧灰色小字「AI思考执行中……」） */
+  is_running?: boolean
   active_leaf_id?: string | null
   subagent_ids: string[]
   skill_ids: string[]
@@ -362,6 +368,12 @@ export interface MessageTree {
   active_leaf_id?: string | null
   total: number
   items: AgentMessageDto[]
+  /** ★v1101：最近一次 run（含未决中断）——进入会话时恢复审批/咨询卡片与运行态 */
+  latest_run?: {
+    run_id: string
+    status: AgentRunStatus
+    pending_interrupts: AgentInterruptDto[]
+  } | null
 }
 
 export type AgentRunStatus =
@@ -407,16 +419,6 @@ export interface AgentRunDto {
   gate_result?: Record<string, unknown> | string | null
   target_chapter_id?: string | null
   interrupts: AgentInterruptDto[]
-}
-
-/** 选区 AI 改写结果（手册「三、(3)【正文】」选中浮层） */
-export interface RewriteResult {
-  mode: 'rewrite' | 'expand' | 'condense' | 'polish'
-  original: string
-  rewritten: string
-  model_ref: string
-  word_counts: { original: number; rewritten: number }
-  prompt_version: string
 }
 
 // ---------------------------------------------------------------------------

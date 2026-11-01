@@ -1,0 +1,88 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]:
+        - generic "生肖宠物与日期" [ref=e8]:
+          - generic [ref=e9]: 🐔
+          - generic [ref=e10]: 2026年11月1日
+          - generic [ref=e11]: 星期日
+        - generic [ref=e12]:
+          - generic [ref=e13]: 北京
+          - generic [ref=e15]:
+            - generic [ref=e78]:
+              - generic [ref=e79]: ☀️
+              - generic [ref=e80]: 晴
+            - generic [ref=e81]:
+              - generic [ref=e82]: 中度污染
+              - generic [ref=e83]: "179"
+          - generic [ref=e84]:
+            - generic [ref=e85]: 温度 13°
+            - generic [ref=e86]: 湿度 33%
+            - generic [ref=e87]: 风速 2级
+      - button "新建小说" [ref=e19] [cursor=pointer]
+      - generic [ref=e22] [cursor=pointer]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: "?????"
+          - generic [ref=e28]: 末世
+        - button "···" [ref=e31]
+      - generic [ref=e32]:
+        - button "通用设置" [ref=e33] [cursor=pointer]
+        - button "AI 设置" [ref=e35] [cursor=pointer]
+  - main [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - radiogroup "radio-group" [ref=e40]:
+          - generic [ref=e41]:
+            - radio "阅读模式" [checked] [ref=e42]
+            - generic [ref=e43] [cursor=pointer]: 阅读模式
+          - generic [ref=e44]:
+            - radio "编辑模式" [ref=e45]
+            - generic [ref=e46] [cursor=pointer]: 编辑模式
+        - generic [ref=e88]: "?????"
+      - generic [ref=e47]:
+        - button "回收站" [ref=e48] [cursor=pointer]
+        - button "AI写作助手" [ref=e52] [cursor=pointer]
+    - generic [ref=e57]:
+      - button "目录" [ref=e60] [cursor=pointer]
+      - article [ref=e90]:
+        - generic [ref=e91]:
+          - heading "?????_大纲" [level=1] [ref=e92]
+          - blockquote [ref=e93]:
+            - paragraph [ref=e94]:
+              - text: 本文件是
+              - strong [ref=e95]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=e96]: "#"
+              - text: 为卷或附录，
+              - code [ref=e97]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=e98]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=e99]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=e100]
+          - list [ref=e101]:
+            - listitem [ref=e102]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=e103]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=e104]
+          - list [ref=e105]:
+            - listitem [ref=e106]: 世界背景：
+            - listitem [ref=e107]: 力量体系：
+            - listitem [ref=e108]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=e109]
+          - list [ref=e110]:
+            - listitem [ref=e111]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=e112]
+          - list [ref=e113]:
+            - listitem [ref=e114]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=e115]
+          - list [ref=e116]:
+            - listitem [ref=e117]: 视角与人称：
+            - listitem [ref=e118]: 文风与节奏：
+            - listitem [ref=e119]: 禁忌与雷区：
+  - dialog "回收站" [ref=e121]:
+    - banner [ref=e122]:
+      - heading "回收站" [level=2] [ref=e123]
+      - button "关闭此对话框" [ref=e124] [cursor=pointer]
+    - generic [ref=e130] [cursor=pointer]:
+      - generic [ref=e131]: "?????"
+      - generic [ref=e132]: 2个被删除章节

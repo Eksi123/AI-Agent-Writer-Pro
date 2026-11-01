@@ -108,9 +108,6 @@ function chLabel(title: string, sortOrder: number, index: number): string {
                 @click="reader.openChapter(ch.id)"
               >
                 <span class="ch-title">{{ chLabel(ch.title, ch.sort_order, ci) }}</span>
-                <el-tag v-if="ch.status === 'finalized'" size="small" type="success" effect="plain">
-                  定稿
-                </el-tag>
               </div>
             </template>
           </div>

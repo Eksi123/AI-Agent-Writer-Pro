@@ -62,11 +62,14 @@ async def widget_weather(
                 city_label=label,
                 address_label=address,
                 force_refresh=refresh,
+                source="located",
             )
         )
 
     target = (city or "").strip() or await _fallback_city(session)
-    return ok(await weather_service.current_weather(target, force_refresh=refresh))
+    # ★v1101：未带坐标且未显式指定城市 → 用的是「回落城市」，source 标明供组件提示
+    source = "city" if (city or "").strip() else "fallback_city"
+    return ok(await weather_service.current_weather(target, force_refresh=refresh, source=source))
 
 
 @router.get("/widgets/city")

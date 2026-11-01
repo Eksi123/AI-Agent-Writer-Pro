@@ -95,12 +95,7 @@ export const zh = {
     undoEditHint: '回退本章编辑（最多 5 次）',
     undoEmpty: '没有可回退的编辑',
     undoDone: '已回退一步编辑',
-    aiRewrite: 'AI 改写',
-    aiExpand: 'AI 扩写',
-    aiCondense: 'AI 缩写',
-    aiPolish: 'AI 润色',
-    finalize: '标记定稿',
-    unfinalize: '取消定稿',
+    /** ★v1101：选区 AI 改写四按钮与定稿入口已移除（润色=选中文本加入对话） */
     revisions: '修订历史',
     restoreRevision: '回滚到此版本',
     restoreConfirm: '回滚会用该快照覆盖当前正文（当前内容会先存一份快照）。确定继续吗？',
@@ -133,9 +128,7 @@ export const zh = {
     insertAfterVolume: '往后插入小说卷',
     insertBeforeChapter: '往前插入小说章节',
     insertAfterChapter: '往后插入小说章节',
-    ordinalLabel: '卷序号',
-    chapterOrdinalLabel: '章节序号',
-    ordinalHint: '正整数，不可与已有{kind}序号重复；1 = 插到最前面',
+    /** ★v1101：卷/章序号一律自动推算，序号输入框与相关文案移除 */
     /** v1030续：插入卷必须带上第一章（★不支持空卷）；★v1031：标签「第一章章节名」改为「章节名」 */
     firstChapterLabel: '章节名',
     firstChapterRequired: '请填写第一章的章节名（不支持空卷）',
@@ -196,8 +189,8 @@ export const zh = {
     empty: '回收站是空的',
     back: '返回回收站',
     novelDeletedTag: '整本已删除',
-    chaptersUnit: '个被删章节',
-    chapterCount: '共 {n} 个被删章节',
+    /** ★v1101：列表行右末尾小字「X个被删除章节」；二级视图不再显示总数 */
+    chaptersUnit: '个被删除章节',
     restore: '回收',
     purge: '删除',
     askTitle: '回收还是删除？',
@@ -331,7 +324,7 @@ export const zh = {
     /** v1029：头部展示当前会话数量 + 当前小说项目 token 使用量（无模型提示已删除） */
     sessionCount: '{n}个会话',
     /** v1029：头部 token 用量带单位（x.yK Token） */
-    tokenTotal: '{n}K Token',
+    tokenTotal: '{n} Token',
     tokenUsage: '{used}K / {window}K',
     tokenUsageOnly: '已用 {used}K tokens',
     sessionLabel: '会话',
@@ -345,7 +338,9 @@ export const zh = {
     noSession: '快点来开启AI写作吧~',
     backToList: '返回会话列表',
     sessionListTitle: '会话记录',
-    inputPlaceholder: '描述你的需求，例如：帮我扩写第三章的打斗场面…',
+    /** ★v1101：会话列表中「正在思考执行」的灰色小字标记 */
+    sessionRunning: 'AI思考执行中……',
+    /** ★v1101：输入提示文案已全部移除（聊天框任何情况下都不提示） */
     send: '发送',
     stop: '停止',
     /** ★v1031：底部按键的「追加消息」形态（运行中且已输入内容） */
@@ -366,7 +361,7 @@ export const zh = {
     errorDismiss: '知道了',
     /** ★v1031：删除[重新生成]功能 */
     copyMessage: '复制',
-    usage: '用量：入 {in} / 出 {out} tokens',
+    usage: '用量：入 {in} / 出 {out}',
     planTitle: '计划',
     gateStage: '门禁阶段',
     subagentLane: '子代理',
@@ -414,7 +409,6 @@ export const zh = {
     contextRemaining: '{n}%',
     /** v1029：未配置大模型时的提示（只在模型弹窗内出现；会话框上方不再提示） */
     noModelsHint: '尚未配置大模型',
-    generateChapter: '生成本章',
   },
   health: {
     backendOffline: '后端未连接（请确认 uvicorn 已在 127.0.0.1:8000 运行）',

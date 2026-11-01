@@ -1,0 +1,114 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]:
+        - generic "生肖宠物与日期" [ref=e8]:
+          - generic [ref=e9]: 🐷
+          - generic [ref=e10]: 2026年11月1日
+          - generic [ref=e11]: 星期日
+        - generic [ref=e12]:
+          - generic [ref=e13]:
+            - generic [ref=e14]: 北京
+            - generic "浏览器定位未授权或超时，已按通用设置的回落城市查询" [ref=e99]: （回落城市）
+          - generic [ref=e15]:
+            - generic [ref=e100]:
+              - generic [ref=e101]: ☀️
+              - generic [ref=e102]: 晴
+            - generic [ref=e103]:
+              - generic [ref=e104]: 良
+              - generic [ref=e105]: "100"
+          - generic [ref=e106]:
+            - generic [ref=e107]: 温度 10°
+            - generic [ref=e108]: 湿度 50%
+            - generic [ref=e109]: 风速 1级
+      - button "新建小说" [ref=e19] [cursor=pointer]
+      - generic [ref=e22] [cursor=pointer]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: "?????"
+          - generic [ref=e28]: 末世
+        - button "···" [ref=e31]
+      - generic [ref=e32]:
+        - button "通用设置" [ref=e33] [cursor=pointer]
+        - button "AI 设置" [ref=e35] [cursor=pointer]
+  - main [ref=e37]:
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - radiogroup "radio-group" [ref=e40]:
+          - generic [ref=e41]:
+            - radio "阅读模式" [checked] [ref=e42]
+            - generic [ref=e43] [cursor=pointer]: 阅读模式
+          - generic [ref=e44]:
+            - radio "编辑模式" [ref=e45]
+            - generic [ref=e46] [cursor=pointer]: 编辑模式
+        - generic [ref=e47]: "?????"
+      - generic [ref=e49]:
+        - button "回收站" [ref=e50] [cursor=pointer]
+        - button [ref=e110] [cursor=pointer]
+    - generic [ref=e59]:
+      - button "目录" [ref=e62] [cursor=pointer]
+      - article [ref=e69]:
+        - generic [ref=e70]:
+          - heading "?????_大纲" [level=1] [ref=e71]
+          - blockquote [ref=e72]:
+            - paragraph [ref=e73]:
+              - text: 本文件是
+              - strong [ref=e74]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=e75]: "#"
+              - text: 为卷或附录，
+              - code [ref=e76]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=e77]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=e78]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=e79]
+          - list [ref=e80]:
+            - listitem [ref=e81]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=e82]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=e83]
+          - list [ref=e84]:
+            - listitem [ref=e85]: 世界背景：
+            - listitem [ref=e86]: 力量体系：
+            - listitem [ref=e87]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=e88]
+          - list [ref=e89]:
+            - listitem [ref=e90]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=e91]
+          - list [ref=e92]:
+            - listitem [ref=e93]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=e94]
+          - list [ref=e95]:
+            - listitem [ref=e96]: 视角与人称：
+            - listitem [ref=e97]: 文风与节奏：
+            - listitem [ref=e98]: 禁忌与雷区：
+  - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=e113]
+  - complementary [ref=e115]:
+    - generic [ref=e116]:
+      - generic [ref=e117]:
+        - generic "会话记录" [ref=e118]: 3个会话
+        - generic [ref=e121]: 63.6K Token
+      - generic [ref=e155]:
+        - button [ref=e156] [cursor=pointer]
+        - generic [ref=e160]: 【选中待润色文本】高铁_节选1
+      - generic [ref=e161]:
+        - generic [ref=e162]:
+          - generic [ref=e163]: 【选中待润色文本】高铁_节选1 所在章节 id：fac5eab8 所在范围：第1-1段（全章共1段） （选中文本原文，只允许修改这一段） vf 请按我的要求润色以上选中文本：只输出修改后的这一段（不要输出前文/后文），完成后把修改结果写回该章节对应位置（写回前会先存快照，可回滚）。 --- 【我的问题】 在这个章节帮我生成一个小故事
+          - generic [ref=e164]: 2026-11-01 18:54
+        - generic [ref=e166]:
+          - generic [ref=e167]: "@@ lines 1-57 of 57 @@ --- created_at: '2026-11-01T03:10:41.795Z' last_writer: manual sort_order: 1 status: draft title: 高铁 updated_at: '2026-11-01T10:55:22.434Z' version: 4 volume_id: 703b9805 word_count: 7 --- 林昭是被刹车声惊醒的。 不是正常的减速——那种从匀速到静止的平滑过渡，他在无数次出差途中早已习惯。这一次，金属的尖啸从列车底部直穿上来，像有人拿一把钝刀，沿着他的脊椎一路往上划。小桌板上的纸杯弹了起来，可乐洒了半桌。 车厢里的灯灭了半秒，又亮了，变成了昏暗的应急黄。 他抬头看了一眼座位上方的信息屏。出发时还显示着「G6014 · 下一站：星城」的屏幕，此刻只剩下一个不断旋转的加载圆圈。空调的出风口不再吹风，安静下来的车厢里，只剩下轮轨摩擦发出的低哑嗡鸣，正在一点点减弱。 \"怎么回事？\"斜对面穿制服的中年男人探出身子，试图往过道方向看。 没有人回答。 林昭摘下还挂在耳朵上的降噪耳机——他本来是靠着它才睡着的。耳机一离耳朵，车厢里的声音一下子涌进来了：有人在低声打电话，有小孩在哭，有人用力拍座椅扶手，还有前方传来的脚步声，很快很急，皮鞋底敲在地板上，像一串不规则的鼓点。 他掏出手机。屏幕右上角的信号格从满格降到了一格，然后又降到零。他试着刷了一下信息流，转了三圈，弹出一行灰色小字：网络连接失败。 时间显示19:47。 他转头看向车窗外。 列车正在穿过一段山间的路段——上车后他记得看过线路图，这一段有连续的隧道群。但此刻窗外并不是隧道里那种被灯光照亮的灰色墙面。窗外是黑的。彻底的、没有层次的黑，像是有人用墨汁把整个世界涂满了。列车明明还在滑行，窗外却连一丝光影的流动都看不到——没有远处城市的灯火，没有对面驶来列车的大灯，连隧壁上那些每隔几米就有的检修灯都灭了。 这种黑的密度让他产生了一种荒谬的感觉：不是外面的灯灭了，而是外面的世界不在了。 车厢前门被人从外面推开了。一股气味冲进来——不是车厢里常见的方便面混着香水的那种味道。那是一种潮湿的、发苦的、像是把树叶和铁锈泡在一起的气味，从门缝里灌进来，贴着地板往前蔓延。 \"各位旅客，\"广播终于响了，但那个甜美的标准女声此刻听上去断断续续，像是被什么东西干扰了一样，\"本次列车……因特殊情况……临时停车——\" 广播在一声刺耳的电流啸叫后彻底断了。 穿制服的中年男人已经站到了过道上，手里攥着手机，屏幕的微光照亮了他额头的汗。车厢里此起彼伏地响起手机点亮的声音，几十块小屏幕在黑暗中浮动，像一群迷路的萤火虫。 \"谁去按那个紧急呼叫？\"有人喊。 没有人动。 林昭低头看了一眼自己桌上的手机。信号仍然是零。他犹豫了一下，还是把它翻了个面扣在桌上，然后站起来，把背包从行李架上拽下来，拉上外套拉链。 他说不清楚为什么要这样做。但他闻着那股从门口涌进来的苦涩气味，感到自己的皮肤上起了一层细密的鸡皮疙瘩。 直觉告诉他：不要在这里等。 他迈出了一步。车厢又晃了一下——不是刹车，而是某种更轻微的、像是从地底深处传来的震颤。 窗外的黑暗里，似乎有什么东西动了一下。"
+          - generic [ref=e168]:
+            - generic [ref=e169]: 2026-11-01 18:55
+            - button "复制" [ref=e170] [cursor=pointer]
+        - generic [ref=e172]:
+          - generic [ref=e173]: 帮我生成一篇简单的故事，不超过500字
+          - generic [ref=e174]: 2026-11-01 21:33
+        - generic [ref=e204]:
+          - generic [ref=e205]: 用户拒绝了本次「write_file」操作（整章覆盖：/projects/53354678-2478-4223-a763-995eac688f1c/chapters/v703b9805/cfac5eab8.md 已有 205 字符正文，将被 485 字符替换），未执行任何改动。请询问用户希望如何调整，不要重复提交相同调用。▌
+          - generic [ref=e206]: AI 正在思考…
+      - generic [ref=e144]:
+        - textbox [ref=e146]
+        - generic [ref=e147]:
+          - button "＋" [ref=e148] [cursor=pointer]
+          - button "工具" [ref=e149] [cursor=pointer]
+          - button "Model Off" [ref=e151] [cursor=pointer]
+          - button "发送" [disabled] [ref=e201]

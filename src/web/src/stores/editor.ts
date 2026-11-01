@@ -1,11 +1,16 @@
 /**
  * 编辑器 store：正文乐观锁（base_version）+ 自动保存 + 冲突状态。
  * 契约见手册「六 · 正文写入乐观锁」。
+ *
+ * ★v1101：AI 编辑锁——AI 修改某章期间用户不得同时修改：
+ * `lockedChapters`（chapterId → runId）由 SSE `content.lock` 事件与
+ * `GET /chapters/locks` 轮询维护；锁定期内 `save()` 直接拒绝（手动/自动同拒）。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { contentApi } from '@/api'
 import { ApiError, errorMessage } from '@/api/http'
+import { ErrorCode } from '@/types'
 import type { ChapterContent, Revision, VersionConflictData } from '@/types'
 
 export const useEditorStore = defineStore('editor', () => {
@@ -15,7 +20,6 @@ export const useEditorStore = defineStore('editor', () => {
   const draft = ref('')
   /** 读取时拿到的 version，保存时必须回传为 base_version */
   const baseVersion = ref(1)
-  const status = ref<'draft' | 'finalized'>('draft')
   const lastWriter = ref<'manual' | 'agent'>('manual')
   const wordCount = ref(0)
 
@@ -76,6 +80,36 @@ export const useEditorStore = defineStore('editor', () => {
 
   const hasConflict = computed(() => conflict.value !== null)
 
+  // ---- ★v1101：AI 编辑锁 ----
+  /** chapterId → 持有锁的 run_id */
+  const lockedChapters = ref<Record<string, string>>({})
+
+  function isChapterLocked(chapterId: string | null | undefined): boolean {
+    return !!chapterId && chapterId in lockedChapters.value
+  }
+
+  /** SSE `content.lock` 事件回调 */
+  function setChapterLock(chapterId: string, runId: string, locked: boolean): void {
+    if (locked) lockedChapters.value = { ...lockedChapters.value, [chapterId]: runId }
+    else {
+      const next = { ...lockedChapters.value }
+      delete next[chapterId]
+      lockedChapters.value = next
+    }
+  }
+
+  /** 启动 / SSE 重连后与服务端对账（防漏事件） */
+  async function refreshLocks(): Promise<void> {
+    try {
+      const list = await contentApi.locks()
+      const next: Record<string, string> = {}
+      for (const item of list) next[item.chapter_id] = item.run_id
+      lockedChapters.value = next
+    } catch {
+      // 对账失败不阻断编辑（后端 PUT 仍有硬校验兜底）
+    }
+  }
+
   async function openChapter(id: string): Promise<void> {
     chapterId.value = id
     conflict.value = null
@@ -84,7 +118,6 @@ export const useEditorStore = defineStore('editor', () => {
     draft.value = data.content
     baseVersion.value = data.version
     title.value = data.title ?? ''
-    status.value = (data.status as 'draft' | 'finalized') ?? 'draft'
     lastWriter.value = data.last_writer
     wordCount.value = data.word_count
     dirty.value = false
@@ -99,9 +132,11 @@ export const useEditorStore = defineStore('editor', () => {
   /**
    * 保存正文。
    * @param autosave true 时不产生修订快照（防版本爆炸）
+   * ★v1101：章节被 AI 编辑锁定时直接拒绝（手动与自动保存同拒），不发请求。
    */
   async function save(autosave = false): Promise<boolean> {
     if (!chapterId.value) return false
+    if (isChapterLocked(chapterId.value)) return false
     saving.value = true
     error.value = null
     try {
@@ -113,6 +148,12 @@ export const useEditorStore = defineStore('editor', () => {
       conflict.value = null
       return true
     } catch (err) {
+      if (err instanceof ApiError && err.code === ErrorCode.CONTENT_LOCKED) {
+        // 兜底：本地锁状态漏了事件时，以服务端为准补记锁
+        const data = err.data as { chapter_id?: string; run_id?: string } | null
+        if (data?.chapter_id) setChapterLock(data.chapter_id, data.run_id || '', true)
+        return false
+      }
       if (err instanceof ApiError && err.isVersionConflict) {
         // 服务端已变更：把最新内容/版本存入 conflict，交由 ConflictBanner 决策
         conflict.value = err.data as VersionConflictData
@@ -171,13 +212,6 @@ export const useEditorStore = defineStore('editor', () => {
     await loadRevisions()
   }
 
-  async function setStatus(next: 'draft' | 'finalized'): Promise<void> {
-    if (!chapterId.value) return
-    const { chaptersApi } = await import('@/api')
-    await chaptersApi.update(chapterId.value, { status: next })
-    status.value = next
-  }
-
   function reset(): void {
     chapterId.value = null
     draft.value = ''
@@ -195,7 +229,6 @@ export const useEditorStore = defineStore('editor', () => {
     title,
     draft,
     baseVersion,
-    status,
     lastWriter,
     wordCount,
     dirty,
@@ -204,6 +237,10 @@ export const useEditorStore = defineStore('editor', () => {
     conflict,
     revisions,
     hasConflict,
+    lockedChapters,
+    isChapterLocked,
+    setChapterLock,
+    refreshLocks,
     saveRequestTick,
     dirtyOutline,
     undoEditTick,
@@ -219,7 +256,6 @@ export const useEditorStore = defineStore('editor', () => {
     acceptServerVersion,
     loadRevisions,
     restoreRevision,
-    setStatus,
     reset,
   }
 })

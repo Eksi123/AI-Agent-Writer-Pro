@@ -1,0 +1,148 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e7]:
+        - generic "生肖宠物与日期" [ref=e8]:
+          - generic [ref=e9]: 🐴
+          - generic [ref=e10]: 2026年11月1日
+          - generic [ref=e11]: 星期日
+        - generic [ref=e12]:
+          - generic [ref=e13]: 北京
+          - generic [ref=e15]:
+            - generic [ref=e16]:
+              - generic [ref=e17]: ☁️
+              - generic [ref=e18]: 阴
+            - generic [ref=e19]:
+              - generic [ref=e20]: 中度污染
+              - generic [ref=e21]: "181"
+          - generic [ref=e22]:
+            - generic [ref=e23]: 温度 16°
+            - generic [ref=e24]: 湿度 28%
+            - generic [ref=e25]: 风速 3级
+      - button "新建小说" [ref=e27] [cursor=pointer]
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e34]:
+          - generic [ref=e35]: "?????"
+          - generic [ref=e36]: "??"
+        - button "···" [ref=e39]
+      - generic [ref=e40]:
+        - button "通用设置" [ref=e41] [cursor=pointer]
+        - button "AI 设置" [ref=e43] [cursor=pointer]
+  - main [ref=e45]:
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - radiogroup "radio-group" [ref=e48]:
+          - generic [ref=e49]:
+            - radio "阅读模式" [checked] [ref=e50]
+            - generic [ref=e51] [cursor=pointer]: 阅读模式
+          - generic [ref=e52]:
+            - radio "编辑模式" [ref=e53]
+            - generic [ref=e54] [cursor=pointer]: 编辑模式
+        - generic [ref=e55]: "?????"
+      - generic [ref=e57]:
+        - button "回收站" [ref=e58] [cursor=pointer]
+        - button [ref=e107] [cursor=pointer]
+    - generic [ref=e67]:
+      - button "目录" [ref=e70] [cursor=pointer]
+      - article [ref=e77]:
+        - generic [ref=e78]:
+          - heading "?????_大纲" [level=1] [ref=e79]
+          - blockquote [ref=e80]:
+            - paragraph [ref=e81]:
+              - text: 本文件是
+              - strong [ref=e82]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=e83]: "#"
+              - text: 为卷或附录，
+              - code [ref=e84]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=e85]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=e86]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=e87]
+          - list [ref=e88]:
+            - listitem [ref=e89]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=e90]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=e91]
+          - list [ref=e92]:
+            - listitem [ref=e93]: 世界背景：
+            - listitem [ref=e94]: 力量体系：
+            - listitem [ref=e95]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=e96]
+          - list [ref=e97]:
+            - listitem [ref=e98]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=e99]
+          - list [ref=e100]:
+            - listitem [ref=e101]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=e102]
+          - list [ref=e103]:
+            - listitem [ref=e104]: 视角与人称：
+            - listitem [ref=e105]: 文风与节奏：
+            - listitem [ref=e106]: 禁忌与雷区：
+  - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=e110]
+  - complementary [ref=e112]:
+    - generic [ref=e113]:
+      - generic [ref=e114]:
+        - generic "会话记录" [ref=e115]: 1个会话
+        - generic "用量：入 6869 / 出 208 tokens" [ref=e180]: 20.7K Token
+      - generic [ref=e142]:
+        - button [ref=e143] [cursor=pointer]
+        - generic [ref=e147]: hello
+      - generic [ref=e148]:
+        - generic [ref=e149]:
+          - generic [ref=e150]: hello
+          - generic [ref=e151]: 2026-11-01 11:16
+        - generic [ref=e153]:
+          - generic [ref=e154]: "你好！欢迎 👋 我看了一下当前项目的状态： - **书名、题材**：还是占位符「?????」，未填写 - **卷「新人传递 · 高铁」**：已建立，但暂无章节正文 - **大纲、章节文件**：尚未生成 这是一个全新的项目。我们可以从下面几个方向开始，你想先做哪一个？ | # | 起点 | 适合场景 | |---|------|---------| | 1 | **先定书名 + 题材** | 你心里还没确定最终书名和类型，想先把项目元信息补上（`novel.yaml`） | | 2 | **先规划「新人传递 · 高铁」的章节大纲** | 书名题材你心里有数，想直接进入分卷设计、拆解章节节奏（我会调用 `novel-planning` 技能） | | 3 | **直接写某一章正文** | 你已经想好开头要怎么落笔，只需要告诉我第一章写什么 | | 4 | **其他** | 比如起名、查资料、或者你有别的想法 | 另外想顺便确认一下： - **书名**最终是什么？「新人传递 · 高铁」是卷名，那整本书叫什么？ - **题材**是都市、玄幻、悬疑、还是别的？（这决定我要加载哪一套写作规范） 告诉我你的想法，我们就开工。"
+          - generic [ref=e155]:
+            - generic [ref=e156]: 2026-11-01 11:16
+            - button "复制" [ref=e157] [cursor=pointer]
+        - generic [ref=e159]:
+          - generic [ref=e160]: 你是啥
+          - generic [ref=e161]: 2026-11-01 11:24
+        - generic [ref=e163]:
+          - generic [ref=e164]: "我是你的中文小说写作助理，专门协助「?????」这个项目的创作工作。 ## 我能做什么 | 能力 | 说明 | |------|------| | **大纲规划** | 拆解分卷结构、安排章节节奏、布局伏笔 | | **正文写作 / 续写** | 按大纲撰写章节正文，落到项目文件里 | | **润色校对** | 去水词、修病句、统一称谓语气 | | **连贯性审查** | 核查时间线、人物状态、设定冲突、未回收伏笔 | | **起名** | 人物、地名、门派、功法、卷章名等 | | **资料查证** | 搜索历史、地理、术语、文化等真实世界知识 | ## 当前项目状态 还是全新项目——书名、题材空着，「新人传递 · 高铁」这一卷还没有内容。 ## 下一步 请告诉我： 1. **书名**定叫什么？（还是「?????」要换成别的） 2. **题材**是什么？（都市 / 玄幻 / 悬疑 / 其他） 3. 想从哪一步开始——先做大纲、还是直接写正文？ 你说了我就开工。"
+          - generic [ref=e165]:
+            - generic [ref=e166]: 2026-11-01 11:24
+            - button "复制" [ref=e167] [cursor=pointer]
+        - generic [ref=e181]:
+          - generic [ref=e182]: 今天天气不错
+          - generic [ref=e183]: 2026-11-01 12:59
+        - generic [ref=e185]:
+          - generic [ref=e186]: hello
+          - generic [ref=e187]: 2026-11-01 12:59
+        - generic [ref=e189]:
+          - generic [ref=e190]: "你好！欢迎 👋 我看了一下当前项目的状态： - **书名、题材**：还是占位符「?????」，未填写 - **卷「新人传递 · 高铁」**：已建立，但暂无章节正文 - **大纲、章节文件**：尚未生成 这是一个全新的项目。我们可以从下面几个方向开始，你想先做哪一个？ | # | 起点 | 适合场景 | |---|------|---------| | 1 | **先定书名 + 题材** | 你心里还没确定最终书名和类型，想先把项目元信息补上（`novel.yaml`） | | 2 | **先规划「新人传递 · 高铁」的章节大纲** | 书名题材你心里有数，想直接进入分卷设计、拆解章节节奏（我会调用 `novel-planning` 技能） | | 3 | **直接写某一章正文** | 你已经想好开头要怎么落笔，只需要告诉我第一章写什么 | | 4 | **其他** | 比如起名、查资料、或者你有别的想法 | 另外想顺便确认一下： - **书名**最终是什么？「新人传递 · 高铁」是卷名，那整本书叫什么？ - **题材**是都市、玄幻、悬疑、还是别的？（这决定我要加载哪一套写作规范） 告诉我你的想法，我们就开工。"
+          - generic [ref=e191]:
+            - generic [ref=e192]: 2026-11-01 12:59
+            - button "复制" [ref=e193] [cursor=pointer]
+        - generic [ref=e195]:
+          - generic [ref=e196]: 你是啥
+          - generic [ref=e197]: 2026-11-01 12:59
+        - generic [ref=e199]:
+          - generic [ref=e200]: hello
+          - generic [ref=e201]: 2026-11-01 12:59
+        - generic [ref=e203]:
+          - generic [ref=e204]: 你是啥
+          - generic [ref=e205]: 2026-11-01 12:59
+        - generic [ref=e207]:
+          - generic [ref=e208]: "我是你的中文小说写作助理，专门协助「?????」这个项目的创作工作。 ## 我能做什么 | 能力 | 说明 | |------|------| | **大纲规划** | 拆解分卷结构、安排章节节奏、布局伏笔 | | **正文写作 / 续写** | 按大纲撰写章节正文，落到项目文件里 | | **润色校对** | 去水词、修病句、统一称谓语气 | | **连贯性审查** | 核查时间线、人物状态、设定冲突、未回收伏笔 | | **起名** | 人物、地名、门派、功法、卷章名等 | | **资料查证** | 搜索历史、地理、术语、文化等真实世界知识 | ## 当前项目状态 还是全新项目——书名、题材空着，「新人传递 · 高铁」这一卷还没有内容。 ## 下一步 请告诉我： 1. **书名**定叫什么？（还是「?????」要换成别的） 2. **题材**是什么？（都市 / 玄幻 / 悬疑 / 其他） 3. 想从哪一步开始——先做大纲、还是直接写正文？ 你说了我就开工。"
+          - generic [ref=e209]:
+            - generic [ref=e210]: 2026-11-01 12:59
+            - button "复制" [ref=e211] [cursor=pointer]
+        - generic [ref=e213]:
+          - generic [ref=e214]: 今天天气不错
+          - generic [ref=e215]: 2026-11-01 12:59
+        - generic [ref=e217]:
+          - generic [ref=e218]: 哈哈，是呀 ☀️ 想知道你那边有多好吗？告诉我城市，我可以帮你查实时天气和未来几天的预报。 ——不过闲聊归闲聊，项目这边还是空白的状态哦 😄 要不要顺手把书名、题材定一下，或者我先帮你规划「新人传递 · 高铁」这卷的大纲？你说个方向，咱们就动笔。
+          - generic [ref=e219]:
+            - generic [ref=e220]: 2026-11-01 12:59
+            - button "复制" [ref=e221] [cursor=pointer]
+      - generic [ref=e129]:
+        - textbox [active] [ref=e131]
+        - generic [ref=e132]:
+          - button "＋" [ref=e133] [cursor=pointer]
+          - button "工具" [ref=e134] [cursor=pointer]
+          - button "qwen3.7-plus" [ref=e136] [cursor=pointer]
+          - generic "上下文使用情况：7K / 33K" [ref=e169]: 79%
+          - button "发送" [disabled] [ref=e223]

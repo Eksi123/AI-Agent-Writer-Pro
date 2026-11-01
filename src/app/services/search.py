@@ -255,16 +255,16 @@ def _like_hits(doc_ref: str, kind: str, content: str, q: str, limit: int) -> lis
 async def rebuild_summaries(session: AsyncSession, project_id: str) -> dict[str, Any]:
     """重建章节摘要与派生索引（手册「六 → 路由树 · 摘要」）。
 
-    - LLM 摘要：为已定稿（status=finalized）且尚无摘要的章节生成 `summaries/ch-{id}.md`
-      （未配置模型时自动跳过，不阻断索引重建）；
+    - LLM 摘要：为尚无摘要的章节生成 `summaries/ch-{id}.md`
+      （★v1101：定稿入口移除后不再按 status 过滤；未配置模型时自动跳过，不阻断索引重建）；
     - 派生索引：全量重建 `story_fts` 并刷新统计。
     """
     # ① 摘要生成（尽力而为：无模型/失败只记录，不抛）
-    summarize_note = "未生成（未定稿章节或缺少可用模型时跳过）"
+    summarize_note = "未生成（正文过短或缺少可用模型时跳过）"
     try:
-        from app.agent.knowledge import summarize_finalized_chapters
+        from app.agent.knowledge import summarize_all_chapters
 
-        result_summary = await summarize_finalized_chapters(session, project_id)
+        result_summary = await summarize_all_chapters(session, project_id)
         await session.commit()
         if result_summary["summarized"]:
             summarize_note = f"新生成 {result_summary['summarized']} 篇"

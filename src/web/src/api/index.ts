@@ -25,7 +25,6 @@ import type {
   RecycledContents,
   RecycledNovel,
   Revision,
-  RewriteResult,
   SearchResult,
   UserSettings,
   Volume,
@@ -126,7 +125,7 @@ export const chaptersApi = {
   /** v1029：重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改） */
   update: (
     chapterId: string,
-    payload: { title?: string; status?: 'draft' | 'finalized'; volume_title?: string },
+    payload: { title?: string; volume_title?: string },
   ) => patch<Chapter>(`/chapters/${chapterId}`, payload),
 
   remove: (chapterId: string) =>
@@ -144,9 +143,15 @@ export const contentApi = {
   read: (chapterId: string) => get<ChapterContent>(`/chapters/${chapterId}/content`),
 
   /**
+   * ★v1101：当前被 AI 编辑锁定的章节列表（启动 / SSE 重连后对账用）。
+   */
+  locks: () => get<{ chapter_id: string; run_id: string; session_id: string; project_id: string }[]>(`/chapters/locks`),
+
+  /**
    * 写正文。
    * @param baseVersion 读取时拿到的 version；不符返回 409/40901
    * @param autosave true 时不产生修订快照（防版本爆炸）
+   * ★v1101：章节被 AI 编辑锁定时返回 409/40903（手动与自动保存同拒）
    */
   write: (chapterId: string, content: string, baseVersion: number, autosave = false) =>
     put<ContentWriteResult>(`/chapters/${chapterId}/content`, {
@@ -161,22 +166,6 @@ export const contentApi = {
     post<ChapterContent & { restored_from: string }>(
       `/chapters/${chapterId}/revisions/${revisionId}/restore`,
     ),
-
-  /**
-   * 选区 AI 改写（改写/扩写/缩写/润色）：只返回转换结果，**不写文件**。
-   * 用户「接受」后由调用方走 write() 落盘（保留乐观锁与修订快照）。
-   */
-  rewrite: (
-    chapterId: string,
-    payload: {
-      selected_text: string
-      mode: 'rewrite' | 'expand' | 'condense' | 'polish'
-      model_ref?: string
-      context_before?: string
-      context_after?: string
-      instruction?: string
-    },
-  ) => post<RewriteResult>(`/chapters/${chapterId}/rewrite`, payload),
 }
 
 // ---------------------------------------------------------------------------
@@ -404,9 +393,11 @@ export interface WeatherDto {
   description: string
   icon: string
   observed_at?: string | null
-  /** v1028：空气质量指数（US AQI）与等级（优/良/轻度污染…） */
+  /** v1028：空气质量指数（★v1101 起为中国 AQI 口径，与 Open-Meteo european_aqi 一致）与等级 */
   aqi?: number | null
   aqi_level?: string | null
+  /** ★v1101：坐标来源 located=浏览器定位 / city=按城市名 / fallback_city=定位失败回落设置城市 */
+  source?: string
 }
 
 export interface PetStateDto {
@@ -470,11 +461,23 @@ export const agentApi = {
 
   getMessages: (id: string) => get<MessageTree>(`/agent/sessions/${id}/messages`),
 
-  /** 发消息 → 202 + {run_id}；事件走 streamUrl(run_id) */
+  /** 发消息 → 202 + {run_id}；事件走 streamUrl(run_id)
+   * ★v1101：active_chapter_id = 用户当前编辑/阅读的章（门禁意图检测的目标章回落）；
+   * hidden_context = 隐藏上下文（润色提示词），随本轮送给模型但不入消息树不展示 */
   postMessage: (
     id: string,
-    payload: { content: string; model_ref?: string; parent_id?: string; target_chapter_id?: string },
-  ) => post<{ run_id: string; session_id: string }>(`/agent/sessions/${id}/messages`, payload),
+    payload: {
+      content: string
+      model_ref?: string
+      parent_id?: string
+      target_chapter_id?: string
+      active_chapter_id?: string
+      hidden_context?: string
+    },
+  ) => post<{ run_id: string; session_id: string; gate_target_chapter_id?: string | null }>(
+    `/agent/sessions/${id}/messages`,
+    payload,
+  ),
 
   switchBranch: (id: string, messageId: string) =>
     post<{ session_id: string; active_leaf_id: string }>(`/agent/sessions/${id}/branch`, {

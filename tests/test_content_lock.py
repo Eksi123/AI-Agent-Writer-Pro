@@ -8,8 +8,10 @@
 
     ★必测：
     - 带过期 `base_version` → 409 / `40901` 且回传最新内容；带最新值 → 成功且 `version+1`；
-    - 手动保存 / Agent 写入 / 定稿三种触发各产生快照；自动保存不产生；
-    - 超过保留上限时清理最旧的非定稿快照；restore 回滚后内容与 `version` 正确。
+    - 手动保存 / Agent 写入两种触发各产生快照；自动保存不产生；
+    - 超过保留上限时清理最旧快照；restore 回滚后内容与 `version` 正确。
+    ★v1101：AI 编辑锁——锁定期内手动/自动保存均 409 / `40903`；释放后恢复；
+      `GET /chapters/locks` 返回当前锁列表。
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import pytest
 from app.core.config import get_settings
 from app.db.session import get_sessionmaker
 from app.services import volumes as volumes_service
+from app.services.content_lock import content_locks
 
 
 @pytest.mark.asyncio
@@ -127,22 +130,6 @@ async def test_autosave_does_not_snapshot(client, chapter_id):
 
     revs = (await client.get(f"/api/v1/chapters/{chapter_id}/revisions")).json()["data"]
     assert revs == [], "自动保存不得产生任何快照"
-
-
-@pytest.mark.asyncio
-async def test_finalize_creates_snapshot(client, chapter_id):
-    """定稿（status → finalized）触发一次快照。"""
-    resp = await client.patch(f"/api/v1/chapters/{chapter_id}", json={"status": "finalized"})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["status"] == "finalized"
-
-    revs = (await client.get(f"/api/v1/chapters/{chapter_id}/revisions")).json()["data"]
-    assert len(revs) == 1
-
-    # 重复定稿不再产生新快照
-    await client.patch(f"/api/v1/chapters/{chapter_id}", json={"status": "finalized"})
-    revs = (await client.get(f"/api/v1/chapters/{chapter_id}/revisions")).json()["data"]
-    assert len(revs) == 1
 
 
 @pytest.mark.asyncio
@@ -257,3 +244,57 @@ async def test_agent_write_source_recorded(client, chapter_id):
     cur = (await client.get(f"/api/v1/chapters/{chapter_id}/content")).json()["data"]
     assert cur["last_writer"] == "agent"
     assert cur["content"] == "AI 生成的正文"
+
+
+# ---------------------------------------------------------------------------
+# ★v1101：AI 编辑锁（章节被 AI 修改期间用户保存被拒）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_locked_chapter_rejects_manual_and_autosave(client, chapter_id):
+    """锁定期内：手动保存与自动保存均 409 / 40903，且内容不变。"""
+    assert await content_locks.acquire(chapter_id, run_id="run-x", session_id="s", project_id="p")
+
+    resp = await client.put(
+        f"/api/v1/chapters/{chapter_id}/content",
+        json={"content": "用户偷偷保存的内容", "base_version": 1},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == 40903
+
+    resp = await client.put(
+        f"/api/v1/chapters/{chapter_id}/content",
+        json={"content": "自动保存的内容", "base_version": 1, "autosave": True},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["code"] == 40903
+
+    cur = (await client.get(f"/api/v1/chapters/{chapter_id}/content")).json()["data"]
+    assert cur["content"] == "少年走出山村，第一次见到星海。"
+    assert cur["version"] == 1
+
+    # 锁列表可见
+    locks = (await client.get("/api/v1/chapters/locks")).json()["data"]
+    assert any(lk["chapter_id"] == chapter_id and lk["run_id"] == "run-x" for lk in locks)
+
+    # 释放后恢复可写
+    assert await content_locks.release(chapter_id, run_id="run-x")
+    resp = await client.put(
+        f"/api/v1/chapters/{chapter_id}/content",
+        json={"content": "释放后可以保存", "base_version": 1},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_lock_release_only_by_holder(client, chapter_id):
+    """非持有者释放无效（防误删他人锁）；release_for_run 按 run 清理。"""
+    await content_locks.acquire(chapter_id, run_id="run-a", session_id="s", project_id="p")
+    assert not await content_locks.release(chapter_id, run_id="run-b")
+    assert content_locks.is_locked(chapter_id)
+
+    freed = await content_locks.release_for_run("run-a")
+    assert freed == [chapter_id]
+    assert not content_locks.is_locked(chapter_id)
+    assert (await client.get("/api/v1/chapters/locks")).json()["data"] == []

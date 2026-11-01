@@ -47,8 +47,13 @@ class AgentMessageIn(BaseModel):
     model_ref: str | None = None
     #: 分支：指定父消息 id（编辑后重发 / 重新生成时用）；空则接在 active_leaf 之后
     parent_id: str | None = None
-    #: 门禁：生成指定章正文（M4）；空则为普通对话
+    #: 门禁：显式指定生成章（v1101 起前端不再传，仅保留兼容）；空则由意图检测决定
     target_chapter_id: str | None = None
+    #: v1101：用户当前正在编辑/阅读的章（意图命中且消息未点名章节时作为目标章）
+    active_chapter_id: str | None = None
+    #: ★v1101：隐藏上下文（如选区润色提示词）——随本轮一起送给模型，
+    #: 以 system 消息注入 graph，**不入消息树、不在会话里展示**。
+    hidden_context: str | None = Field(default=None, max_length=100_000)
 
 
 class AgentBranchIn(BaseModel):

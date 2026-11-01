@@ -258,9 +258,10 @@ class TestBuilderAssembly:
 
         assert idx("ModelRetry") < idx("ModelCallLimit") < idx("TodoList")
         assert idx("TodoList") < idx("RecapInjection") < idx("WorkspaceGuard")
-        assert idx("WorkspaceGuard") < idx("FileChangeNotify") < idx("WriteApproval")
-        # WriteApproval 必须最后（参数级审批在链尾）
-        assert "WriteApproval" in names[-1]
+        assert idx("WorkspaceGuard") < idx("FileChangeNotify")
+        # ★v1101：WriteApproval 必须**最外层**（index 0）——其 interrupt() 的
+        # GraphInterrupt 不能被任何外层中间件吞掉，否则审批无法暂停 run。
+        assert names[0] == "WriteApproval"
 
     def test_permission_rules_constant(self):
 

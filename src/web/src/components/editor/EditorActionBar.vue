@@ -3,10 +3,10 @@
  * 编辑模式工具栏上的卷章结构操作条：插入卷 / 插入章节 / 重命名 / 删除。
  *
  * 插入规则：大纲节点只支持「往后插入卷」（落在第 1 位）；章节节点支持往前 / 往后插入
- * 卷与章节。插入卷必须同时给出第一章章节名（不允许空卷）；插入章节只填章节名，
- * 序号按插入方向自动推算（插入到第 k 位 → 其后各项顺延 +1，删除后重新连续编号）。
- * 重命名弹窗含「章名 + 卷名」（卷名默认当前卷，即不改卷名）；删除需二次确认，
- * 大纲节点上不允许删除。
+ * 卷与章节。★v1101：插入卷与插入章节一样**不再让用户填序号**——落位序号按插入方向
+ * 自动推算（往前 = 当前位置，往后 = 当前位置 + 1；其后各项顺延 +1，删除后重新连续编号）。
+ * 插入卷必须同时给出第一章章节名（不允许空卷）；重命名弹窗含「章名 + 卷名」
+ * （卷名默认当前卷，即不改卷名）；删除需二次确认，大纲节点上不允许删除。
  */
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -15,7 +15,7 @@ import { errorMessage } from '@/api/http'
 import { useProjectStore } from '@/stores/project'
 import { useReaderStore } from '@/stores/reader'
 import { t } from '@/i18n'
-import { validateChapterName, validateOrdinal, validateVolumeName } from '@/utils/naming'
+import { validateChapterName, validateVolumeName } from '@/utils/naming'
 import { formatChapterTitle, formatVolumeTitle } from '@/utils/titles'
 import type { Chapter, Volume } from '@/types'
 
@@ -52,8 +52,9 @@ const dialogVisible = ref(false)
 const submitting = ref(false)
 const kind = ref<InsertKind>('volume')
 const dir = ref<InsertDir>('before')
-/** volume：ordinal=卷序号、title=卷名、firstChapter=第一章章节名；chapter：只用 title */
-const form = ref({ ordinal: '', title: '', firstChapter: '' })
+/** volume：title=卷名、firstChapter=第一章章节名；chapter：只用 title。
+ * ★v1101：序号一律自动推算，弹窗不再提供序号输入框。 */
+const form = ref({ title: '', firstChapter: '' })
 
 /** 卷总数（插入卷时的序号上限 = N+1） */
 const volumeCount = computed(() => volumes.value.length)
@@ -95,19 +96,9 @@ function openInsert(k: InsertKind, d: InsertDir): void {
   }
   kind.value = k
   dir.value = d
-  form.value = {
-    ordinal: k === 'volume' ? String(volumeOrdinalFor(d)) : '',
-    title: '',
-    firstChapter: '',
-  }
+  form.value = { title: '', firstChapter: '' }
   dialogVisible.value = true
 }
-
-const ordinalError = computed(() =>
-  kind.value === 'volume'
-    ? validateOrdinal(form.value.ordinal, volumeCount.value, '卷序号')
-    : '',
-)
 
 const titleError = computed(() => {
   const raw = form.value.title
@@ -124,7 +115,7 @@ const firstChapterError = computed(() => {
 })
 
 const canSubmit = computed(
-  () => !ordinalError.value && !titleError.value && !firstChapterError.value && !submitting.value,
+  () => !titleError.value && !firstChapterError.value && !submitting.value,
 )
 
 async function submitInsert(): Promise<void> {
@@ -134,7 +125,8 @@ async function submitInsert(): Promise<void> {
   try {
     if (kind.value === 'volume') {
       if (!project.currentNovelId) return
-      const ordinal = Number.parseInt(form.value.ordinal.trim(), 10)
+      // ★v1101：卷序号与章节序号一样自动推算（按插入方向），用户不再填写
+      const ordinal = volumeOrdinalFor(dir.value)
       const vol = await project.createVolume(title, '', ordinal, form.value.firstChapter.trim())
       // 新卷的第一章：直接打开它，便于接着写
       const firstCh = vol.chapters?.[0]
@@ -331,15 +323,11 @@ async function onDelete(): Promise<void> {
     <!-- ============ 插入弹窗（输入框无提示词） ============ -->
     <!-- ★v1031：弹窗不再展示标题（「往前/往后插入小说卷」「插入章节」等提示全部去掉），
          卷序号 / 章节名下方的自动推算提示也一并删除 -->
+    <!-- ★v1101：插入卷也不再让用户填序号——与章节一致，按插入方向自动推算 -->
     <el-dialog v-model="dialogVisible" width="440px">
       <el-form label-width="96px" @submit.prevent>
-        <!-- 插入卷：卷序号（自动算好，可改）+ 卷名 + 章节名 -->
+        <!-- 插入卷：卷名 + 章节名（序号自动） -->
         <template v-if="kind === 'volume'">
-          <el-form-item :label="t('volumeChapter.ordinalLabel')" required>
-            <el-input v-model="form.ordinal" class="ordinal-input" />
-            <div v-if="ordinalError" class="field-error">{{ ordinalError }}</div>
-          </el-form-item>
-
           <el-form-item :label="t('volumeChapter.volumeTitleLabel')" required>
             <el-input v-model="form.title" maxlength="200" />
             <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
@@ -443,10 +431,6 @@ async function onDelete(): Promise<void> {
   height: 16px;
   margin: 0 5px;
   background: var(--border);
-}
-
-.ordinal-input {
-  width: 130px;
 }
 
 .field-error {

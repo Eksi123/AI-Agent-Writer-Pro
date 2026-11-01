@@ -165,8 +165,14 @@ watch(visible, (v) => {
 </script>
 
 <template>
-  <el-drawer v-model="visible" :title="t('recycle.title')" size="380px" direction="rtl">
-    <!-- 一级：小说列表 -->
+  <el-drawer
+    v-model="visible"
+    class="recycle-drawer"
+    :title="t('recycle.title')"
+    size="380px"
+    direction="rtl"
+  >
+    <!-- 一级：小说列表（★v1101：行内左=小说名，右末尾小字=X个被删除章节） -->
     <template v-if="!current">
       <div v-if="loading && !novels.length" class="recycle-empty muted text-sm">…</div>
       <div v-else-if="!novels.length" class="recycle-empty muted text-sm">
@@ -179,40 +185,34 @@ watch(visible, (v) => {
           class="recycle-novel"
           @click="openNovel(n)"
         >
-          <span class="novel-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M6 2h9a3 3 0 0 1 3 3v16a2 2 0 0 0-2-2H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm0 18h10v1a1 1 0 0 1-1 1H6a1 1 0 0 1 0-2zm3-15h5v2H9V5z" />
-            </svg>
+          <span class="novel-title">
+            {{ n.title }}
+            <el-tag v-if="n.novel_deleted" size="small" type="danger" effect="plain">
+              {{ t('recycle.novelDeletedTag') }}
+            </el-tag>
           </span>
-          <span class="novel-meta">
-            <span class="novel-title">{{ n.title }}</span>
-            <span class="novel-sub muted text-sm">
-              <el-tag v-if="n.novel_deleted" size="small" type="danger" effect="plain">
-                {{ t('recycle.novelDeletedTag') }}
-              </el-tag>
-              {{ t('recycle.chaptersUnit') }} {{ n.chapter_count }}
-            </span>
+          <span class="novel-count muted text-sm">
+            {{ n.chapter_count }}{{ t('recycle.chaptersUnit') }}
           </span>
         </div>
       </div>
     </template>
 
-    <!-- 二级：卷 → 被删章节 -->
+    <!-- 二级：卷 → 被删章节（★v1101：不再重复小说名与总数，左上角仅一个返回箭头） -->
     <template v-else>
       <div class="recycle-head row">
-        <el-button text size="small" @click="backToList">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+        <el-button
+          class="back-icon-btn"
+          text
+          size="small"
+          :title="t('recycle.back')"
+          :aria-label="t('recycle.back')"
+          @click="backToList"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
             <path d="M15.4 4.6a1 1 0 0 0-1.4 0l-6.7 6.7a1 1 0 0 0 0 1.4l6.7 6.7a1 1 0 0 0 1.4-1.4L9.4 12l6-6a1 1 0 0 0 0-1.4z" />
           </svg>
-          {{ t('recycle.back') }}
         </el-button>
-        <span class="recycle-novel-title">{{ current.title }}</span>
-      </div>
-      <div class="muted text-sm recycle-total">
-        {{ t('recycle.chapterCount', { n: current.total_chapters }) }}
-        <el-tag v-if="current.novel_deleted" size="small" type="danger" effect="plain">
-          {{ t('recycle.novelDeletedTag') }}
-        </el-tag>
       </div>
 
       <div v-if="loading" class="recycle-empty muted text-sm">…</div>
@@ -286,20 +286,12 @@ watch(visible, (v) => {
   background: var(--bg-hover);
 }
 
-.novel-icon {
-  display: inline-flex;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.novel-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
+/* ★v1101：行内左=小说名（含整本删除标签），右末尾小字=X个被删除章节 */
 .novel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 600;
   white-space: nowrap;
@@ -307,10 +299,10 @@ watch(visible, (v) => {
   text-overflow: ellipsis;
 }
 
-.novel-sub {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.novel-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .recycle-head {
@@ -318,22 +310,19 @@ watch(visible, (v) => {
   flex-shrink: 0;
 }
 
-.recycle-novel-title {
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ★v1101：二级视图左上角仅一个返回箭头（无文字） */
+.back-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-muted);
 }
 
-.recycle-total {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-  flex-shrink: 0;
+.back-icon-btn:hover {
+  color: var(--el-color-primary);
 }
 
 .recycle-vol-block {
@@ -389,6 +378,16 @@ watch(visible, (v) => {
 </style>
 
 <style>
+/* ★v1101：回收站抽屉内容上移——Element Plus 默认 header 下边距 32px + body 上内边距 20px，
+   叠出约 50px 空白；收紧为 8px/12px，条目与目录紧贴标题栏下方（不超出抽屉范围）。 */
+.recycle-drawer .el-drawer__header {
+  margin-bottom: 8px;
+}
+
+.recycle-drawer .el-drawer__body {
+  padding-top: 4px;
+}
+
 /* 询问弹窗右侧「删除」按钮：红色字体警示（v1031 需求） */
 .recycle-purge-btn {
   color: var(--el-color-danger) !important;

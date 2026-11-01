@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from sqlalchemy import select
@@ -640,6 +641,12 @@ async def write_content(
         },
         commit=True,
     )
+
+    # ★v1101：定稿入口移除后，章节摘要（AI 前情提要的记忆来源）改由**手动保存**触发
+    # （自动保存不触发，防频繁调 LLM）；后台执行，失败只记日志不阻断保存。
+    if not is_autosave:
+        asyncio.get_running_loop().create_task(_summarize_after_save(project_id, vol_id, chapter_id))
+
     return {
         "id": chapter_id,
         "volume_id": vol_id,
@@ -654,6 +661,22 @@ async def write_content(
 # ---------------------------------------------------------------------------
 # 修订快照
 # ---------------------------------------------------------------------------
+
+
+async def _summarize_after_save(project_id: str, volume_id: str, chapter_id: str) -> None:
+    """★v1101：手动保存后后台刷新章节摘要（供 AI 前情提要使用）。
+
+    定稿入口已移除；摘要不再依赖 `status=finalized`。force=True 保证改稿后摘要同步更新。
+    无可用模型 / 正文过短时 summarize 内部自行跳过。
+    """
+    try:
+        from app.agent.knowledge.summarize import summarize_chapter
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            await summarize_chapter(db, project_id, volume_id, chapter_id, force=True)
+    except Exception as exc:  # noqa: BLE001 - 摘要失败不影响保存结果
+        logger.warning("summarize_after_save_failed", chapter_id=chapter_id, error=str(exc))
 
 
 async def _snapshot(

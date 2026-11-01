@@ -225,6 +225,57 @@ def active_path_to_langchain(by_id: dict[str, Message], leaf_id: str | None) -> 
     return out
 
 
+async def history_messages_for_seed(
+    session: AsyncSession, session_id: str, *, exclude_id: str | None = None
+) -> list[BaseMessage]:
+    """活跃路径 → LangChain 消息列表（★v1101：checkpoint 为空时回填历史用）。
+
+    与 `active_path_to_langchain` 的区别：tool 消息的 `tool_call_id` 与其父 assistant
+    消息的 tool_calls **按序配对**（而非用消息 id），保证 LangGraph 校验通过；
+    system 行（中间件注入残留）跳过。
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Message).where(Message.session_id == session_id).order_by(Message.created_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {r.id: r for r in rows}
+    row_session = await session.get(AgentSession, session_id)
+    leaf = row_session.active_leaf_id if row_session else None
+
+    children: dict[str | None, list[Message]] = {}
+    for r in rows:
+        children.setdefault(r.parent_id, []).append(r)
+    for group in children.values():
+        group.sort(key=lambda m: (m.branch_index, m.created_at))
+
+    out: list[BaseMessage] = []
+    for row in _active_path(by_id, leaf):
+        if row.id == exclude_id or row.role == "system":
+            continue
+        content = _content_of(row)
+        if isinstance(content, list):
+            content = json.dumps(content, ensure_ascii=False)
+        if row.role == "user":
+            out.append(HumanMessage(content=str(content)))
+        elif row.role == "assistant":
+            tcs = [tc for tc in (_json_of(row.tool_calls_json) or []) if isinstance(tc, dict)]
+            out.append(AIMessage(content=str(content or ""), tool_calls=tcs))
+            if tcs:
+                tool_kids = [k for k in children.get(row.id, []) if k.role == "tool"]
+                for tc, kid in zip(tcs, tool_kids, strict=False):
+                    kc = _content_of(kid)
+                    if isinstance(kc, list):
+                        kc = json.dumps(kc, ensure_ascii=False)
+                    out.append(ToolMessage(content=str(kc or ""), tool_call_id=str(tc.get("id") or kid.id)))
+        # 游离的 tool 行（父 assistant 被跳过等）不入种子，避免孤儿 ToolMessage
+    return out
+
+
 async def sibling_branches(session: AsyncSession, session_id: str, message_id: str) -> list[dict[str, Any]]:
     """同父兄弟分支（前端「切换分支」用）。"""
     msg = await session.get(Message, message_id)

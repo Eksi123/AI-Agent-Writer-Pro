@@ -1,0 +1,115 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - generic "生肖宠物与日期" [ref=f1e8]:
+          - generic [ref=f1e9]: 🐑
+          - generic [ref=f1e10]: 2026年11月1日
+          - generic [ref=f1e11]: 星期日
+        - generic [ref=f1e12]:
+          - generic [ref=f1e13]: 北京市
+          - generic [ref=f1e15]:
+            - generic [ref=f1e68]:
+              - generic [ref=f1e69]: ☁️
+              - generic [ref=f1e70]: 阴
+            - generic [ref=f1e71]:
+              - generic [ref=f1e72]: 中度污染
+              - generic [ref=f1e73]: "158"
+          - generic [ref=f1e74]:
+            - generic [ref=f1e75]: 温度 16°
+            - generic [ref=f1e76]: 湿度 28%
+            - generic [ref=f1e77]: 风速 3级
+      - button "新建小说" [ref=f1e19] [cursor=pointer]
+      - generic [ref=f1e78] [cursor=pointer]:
+        - generic [ref=f1e82]:
+          - generic [ref=f1e83]: "?????"
+          - generic [ref=f1e84]: "??"
+        - button "···" [ref=f1e87]
+      - generic [ref=f1e22]:
+        - button "通用设置" [ref=f1e23] [cursor=pointer]
+        - button "AI 设置" [ref=f1e25] [cursor=pointer]
+  - main [ref=f1e27]:
+    - generic [ref=f1e28]:
+      - generic [ref=f1e29]:
+        - radiogroup "radio-group" [ref=f1e30]:
+          - generic [ref=f1e31]:
+            - radio "阅读模式" [checked] [ref=f1e32]
+            - generic [ref=f1e33] [cursor=pointer]: 阅读模式
+          - generic [ref=f1e34]:
+            - radio "编辑模式" [ref=f1e35]
+            - generic [ref=f1e36] [cursor=pointer]: 编辑模式
+        - generic [ref=f1e88]: "?????"
+      - generic [ref=f1e37]:
+        - button "回收站" [ref=f1e38] [cursor=pointer]
+        - button [ref=f1e131] [cursor=pointer]
+    - generic [ref=f1e91]:
+      - button "目录" [ref=f1e94] [cursor=pointer]
+      - article [ref=f1e101]:
+        - generic [ref=f1e102]:
+          - heading "?????_大纲" [level=1] [ref=f1e103]
+          - blockquote [ref=f1e104]:
+            - paragraph [ref=f1e105]:
+              - text: 本文件是
+              - strong [ref=f1e106]: 创作参考资料
+              - text: ：AI 生成正文时以各章「简介」为依据。 建议保持标题层级（
+              - code [ref=f1e107]: "#"
+              - text: 为卷或附录，
+              - code [ref=f1e108]: "##"
+              - text: 为章）便于阅读与检索。 ★v1029：卷章结构与顺序由应用维护（编辑模式右上角「插入卷/章」「重命名」「删除」）， 调整本文件小节先后
+              - strong [ref=f1e109]: 不会
+              - text: 改变卷章顺序。
+          - heading "第一卷 卷名（请改为具体卷名）" [level=1] [ref=f1e110]
+          - heading "第一章 章名（请改为具体章名）" [level=2] [ref=f1e111]
+          - list [ref=f1e112]:
+            - listitem [ref=f1e113]: 简介：（必填）本章剧情要点，AI 生成正文时以此为依据。
+            - listitem [ref=f1e114]: 衔接要点：（建议填写）与上一章的承接、伏笔、人物状态变化。
+          - heading "附录A 世界观" [level=1] [ref=f1e115]
+          - list [ref=f1e116]:
+            - listitem [ref=f1e117]: 世界背景：
+            - listitem [ref=f1e118]: 力量体系：
+            - listitem [ref=f1e119]: 重要势力：
+          - heading "附录B 人物角色" [level=1] [ref=f1e120]
+          - list [ref=f1e121]:
+            - listitem [ref=f1e122]: 姓名｜身份｜性格｜目标｜关键关系：
+          - heading "附录C 战力层次" [level=1] [ref=f1e123]
+          - list [ref=f1e124]:
+            - listitem [ref=f1e125]: 层次划分与判定标准：
+          - heading "附录D 写作要求" [level=1] [ref=f1e126]
+          - list [ref=f1e127]:
+            - listitem [ref=f1e128]: 视角与人称：
+            - listitem [ref=f1e129]: 文风与节奏：
+            - listitem [ref=f1e130]: 禁忌与雷区：
+  - generic "按住拖动可调整会话框宽度（右边界固定，最多拉到屏幕宽度的 2/5）" [ref=f1e134]
+  - complementary [ref=f1e136]:
+    - generic [ref=f1e137]:
+      - generic [ref=f1e138]:
+        - generic "会话记录" [ref=f1e139]: 2个会话
+        - generic "用量：入 7862 / 出 476 tokens" [ref=f1e171]: 57.7K Token
+      - generic [ref=f1e172]:
+        - button [ref=f1e173] [cursor=pointer]
+        - generic [ref=f1e177]: 新会话
+      - generic [ref=f1e178]:
+        - generic [ref=f1e179]:
+          - generic [ref=f1e180]: "???????"
+          - generic [ref=f1e181]: 2026-11-01 13:11
+        - generic [ref=f1e183]:
+          - generic [ref=f1e184]: "你好！我看到你当前的项目状态： | 项目项 | 当前状态 | |---|---| | 书名 | `?????`（待填写） | | 题材 | `??`（待填写） | | 卷 | **第一卷「新人传递」**（已有卷，暂无章节文件） | | 大纲 | 模板状态，各附录尚为空白 | | 简介 | 未填写 | 看起来项目是一个全新起步的状态，书名、题材、大纲都还没有落定。你提到的 **「新人传递 · 高铁」** 似乎是第一卷下的某一章？ 我目前不太确定你希望我帮你做什么，能否补充一下你的需求？常见的几种方向： 1. **从零构思**：先确定书名、题材，再搭建世界观和人物表，输出完整大纲。 2. **完善大纲**：如果你心里已有故事梗概，告诉我核心设定和剧情走向，我帮你把大纲填好。 3. **直接写正文**：先把「新人传递 · 高铁」这一章的简介写好，然后生成正文。 4. **其他**：润色、命名、取名等，也都可以。 请告诉我你的想法，我好开始干活。"
+          - generic [ref=f1e185]:
+            - generic [ref=f1e186]: 2026-11-01 13:11
+            - button "复制" [ref=f1e187] [cursor=pointer]
+        - generic [ref=f1e189]:
+          - generic [ref=f1e190]: "???????"
+          - generic [ref=f1e191]: 2026-11-01 13:11
+        - generic [ref=f1e193]:
+          - generic [ref=f1e194]: 看你的书名和这里都是一串问号，我猜你可能还在琢磨故事的核心设定。 基于你已有的章节名**「新人传递」**和**「高铁」**，我先给几个方向建议你挑： **方向一：都市悬疑** - 高铁列车上发生神秘事件，新人乘客卷入其中 - 适合写快节奏悬疑，场景集中好发挥 **方向二：灵异惊悚** - "传递"暗示某种超自然力量的传承 - 高铁密闭空间 + 灵异元素 = 恐怖氛围感强 **方向三：科幻末世** - 高铁是末日避难所，"新人"是被选中的幸存者 - 可以展开宏大世界观 **方向四：奇幻穿越** - 高铁穿越异世界，乘客是"新人玩家" - 类似"无限流"套路，设定空间大 --- 你心里更偏向哪个？或者完全另起炉灶也行。确定方向后我帮你： - 填项目信息（书名、题材、简介） - 搭世界观设定 - 写大纲章简介 - 然后生成正文
+          - generic [ref=f1e195]:
+            - generic [ref=f1e196]: 2026-11-01 13:12
+            - button "复制" [ref=f1e197] [cursor=pointer]
+      - generic [ref=f1e159]:
+        - textbox [ref=f1e161]
+        - generic [ref=f1e162]:
+          - button "＋" [ref=f1e163] [cursor=pointer]
+          - button "工具" [ref=f1e164] [cursor=pointer]
+          - button "qwen3.7-plus" [ref=f1e166] [cursor=pointer]
+          - generic "上下文使用情况：8K / 33K" [ref=f1e199]: 76%
+          - button "发送" [disabled] [ref=f1e168]

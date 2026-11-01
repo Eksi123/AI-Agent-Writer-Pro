@@ -265,12 +265,47 @@ async def load_message_tree(session: AsyncSession, session_id: str) -> dict[str,
 
     树结构由 `agent/memory` 读写（消息树是 Agent 的记忆载体），本函数只负责
     把会话标题/状态/项目一并拼进响应，使 API 层不必直连 agent 内部。
+
+    ★v1101：附带 `latest_run`（最近一次 run 的 id/status 与**未决中断**）——
+    审批/咨询卡片原先只靠 SSE 事件推送，页面刷新/重进会话即丢失，run 永久挂起；
+    前端进入会话时据此恢复卡片并重连事件流。
     """
     row = await require_session(session, session_id)
     tree = await load_tree(session, session_id)
     tree["title"] = row.title
     tree["status"] = row.status
     tree["project_id"] = row.project_id
+
+    run_row = (
+        (
+            await session.execute(
+                select(AgentRun)
+                .where(AgentRun.session_id == session_id)
+                .order_by(AgentRun.started_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    tree["latest_run"] = None
+    if run_row is not None:
+        pending = (
+            (
+                await session.execute(
+                    select(AgentInterrupt)
+                    .where(AgentInterrupt.run_id == run_row.id, AgentInterrupt.decision.is_(None))
+                    .order_by(AgentInterrupt.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        tree["latest_run"] = {
+            "run_id": run_row.id,
+            "status": run_row.status,
+            "pending_interrupts": [_interrupt_dto(i) for i in pending],
+        }
     return tree
 
 
