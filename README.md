@@ -102,10 +102,11 @@ npm run dev
 **① 装基础软件**
 
 ```bash
-sudo apt update && sudo apt install -y git curl nginx build-essential
-# Python 3.12（系统自带版本过低时用 deadsnakes 源）
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt install -y python3.12 python3.12-venv
+# git安装
+sudo apt update
+sudo apt install git -y
+# nginx安装
+sudo apt install -y git curl nginx build-essential
 # uv（依赖管理）
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
@@ -114,20 +115,31 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-**② 取代码并装后端依赖**
+**②克隆项目代码**
 
 ```bash
-sudo mkdir -p /srv && sudo chown $USER /srv
-git clone <你的仓库地址> /srv/ai-writer-pro && cd /srv/ai-writer-pro
-uv sync                      # 创建 .venv 并安装依赖
-# 可选：编辑 config.ini 的 [langfuse] 段接入 Langfuse（不配则追踪降级为本地日志）
-uv run writer migrate        # 建表 / 迁移
+sudo mkdir -p /opt
+sudo chown $USER /opt
+
+cd opt
+git clone <你的仓库地址> /opt/ai-agent-writer-pro  
+cd /opt/ai-agent-writer-pro
 ```
 
-**③ 构建前端**
+**③ 构建前后前端**
 
 ```bash
-cd src/web && npm ci && npm run build && cd ../..
+# 构建后端
+uv python install 3.12  # uv 会自动下载并安装 Python 3.12
+uv python pin 3.12      # 锁定项目使用的 Python 版本
+uv sync           # 创建 .venv 并安装依赖
+uv run writer migrate        # 建表 / 迁移
+
+# 构建前端
+cd src/web 
+npm ci 
+npm run build 
+cd ../..
 # 产出 src/web/dist/，后端会自动挂载它（单页应用 history 回落）
 ```
 
@@ -140,16 +152,17 @@ Description=AI Agent Writer Pro backend
 After=network.target
 
 [Service]
-WorkingDirectory=/srv/ai-writer-pro
-Environment=DATA_ROOT=/srv/ai-writer-pro/data
-ExecStart=/srv/ai-writer-pro/.venv/bin/python -m uvicorn app.main:app \
-          --host 127.0.0.1 --port 8000 --app-dir src --no-reload
+WorkingDirectory=/opt/ai-agent-writer-pro
+Environment=DATA_ROOT=/opt/ai-agent-writer-pro/data
+ExecStart=/opt/ai-agent-writer-pro/.venv/bin/python -m uvicorn app.main:app \
+          --host 127.0.0.1 --port 8000 --app-dir src
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-writer
 systemctl status ai-writer --no-pager      # 应看到 active (running)
@@ -181,6 +194,7 @@ server {
     }
 }
 EOF
+
 sudo ln -sf /etc/nginx/sites-available/ai-writer /etc/nginx/sites-enabled/ai-writer
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
@@ -194,7 +208,7 @@ curl -sI http://127.0.0.1/ | head -1         # HTTP/1.1 200 OK
 ```
 
 浏览器打开 `http://服务器IP/` 即可使用。要上 HTTPS 用 `certbot --nginx` 一条命令搞定。
-数据默认落在 `/srv/ai-writer-pro/data/`，备份 = 停服后整目录打包。
+数据默认落在 `/opt/ai-agent-writer-pro/data/`，备份 = 停服后整目录打包。
 
 ### 2.4 Docker 部署
 
