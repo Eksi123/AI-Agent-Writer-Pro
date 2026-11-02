@@ -24,6 +24,7 @@ from app.agent.more.langfuse import build_callback_handler
 from app.core.logging import get_logger
 from app.db.models import AgentSession, SubagentConfig
 from app.db.session import session_scope
+from app.services.skills import WEB_SEARCH_SKILL_NAME
 
 logger = get_logger(__name__)
 
@@ -100,8 +101,10 @@ async def session_context_of(db: AsyncSession, session_id: str) -> tuple[set[str
     """读会话级子代理/技能选择，把 id 解析为 name（空集 = 用全局默认，不额外过滤）。
 
     - 子代理 id → `subagent_configs.name`；
-    - 技能 id → `skill_configs.name`（技能 = 用户自建；历史数据里的 `builtin:{name}`
-      前缀 id 已随包内技能目录移除而失效，解析时静默跳过）。
+    - 技能 id → `skill_configs.name`（技能 = 用户自建）；
+    - `builtin:web_search`（会话级内置写作技能，v1102 恢复）→ 解析为 `web_search`，
+      供消息前缀/@标记使用；主代理 `web_search` 工具恒可用，无需物化或额外装配；
+    - 其它历史 `builtin:{name}` 前缀 id 已随包内技能目录移除而失效，静默跳过。
     """
 
     sess = await db.get(AgentSession, session_id)
@@ -129,12 +132,14 @@ async def session_context_of(db: AsyncSession, session_id: str) -> tuple[set[str
 
     skill_names: set[str] = set()
     real_ids = [sid for sid in skill_ids if not sid.startswith("builtin:")]
+    if f"builtin:{WEB_SEARCH_SKILL_NAME}" in skill_ids:
+        skill_names.add(WEB_SEARCH_SKILL_NAME)
     if real_ids:
         from app.db.models import SkillConfig
 
         rows = (
             await db.execute(select(SkillConfig.name).where(SkillConfig.id.in_(real_ids)))
         ).scalars().all()
-        skill_names = set(rows)
+        skill_names.update(rows)
 
     return sub_names, skill_names

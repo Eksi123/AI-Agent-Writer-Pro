@@ -35,17 +35,19 @@ const skills = ref<SkillDto[]>([])
 
 /**
  * 只列启用项；子代理供主代理委派。
- * [写作技能] 列出用户自建技能（Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项）。
+ * [写作技能] = 用户自建技能 + 会话级内置写作技能（v1102：web_search，session_builtin 标记）；
+ * 其余 Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项。
  */
 const subagentList = computed(() => subagents.value.filter((s) => s.enabled))
 const skillList = computed(() =>
-  skills.value.filter((s) => s.enabled && s.kind !== 'tool'),
+  skills.value.filter((s) => s.enabled && (s.kind !== 'tool' || s.session_builtin === true)),
 )
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
+    // picker=true：内置项只列 web_search（会话级写作技能），其余基础工具对主代理恒可用
+    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills(true)])
     subagents.value = subs
     skills.value = sks
   } catch (err) {

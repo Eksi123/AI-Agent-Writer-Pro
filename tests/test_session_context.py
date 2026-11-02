@@ -97,7 +97,7 @@ class TestPinnedChapters:
         assert skill_names == {"ctx-skill"}
 
     async def test_legacy_builtin_prefix_ids_skipped(self, client, novel_id):
-        """历史 `builtin:{name}` 技能 id 已失效，解析时静默跳过（不报错、不产出 name）。"""
+        """历史 `builtin:{name}` 技能 id（web_search 除外）已失效，解析时静默跳过。"""
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
         ).json()["data"]["id"]
@@ -108,6 +108,25 @@ class TestPinnedChapters:
         async with session_scope() as db:
             _sub_names, skill_names = await session_context_of(db, sid)
         assert skill_names == set()
+
+    async def test_builtin_web_search_resolves_as_session_skill(self, client, novel_id):
+        """v1102：`builtin:web_search` 为会话级内置写作技能，解析出 `web_search`。"""
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+        await client.patch(
+            f"/api/v1/agent/sessions/{sid}/context",
+            json={"skill_ids": ["builtin:web_search"]},
+        )
+        async with session_scope() as db:
+            _sub_names, skill_names = await session_context_of(db, sid)
+        assert skill_names == {"web_search"}
+
+    async def test_materialize_counts_web_search_without_file(self, client, session):
+        """v1102：web_search 计入会话精选数但不落 SKILL.md（主代理工具恒可用）。"""
+        count = await materialize_session_skills(session, "s-web", {"web_search"})
+        assert count == 1
+        assert not (session_skills_dir("s-web") / "web_search" / "SKILL.md").exists()
 
 
 class TestProjectUsage:

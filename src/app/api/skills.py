@@ -44,9 +44,15 @@ class SkillUpdate(BaseModel):
 
 
 @router.get("/skills")
-async def list_skills(session: AsyncSession = Depends(get_session)) -> dict:
-    """用户自建技能（可 CRUD/启停）+ 内置基础工具（只读呈现，启用置灰）。"""
-    return ok(await skills_service.list_skills(session))
+async def list_skills(
+    picker: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """用户自建技能（可 CRUD/启停）+ 内置基础工具（只读呈现，启用置灰）。
+
+    `picker=true`：会话级「工具添加」浮层口径——内置项只列 web_search。
+    """
+    return ok(await skills_service.list_skills(session, picker=picker))
 
 
 @router.post("/skills")

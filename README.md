@@ -1,8 +1,8 @@
 # AI Agent Writer Pro
 
-大纲驱动的 AI 小说写作工作台 —— **单用户应用**，无需注册登录，你的小说全部保存在自己的机器上。
+大纲驱动的 AI 小说写作工作台 —— **AI Agent Writer**，无需注册登录，你的小说全部保存在自己的机器上。
 
-先写大纲，再逐章成文：既可以自己动手写，也可以让 AI 按大纲生成正文（生成前后自动做衔接检查与要点核对）。
+先写大纲，再逐章成文：既可以自己动手写，也可以让 AI 按大纲生成正文，且生成前后自动做衔接检查与要点核对。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)

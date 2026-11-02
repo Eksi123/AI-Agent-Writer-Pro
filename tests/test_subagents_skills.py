@@ -135,7 +135,7 @@ class TestSubagentsApi:
 
 class TestSkillsApi:
     async def test_list_includes_builtin_tools_only(self, client):
-        """内置项 = Agent 基础工具（read/edit/list/grep/glob/web_search/write），
+        """内置项 = Agent 基础工具（read/write/edit/list/grep/glob/web_search），
         不展示描述；技能 = 用户自建，包内不再随包携带写作技能。"""
         data = (await client.get("/api/v1/skills")).json()["data"]
         builtin = [s for s in data if s["is_builtin"]]
@@ -150,6 +150,19 @@ class TestSkillsApi:
         assert all(s["kind"] == "tool" for s in builtin)
         # 没有任何「包内写作技能」类别
         assert not [s for s in data if s.get("kind") == "writing" and s["is_builtin"]]
+
+    async def test_picker_lists_only_web_search_builtin(self, client):
+        """v1102：`?picker=true` 内置项只列 web_search（会话级写作技能），其余基础工具不出现。"""
+        data = (await client.get("/api/v1/skills", params={"picker": True})).json()["data"]
+        builtin = [s for s in data if s["is_builtin"]]
+        assert [s["name"] for s in builtin] == ["web_search"]
+        assert builtin[0]["id"] == "builtin:web_search"
+        assert builtin[0]["session_builtin"] is True
+        # 默认列表里 web_search 也带 session_builtin 标记（前端据此进浮层）
+        default = (await client.get("/api/v1/skills")).json()["data"]
+        ws = next(s for s in default if s["name"] == "web_search")
+        assert ws["session_builtin"] is True
+        assert next(s for s in default if s["name"] == "read")["session_builtin"] is False
 
     async def test_create_skill_materializes(self, client):
         resp = await client.post(

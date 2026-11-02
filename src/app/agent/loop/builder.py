@@ -76,7 +76,7 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
     return await load_user_specs(session)
 
 
-#: 子代理可选的内置工具。键为 UI 展示名（read/edit/list/grep/glob/web_search/write），
+#: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search），
 #: 值为 deepagents FilesystemMiddleware 的工具名（web_search 走自研 registry，不在 fs 工具内）。
 _FS_TOOL_ALIASES = {
     "read_file": "read_file",

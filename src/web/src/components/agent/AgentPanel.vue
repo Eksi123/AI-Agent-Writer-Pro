@@ -451,8 +451,14 @@ async function send(): Promise<void> {
   const content = input.value.trim()
   if (!content || sending.value) return
   if (!agent.currentSessionId) {
-    await newSession()
-    if (!agent.currentSessionId) return
+    keepChipsAcrossSessionChange.value = true
+    try {
+      await newSession()
+      if (!agent.currentSessionId) return
+      await persistChips()
+    } finally {
+      keepChipsAcrossSessionChange.value = false
+    }
   }
   sending.value = true
   input.value = ''
@@ -668,8 +674,12 @@ async function loadToolNames(): Promise<void> {
     const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
     toolNames.value = {
       subagents: new Map(subs.map((s) => [s.id, s.name])),
-      // 会话级技能 = 用户自建（基础工具对主代理恒可用，不进 Chips）
-      skills: new Map(sks.filter((s) => s.kind !== 'tool').map((s) => [s.id, s.name])),
+      // 会话级技能 = 用户自建 + 会话级内置写作技能（web_search）；其余基础工具恒可用不进 Chips
+      skills: new Map(
+        sks
+          .filter((s) => s.kind !== 'tool' || s.session_builtin === true)
+          .map((s) => [s.id, s.name]),
+      ),
     }
   } catch {
     /* 名称解析失败不阻断输入（chips 会退回显示 id） */
@@ -684,6 +694,9 @@ const selectedSkillIds = computed(() =>
   chips.value.filter((c) => c.kind === 'skill').map((c) => c.id),
 )
 
+/** 发送时若尚无会话：新建会话后把已选 chips 持久化进去（而非被会话切换回填清掉） */
+const keepChipsAcrossSessionChange = ref(false)
+
 watch(
   () => agent.currentSession,
   async (sess) => {
@@ -691,6 +704,8 @@ watch(
       chips.value = []
       return
     }
+    // v1102：发送时新建会话的流程自行保留/持久化 chips，避免被此处回填清空
+    if (keepChipsAcrossSessionChange.value) return
     await loadToolNames()
     const items: ChipItem[] = []
     for (const id of sess.subagent_ids) {

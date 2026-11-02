@@ -1009,6 +1009,10 @@ DB 行为空时 `row_to_spec` 回落 spec 默认，老库兼容）：planner/wri
 技能 = **用户自建**（无随包出厂技能，`tools/builtin/` 下只有内置工具）：
 配置存 DB `skill_configs`，物化到 `data/skills/{name}/SKILL.md`，backend 只挂
 `/skills/user/` 路由；**未启用的用户技能不物化**（对模型不可见），会话精选同样跳过停用技能。
+★v1102 会话级内置写作技能 = `web_search`（id `builtin:web_search`，`session_builtin` 标记）：
+只在会话级「工具添加」浮层的 [写作技能] 目录出现（`GET /skills?picker=true` 内置项只列它，
+其余基础工具对主代理恒可用、不作会话级选项）；选中后走 chips/`@web_search` 显式指令，
+`session_context_of` 解析为 `web_search`，`materialize_session_skills` 计入精选数但不落 SKILL.md。
 UI：写作技能页 = 基础工具（只读展示）+ 用户自建技能（启用、编辑、删除全可用）；
 子代理页新建弹窗名称下方有红字提示「尽量不要与内置子代理功能重复」（SubAgents(4)），
 功能重叠时内置优先（同名被 DB 唯一约束挡住；装配顺序内置在前）。

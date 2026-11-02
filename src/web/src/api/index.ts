@@ -321,6 +321,8 @@ export interface SkillDto {
   kind?: 'tool' | 'writing'
   /** 内置工具对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search/write_file）；自建技能为 null */
   tool_name?: string | null
+  /** v1102：会话级内置写作技能（web_search）——只进「工具添加」浮层，不进 AI 设置页 */
+  session_builtin?: boolean
   created_at?: string | null
   updated_at?: string | null
 }
@@ -346,8 +348,9 @@ export const configApi = {
 
   resetSubagent: (id: string) => post<SubagentDto>(`/subagents/${id}/reset`),
 
-  /** 技能 = 用户自建；接口返回自建技能 + 内置工具（kind=tool 为 Agent 基础工具，只读展示） */
-  listSkills: () => get<SkillDto[]>('/skills'),
+  /** 技能 = 用户自建；接口返回自建技能 + 内置工具（kind=tool 为 Agent 基础工具，只读展示）。
+   *  `picker=true`（v1102 会话级工具添加浮层）：内置项只列 web_search 会话级写作技能。 */
+  listSkills: (picker = false) => get<SkillDto[]>(`/skills${picker ? '?picker=true' : ''}`),
 
   createSkill: (payload: {
     name: string

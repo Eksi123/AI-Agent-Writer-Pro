@@ -129,7 +129,7 @@ def _extract_allowed_tools(content_md: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 内置工具（read/edit/list/grep/glob/web_search/write）：UI 只读呈现，启用恒为真
+# 内置工具（read/write/edit/list/grep/glob/web_search）：UI 只读呈现，启用恒为真
 # ---------------------------------------------------------------------------
 
 
@@ -137,10 +137,13 @@ async def list_skills(
     session: AsyncSession,
     *,
     include_builtin: bool = True,
+    picker: bool = False,
 ) -> list[dict[str, Any]]:
     """用户自建技能（DB，可 CRUD/启停）+ 内置基础工具（只读呈现，启用置灰）。
 
     ★技能 = 用户自建：包内不再随包携带写作技能目录，故列表只有两类。
+    `picker=True`（会话级「工具添加」浮层）：内置项只列 `web_search`——
+    其余基础工具对主代理恒可用，不作为会话级选项（v1102 用户口径）。
     """
     result: list[dict[str, Any]] = []
 
@@ -150,30 +153,39 @@ async def list_skills(
     result.extend(_dto(r) for r in rows)
 
     if include_builtin:
-        result.extend(_builtin_skill_dtos())
+        result.extend(_builtin_skill_dtos(only_web_search=picker))
     return result
 
 
-#: 内置基础工具（展示名用文档口径 read/edit/list/grep/glob/web_search/write，
+#: 内置基础工具（展示名用文档口径 read/write/edit/list/grep/glob/web_search，
 #: 值为 deepagents FilesystemMiddleware / registry 里的真实工具名；不展示描述，UI 置灰）
 BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "read_file", "label": "read"},
+    #: 子代理落盘必备（writer/planner 需要写文件；UI 展示名 write，紧随 read 便于对照）
+    {"tool": "write_file", "label": "write"},
     {"tool": "edit_file", "label": "edit"},
     {"tool": "ls", "label": "list"},
     {"tool": "grep", "label": "grep"},
     {"tool": "glob", "label": "glob"},
     {"tool": "web_search", "label": "web_search"},
-    #: 子代理落盘必备（writer/planner 需要写文件；UI 展示名 write）
-    {"tool": "write_file", "label": "write"},
 ]
 
 #: 真实工具名集合（子代理多选勾选后按此解析为工具实例）
 BUILTIN_TOOL_NAMES = frozenset(d["tool"] for d in BUILTIN_TOOL_DTOS)
 
+#: 会话级内置写作技能：联网检索（id `builtin:web_search`）。主代理 `web_search` 工具恒可用，
+#: 选中它只是显式指令（chips/@标记），无需物化或额外装配。
+WEB_SEARCH_SKILL_NAME = "web_search"
 
-def _builtin_skill_dtos() -> list[dict[str, Any]]:
+
+def _builtin_skill_dtos(*, only_web_search: bool = False) -> list[dict[str, Any]]:
+    items = (
+        [d for d in BUILTIN_TOOL_DTOS if d["tool"] == WEB_SEARCH_SKILL_NAME]
+        if only_web_search
+        else BUILTIN_TOOL_DTOS
+    )
     out: list[dict[str, Any]] = []
-    for item in BUILTIN_TOOL_DTOS:
+    for item in items:
         out.append(
             {
                 "id": f"builtin:{item['tool']}",
@@ -189,6 +201,8 @@ def _builtin_skill_dtos() -> list[dict[str, Any]]:
                 "kind": "tool",
                 #: 真实工具名（前端多选勾选后回传，供子代理装配解析）
                 "tool_name": item["tool"],
+                #: v1102：web_search 兼作会话级内置写作技能（可进「工具添加」浮层 chips）
+                "session_builtin": item["tool"] == WEB_SEARCH_SKILL_NAME,
                 "created_at": None,
                 "updated_at": None,
             }
@@ -346,6 +360,7 @@ async def materialize_session_skills(
     手册「三、(3) 输入窗口」：用户可主动添加写作 Skill 作为会话上下文；
     deepagents `skills=` 只接受目录级虚拟路径，故按会话生成精选目录再挂载。
     技能均为用户自建（DB content_md / `data/skills/` 物化副本），返回实际物化数。
+    ★v1102：`web_search`（会话级内置写作技能）不落 SKILL.md，仅计入返回数。
     """
 
     target_root = session_skills_dir(session_id)
@@ -359,6 +374,10 @@ async def materialize_session_skills(
     user_by_name = {r.name: r for r in rows}
 
     for name in sorted(skill_names):
+        if name == WEB_SEARCH_SKILL_NAME:
+            # 会话级内置写作技能：主代理 web_search 工具恒可用，无需物化 SKILL.md
+            count += 1
+            continue
         row = user_by_name.get(name)
         if row is None or not row.enabled:
             logger.warning("session_skill_missing", session_id=session_id, name=name)

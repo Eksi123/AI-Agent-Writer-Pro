@@ -4,7 +4,7 @@
  *
  * 卡片只展示职责描述 + 启用/停用开关（悬浮说明）；编辑按钮带外框；内置可「恢复默认」。
  * 弹窗（无标题）：名称（如 my-writer）、描述、系统提示词（必填）、可用技能多选
- * （含内置工具 read/edit/list/grep/glob/web_search，支持全选）；启用在创建后使用。
+ * （含内置工具 read/write/edit/list/grep/glob/web_search，支持全选）；启用在创建后使用。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -19,7 +19,7 @@ const loading = ref(false)
 const subagents = ref<SubagentDto[]>([])
 const skills = ref<SkillDto[]>([])
 
-/** 内置工具（read/edit/list/grep/glob/web_search）与自建技能分开呈现 */
+/** 内置工具（read/write/edit/list/grep/glob/web_search）与自建技能分开呈现 */
 const builtinTools = computed(() => skills.value.filter((s) => s.kind === 'tool'))
 const userSkills = computed(() => skills.value.filter((s) => s.kind !== 'tool'))
 
@@ -51,7 +51,7 @@ const allOptionKeys = computed(() => [
   ...userSkills.value.map((s) => `skill:${s.name}`),
 ])
 
-/** key → 展示名：内置工具展示写作技能页同款名称（read/edit/list/grep/glob/web_search） */
+/** key → 展示名：内置工具展示写作技能页同款名称（read/write/edit/list/grep/glob/web_search） */
 const optionLabel = computed<Record<string, string>>(() => {
   const map: Record<string, string> = {}
   for (const s of builtinTools.value) map[`tool:${s.tool_name ?? s.name}`] = s.name
