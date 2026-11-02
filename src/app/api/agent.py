@@ -12,7 +12,7 @@
         POST       /agent/sessions/{sid}/messages     ★发消息 → 202 + {run_id}
         POST       /agent/sessions/{sid}/branch       ★切换 active_leaf_id（分支/重新生成）
         PATCH      /agent/sessions/{sid}/context      会话级上下文
-        GET        /agent/runs/{run_id}               运行详情（状态/用量/门禁）
+        GET        /agent/runs/{run_id}               运行详情（状态/用量/流程）
         GET        /agent/runs/{run_id}/stream        ★SSE（run 级）
         POST       /agent/runs/{run_id}/cancel        ★取消（协作式）
         POST       /agent/interrupts/{id}/resolve     ★审批与咨询统一入口
@@ -29,12 +29,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app.agent.loop.runner import run_manager
+
 # ★agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
 # 这两个是「运行 Agent」的驱动面，不是取数——数据访问（会话列表/消息树/工具日志/分支切换）
 # 已全部下沉到 `services.agent`，故本模块不再直连 agent 的取数函数，
 # 与其它 13 个 api 模块的取数路径保持一致（都经 services）。
-from app.agent.loop.events import buffer_lost_event, sse_bus
-from app.agent.loop.runner import run_manager
+from app.agent.tracing.sse.events import buffer_lost_event, sse_bus
 from app.core.deps import get_session
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
@@ -189,11 +190,11 @@ async def post_message(
             },
         )
 
-    # ★v1101：门禁（四阶段工作流）改为意图驱动——无「生成本章」按钮；
-    # 用户消息表达「按大纲某章简介生成/修改正文」时才把 run 标记为门禁运行。
+    # ★v1101：流程（四阶段工作流）改为意图驱动——无「生成本章」按钮；
+    # 用户消息表达「按大纲某章简介生成/修改正文」时才把 run 标记为固定流程运行。
     target_chapter_id = body.target_chapter_id or ""
     if not target_chapter_id:
-        target_chapter_id = await _detect_gate_target(row.project_id, body)
+        target_chapter_id = await _detect_workflow_target(row.project_id, body)
 
     run_id = await run_manager.start(
         project_id=row.project_id,
@@ -213,24 +214,24 @@ async def post_message(
             "data": {
                 "run_id": run_id,
                 "session_id": session_id,
-                # 前端据此展示门禁状态条（意图命中才非空）
-                "gate_target_chapter_id": target_chapter_id or None,
+                # 前端据此展示流程状态条（意图命中才非空）
+                "workflow_target_chapter_id": target_chapter_id or None,
             },
         },
     )
 
 
-async def _detect_gate_target(project_id: str, body: AgentMessageIn) -> str:
+async def _detect_workflow_target(project_id: str, body: AgentMessageIn) -> str:
     """意图检测：命中「按大纲生成/修改正文」→ 返回目标章 id；否则空串（普通对话）。"""
-    from app.agent.gates.intent import detect_gate_target
-    from app.agent.knowledge.chapters import list_chapters_ordered
+    from app.agent.loop.knowledge.chapters import list_chapters_ordered
+    from app.agent.workflows.writing_steps.intent import detect_workflow_target
 
     try:
         chapters = await list_chapters_ordered(project_id)
     except Exception as exc:  # noqa: BLE001 - 检测失败不阻断普通对话
-        logger.warning("gate_intent_chapters_failed", error=str(exc))
+        logger.warning("workflow_intent_chapters_failed", error=str(exc))
         return ""
-    return detect_gate_target(body.content, chapters, body.active_chapter_id) or ""
+    return detect_workflow_target(body.content, chapters, body.active_chapter_id) or ""
 
 
 def _has_live_run(session_id: str) -> bool:
@@ -262,7 +263,7 @@ async def get_tool_calls(
 
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """运行详情（状态/用量/门禁/中断列表）。"""
+    """运行详情（状态/用量/流程/中断列表）。"""
     return ok(await agent_service.run_dto(session, run_id))
 
 

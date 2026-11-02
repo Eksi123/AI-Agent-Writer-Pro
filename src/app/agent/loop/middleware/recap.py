@@ -57,7 +57,7 @@ class RecapInjectionMiddleware(AgentMiddleware):
             emit = getattr(context, "emit", None)
             if emit is not None:
                 try:
-                    from app.agent.llm.budget import count_messages_tokens
+                    from app.agent.harness.llm.budget import count_messages_tokens
 
                     tokens = count_messages_tokens(list(request.messages))
                     report = emit.budget_report(tokens)

@@ -23,7 +23,7 @@ import type { ContextBlock, LlmOverview } from '@/types'
 import ApprovalCard from './ApprovalCard.vue'
 import ConsultCard from './ConsultCard.vue'
 import PlanTodoList from './PlanTodoList.vue'
-import GateStatusBar from './GateStatusBar.vue'
+import WorkflowStatusBar from './WorkflowStatusBar.vue'
 import ContextPicker from './ContextPicker.vue'
 import ToolsPicker from './ToolsPicker.vue'
 
@@ -665,10 +665,10 @@ const toolNames = ref<{ subagents: Map<string, string>; skills: Map<string, stri
 
 async function loadToolNames(): Promise<void> {
   try {
-    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills(true)])
+    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
     toolNames.value = {
       subagents: new Map(subs.map((s) => [s.id, s.name])),
-      // v1030：会话级技能 = 包内写作技能 + 用户自建（基础工具对主代理恒可用，不进 Chips）
+      // 会话级技能 = 用户自建（基础工具对主代理恒可用，不进 Chips）
       skills: new Map(sks.filter((s) => s.kind !== 'tool').map((s) => [s.id, s.name])),
     }
   } catch {
@@ -730,7 +730,7 @@ function removeChip(kind: ChipItem['kind'], id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// ★v1101：[生成本章]按钮已移除——门禁（四阶段工作流）改为用户在对话中表达
+// ★v1101：[生成本章]按钮已移除——流程（四阶段工作流）改为用户在对话中表达
 // 「按大纲某章简介生成/修改正文」的意图时由后端自动触发。
 // ---------------------------------------------------------------------------
 
@@ -912,7 +912,7 @@ watch(
              不再占用会话框最上方一整行
              ★v1031：[停止] 从状态条移到底部发送按键（三形态：发送 / 停止 / 追加消息） -->
         <div
-          v-if="agent.running || agent.activeSubagents.length || agent.gateStage"
+          v-if="agent.running || agent.activeSubagents.length || agent.workflowStage"
           class="status-inline"
         >
           <span v-if="agent.running" class="dot-pulse" />
@@ -920,8 +920,8 @@ watch(
           <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
             {{ t('agent.subagentLane') }}: {{ sa }}
           </el-tag>
-          <el-tag v-if="agent.gateStage" size="small" type="warning">
-            {{ t('agent.gateStage') }}: {{ agent.gateStage }}
+          <el-tag v-if="agent.workflowStage" size="small" type="warning">
+            {{ t('agent.workflowStage') }}: {{ agent.workflowStage }}
           </el-tag>
         </div>
 
@@ -942,12 +942,12 @@ watch(
 
         <PlanTodoList v-if="agent.todos.length" :todos="agent.todos" />
 
-        <GateStatusBar
-          v-if="agent.gateStage"
-          :stage="agent.gateStage"
-          :retry-count="agent.gateRetryCount"
-          :g1-skipped="agent.gateG1Skipped"
-          :results="agent.gateResults"
+        <WorkflowStatusBar
+          v-if="agent.workflowStage"
+          :stage="agent.workflowStage"
+          :retry-count="agent.workflowRetryCount"
+          :g1-skipped="agent.workflowPrecheckSkipped"
+          :results="agent.workflowResults"
         />
 
         <ApprovalCard v-if="agent.pendingInterrupt" :interrupt="agent.pendingInterrupt" />

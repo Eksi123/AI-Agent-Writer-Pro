@@ -7,7 +7,7 @@
 说明: run 生命周期公共件：状态标记、graph config、错误码归一、run.end 发布与收尾落库
     （手册「二、(2)」：收尾不在中间件里做，由 runner 统一执行）。
 
-    普通运行（loop/runner）与门禁运行（gates/runner）共用，故独立成模块以免互相依赖。
+    普通运行（loop/runner）与固定流程运行（chapter_workflow/runner）共用，故独立成模块以免互相依赖。
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.loop.events import sse_bus
-from app.agent.memory import thread_id_of
-from app.agent.tracing import create_score, current_trace_id
+from app.agent.more.langfuse import create_score, current_trace_id
+from app.agent.tracing.messages.tree import thread_id_of
+from app.agent.tracing.sse.events import sse_bus
 from app.core.errors import ApiError, ErrorCode
 from app.core.logging import get_logger
 from app.db.base import utcnow

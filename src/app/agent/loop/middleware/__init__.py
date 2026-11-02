@@ -9,14 +9,21 @@
     装配顺序：WriteApproval（v1101 最外层）→ ModelRetry → ModelFallback → ModelCallLimit → TodoList
     → RecapInjection → HiddenContext（v1101）→ SteerInjection → WorkspaceGuard
     → FileChangeNotify → ContentLock（v1101）。
+
+    ★v1102（架构优化）：安全类中间件已迁至 harness——
+    `WriteApprovalMiddleware`（harness/approval）、`WorkspaceGuardMiddleware`（harness/guard）、
+    `ContentLockMiddleware`（harness/lock）；本包保留**功能性**中间件
+    （recap 注入 / steer 引导 / hidden_context / 文件变更通知），并统一 re-export
+    装配清单，供 loop/builder 按顺序取用（import 路径对外保持稳定）。
 """
 
-from app.agent.loop.middleware.file_change import ContentLockMiddleware, FileChangeNotifyMiddleware
+from app.agent.harness.approval.write_approval import WriteApprovalMiddleware
+from app.agent.harness.guard.workspace_guard import WorkspaceGuardMiddleware
+from app.agent.harness.lock.content_lock import ContentLockMiddleware
+from app.agent.loop.middleware.file_change import FileChangeNotifyMiddleware
 from app.agent.loop.middleware.hidden_context import HiddenContextInjectionMiddleware
 from app.agent.loop.middleware.recap import RecapInjectionMiddleware
 from app.agent.loop.middleware.steer import SteerInjectionMiddleware
-from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
-from app.agent.loop.middleware.write_approval import WriteApprovalMiddleware
 
 __all__ = [
     "RecapInjectionMiddleware",

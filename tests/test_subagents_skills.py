@@ -24,13 +24,13 @@ from app.core.paths import skills_root
 
 class TestSubagentsApi:
     async def test_builtin_seeded_on_startup(self, client):
-        """应用启动播种 5 个内置子代理。"""
+        """应用启动播种 4 个内置子代理（★v1102：planner/writer/reviewer/web-searcher）。"""
         resp = await client.get("/api/v1/subagents")
         data = resp.json()["data"]
         names = {s["name"] for s in data}
-        assert {"planner", "writer", "editor", "continuity-checker", "researcher"} <= names
+        assert {"planner", "writer", "reviewer", "web-searcher"} <= names
         builtins = [s for s in data if s["is_builtin"]]
-        assert len(builtins) == 5
+        assert len(builtins) == 4
         for b in builtins:
             assert b["enabled"] is True
             assert b["system_prompt"]
@@ -70,7 +70,7 @@ class TestSubagentsApi:
                 "name": "fork-agent",
                 "description": "fork",
                 "mode": "fork",
-                "skills": ["/skills/builtin/prose-writing"],
+                "skills": ["/skills/user/some-skill"],
             },
         )
         assert resp.json()["code"] == 40001
@@ -113,7 +113,7 @@ class TestSubagentsApi:
     async def test_update_to_fork_with_skills_rejected(self, client):
         resp = await client.post(
             "/api/v1/subagents",
-            json={"name": "combo", "description": "d", "skills": ["/skills/builtin/naming"]},
+            json={"name": "combo", "description": "d", "skills": ["/skills/user/x"]},
         )
         pk = resp.json()["data"]["id"]
         resp = await client.patch(f"/api/v1/subagents/{pk}", json={"mode": "fork"})
@@ -134,38 +134,22 @@ class TestSubagentsApi:
 
 
 class TestSkillsApi:
-    async def test_list_includes_builtin(self, client):
-        """v1028：内置「技能」= Agent 基础工具（read/edit/list/grep/glob/web_search），
-        不展示描述；原内置写作技能目录不再在列表中呈现。"""
+    async def test_list_includes_builtin_tools_only(self, client):
+        """内置项 = Agent 基础工具（read/edit/list/grep/glob/web_search/write），
+        不展示描述；技能 = 用户自建，包内不再随包携带写作技能。"""
         data = (await client.get("/api/v1/skills")).json()["data"]
         builtin = [s for s in data if s["is_builtin"]]
         names = {s["name"] for s in builtin}
-        assert {"read", "edit", "list", "grep", "glob", "web_search"} <= names
-        assert {"prose-writing", "novel-planning"} & names == set()
+        assert {"read", "edit", "list", "grep", "glob", "web_search", "write"} <= names
         # 内置工具不展示描述
         assert all(s["description"] == "" for s in builtin)
         # 每个内置项都带真实工具名，供子代理多选装配
         tool_names = {s["tool_name"] for s in builtin}
-        assert {"read_file", "edit_file", "ls", "grep", "glob", "web_search"} <= tool_names
+        assert {"read_file", "edit_file", "ls", "grep", "glob", "web_search", "write_file"} <= tool_names
         assert all(s["materialized"] for s in builtin)
         assert all(s["kind"] == "tool" for s in builtin)
-
-    async def test_list_include_writing_returns_builtin_writing_skills(self, client):
-        """v1030：`include_writing=true` 追加包内写作技能（供会话级「工具添加」勾选）。"""
-        data = (await client.get("/api/v1/skills", params={"include_writing": True})).json()["data"]
-        writing = [s for s in data if s["is_builtin"] and s["kind"] == "writing"]
-        names = {s["name"] for s in writing}
-        assert {"prose-writing", "novel-planning"} <= names
-        for s in writing:
-            # id 形如 builtin:{name}，session_context_of 据此解析为技能名
-            assert s["id"] == f"builtin:{s['name']}"
-            assert s["description"]
-            assert s["content_md"]
-            assert s["tool_name"] is None
-
-        # 默认（不带 include_writing）仍只返回基础工具
-        default = (await client.get("/api/v1/skills")).json()["data"]
-        assert not [s for s in default if s["is_builtin"] and s["kind"] == "writing"]
+        # 没有任何「包内写作技能」类别
+        assert not [s for s in data if s.get("kind") == "writing" and s["is_builtin"]]
 
     async def test_create_skill_materializes(self, client):
         resp = await client.post(
@@ -196,12 +180,6 @@ class TestSkillsApi:
 
     async def test_empty_description_rejected(self, client):
         resp = await client.post("/api/v1/skills", json={"name": "no-desc", "description": "  "})
-        assert resp.json()["code"] == 40001
-
-    async def test_builtin_name_conflict_rejected(self, client):
-        resp = await client.post(
-            "/api/v1/skills", json={"name": "prose-writing", "description": "抢注内置名"}
-        )
         assert resp.json()["code"] == 40001
 
     async def test_disable_removes_materialization(self, client):

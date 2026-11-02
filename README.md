@@ -33,7 +33,8 @@
 - **AI 改稿时不打架**：AI 正在修改某一章时，该章进入只读，工具栏「自动保存」右侧显示灰色提示「AI编辑中，请稍后再试……」，手动与自动保存都会被拒绝，AI 写完后自动解锁。
 - **该你拍板时会问你**：AI 要做大范围改写、覆盖已有正文等高危操作前，先弹审批卡片（批准 / 改参数后批准 / 拒绝 / 补充说明）；拿不准的设定问题会弹咨询卡片问你。
 - **出错说人话**：任何报错都是简短中文提示 + 该怎么做的建议，不会甩一串英文异常给你。
-- **子代理与技能**：内置策划、撰写、润色、连贯性审查、资料检索 5 个子代理和 8 项写作技能，都可以自建、改提示词、换模型。
+- **子代理与技能**：内置 Planner（策划）、Writer（撰写修改全流程）、Reviewer（大纲与内容审查）、Web_Searcher（资料检索）4 个子代理，按职能预配默认内置工具（Writer/Planner 可读写、Reviewer 只读、Web_Searcher 专司检索），都可以自建、改提示词、换模型、一键启停（停用后 AI 不再使用）。技能为用户自建（Markdown 操作手册，AI 按需阅读），可绑定给子代理或会话精选。
+- **全书体检与导出预检**：一条命令对全书做一致性审查（时间线 / 人物状态 / 设定冲突 / 未回收伏笔，按卷分批出报告）；导出成书前自动预检（空章 / 过短章 / 未定稿 / MOBI 依赖），问题清单先给你过目。
 
 ### 后悔药：回收站
 
@@ -216,7 +217,7 @@ docker run --rm -v writer-data:/data -v "${PWD}:/backup" alpine tar czf /backup/
 ### 2.5 怎么测试
 
 ```powershell
-uv run python -m pytest -q     # 全量测试（497 用例，假模型驱动，不触网 / 不打真实 LLM）
+uv run python -m pytest -q     # 全量测试（510 用例，假模型驱动，不触网 / 不打真实 LLM）
 uv run ruff check src tests    # 后端 lint
 cd src/web; npm run build      # 前端类型检查 + 构建
 uv run writer doctor           # 环境自检（FTS5 / 二元切分 / calibre / Langfuse / 依赖版本）
@@ -237,16 +238,19 @@ ai-agent-writer-pro/
 ├─ Dockerfile / docker-compose.yml   多阶段镜像与编排
 ├─ src/
 │  ├─ app/                  后端（Python / FastAPI）
-│  │  ├─ api/               路由层：15 个模块 / 89 个端点，只做协议转换，不写业务
+│  │  ├─ api/               路由层：15 个模块 / 91 个端点，只做协议转换，不写业务
 │  │  ├─ services/          业务编排层：17 个模块（项目/卷章/正文/大纲/检索/导出/回收站/天气…）
-│  │  ├─ agent/             AI Agent（本项目技术核心）：主循环 / 四阶段门禁 / 子代理 / 技能 /
-│  │  │                     MCP / 记忆（消息树）/ 沙箱与权限 / LLM 工厂 / 可观测
+│  │  ├─ agent/             AI Agent（本项目技术核心），7 个顶层目录：
+│  │  │                     loop 运行核心（装配/运行/LLM调用/提示词/上下文） / subagents 子代理 /
+│  │  │                     tools 工具（内置工具 + 用户技能）/ workflows 固定流程（按分类分目录） /
+│  │  │                     harness 安全（沙箱权限/审批/守卫/编辑锁/LLM容错） /
+│  │  │                     tracing 消息与事件（SSE/消息树） / more 其他（MCP/Langfuse）
 │  │  ├─ core/ db/ schemas/ 基础设施：配置 / 错误码 / 路径 / 密钥、ORM 与迁移、DTO
 │  └─ web/                  前端（Vue 3 + TS + Vite 单页应用）
 │     ├─ views/ components/ 三栏工作台 + 通用设置 + AI 设置；回收站 / 导出 / 审批卡片等组件
 │     ├─ stores/            Pinia：project / editor / reader / agent / settings
 │     ├─ api/ i18n/ styles/ 类型化接口封装与 SSE 客户端、中文文案集中管理、主题变量
-├─ tests/                   pytest 21 个文件 / 497 用例（httpx 直连 ASGI + 假模型）
+├─ tests/                   pytest 22 个文件 / 510 用例（httpx 直连 ASGI + 假模型）
 └─ data/                    运行时数据（见 3.3）
 ```
 
@@ -272,8 +276,8 @@ Markdown 文件（内容事实源）        SQLite（登记 / 快照 / 会话 / 
 - **写作链路**：前端编辑 → `PUT /chapters/{id}/content` 携 `base_version` → 乐观锁校验
   （冲突回 409 让前端弹合并横幅）→ 按策略留修订快照 → 写文件 + 更新索引。
 - **AI 链路**：发消息 → 后端立刻回 `202 + run_id` → 后台跑 Agent 主循环 → 事件经 SSE 推给前端
-  （token 增量 / 工具调用 / 泳道 / 计划 / 门禁阶段 / 用量）→ run 结束消息树落库、前端重拉合并。
-  生成正文走四阶段门禁（G0 简介存在 → G1 衔接预检 → G2 生成 → G3 要点核对），
+  （token 增量 / 工具调用 / 泳道 / 计划 / 流程阶段 / 用量）→ run 结束消息树落库、前端重拉合并。
+  生成正文走四阶段固定流程（S0 简介存在 → S1 衔接预检 → S2 生成 → S3 要点核对），
   高危写入触发 interrupt 审批，拿不准触发 consult 咨询，都在右栏卡片里闭环。
 - **可观测**：Langfuse 配置齐全时全链路上报；全空自动降级为本地结构化日志，功能不受影响。
 

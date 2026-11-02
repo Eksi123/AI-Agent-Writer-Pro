@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 运行期上下文（手册「二、(2)」）。
 
-    `project_id / session_id / run_id / gate_stage` 经 `context_schema` + `Runtime.context`
+    `project_id / session_id / run_id / workflow_stage` 经 `context_schema` + `Runtime.context`
     注入中间件与工具，**不使用全局变量/上下文变量传递**（避免并发 run 串数据）。
 """
 
@@ -23,9 +23,9 @@ class AgentContext:
     project_id: str
     session_id: str
     run_id: str
-    #: G0|G1|G2|G3|""（非生成类运行为空）
-    gate_stage: str = ""
-    #: 门禁生成目标章（gate 运行专用）
+    #: S0|S1|S2|S3|""（非生成类运行为空）
+    workflow_stage: str = ""
+    #: 流程生成目标章（固定流程运行专用）
     target_chapter_id: str = ""
     #: 当前使用的 model_ref（事件里回传，便于前端展示）
     model_ref: str = ""

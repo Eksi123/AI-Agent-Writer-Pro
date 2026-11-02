@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.mcp.adapter import (
+from app.agent.more.mcp.adapter import (
     STDIO_COMMAND_WHITELIST,
     probe_http,
     probe_stdio,

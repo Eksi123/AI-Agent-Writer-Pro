@@ -414,9 +414,9 @@ export interface AgentRunDto {
   error?: string | null
   started_at?: string | null
   ended_at?: string | null
-  gate_stage?: string | null
-  gate_retry_count: number
-  gate_result?: Record<string, unknown> | string | null
+  workflow_stage?: string | null
+  workflow_retry_count: number
+  workflow_result?: Record<string, unknown> | string | null
   target_chapter_id?: string | null
   interrupts: AgentInterruptDto[]
 }

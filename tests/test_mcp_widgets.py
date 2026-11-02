@@ -16,8 +16,8 @@ from typing import Any
 import httpx
 import pytest
 
-from app.agent.mcp.adapter import STDIO_COMMAND_WHITELIST, validate_stdio_command
-from app.agent.mcp.server import build_weather_server, weather_tools
+from app.agent.more.mcp.adapter import STDIO_COMMAND_WHITELIST, validate_stdio_command
+from app.agent.more.mcp.server import build_weather_server, weather_tools
 from app.core.errors import BadRequestError, DependencyUnavailableError
 from app.services import weather
 

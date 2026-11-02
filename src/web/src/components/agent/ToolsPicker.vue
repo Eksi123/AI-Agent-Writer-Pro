@@ -35,8 +35,7 @@ const skills = ref<SkillDto[]>([])
 
 /**
  * 只列启用项；子代理供主代理委派。
- * v1030：[写作技能] 同时列出包内写作技能与用户自建技能
- * （Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项）。
+ * [写作技能] 列出用户自建技能（Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项）。
  */
 const subagentList = computed(() => subagents.value.filter((s) => s.enabled))
 const skillList = computed(() =>
@@ -46,7 +45,7 @@ const skillList = computed(() =>
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills(true)])
+    const [subs, sks] = await Promise.all([configApi.listSubagents(), configApi.listSkills()])
     subagents.value = subs
     skills.value = sks
   } catch (err) {

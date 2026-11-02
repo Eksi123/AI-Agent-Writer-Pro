@@ -6,16 +6,19 @@
 时间: 2026-10-27
 说明: `create_deep_agent` 装配（手册「二、(2) Agent-Loop」+「二、(5)」）。
 
-    装配要点：
-    - `backend`：CompositeBackend 三路由（`/projects/`、`/skills/builtin/`、`/skills/user/`）
+    装配要点（★架构优化后）：
+    - `backend`：CompositeBackend 路由（`/projects/`、`/skills/user/`、会话精选）
+      —— 技能 = 用户自建，无 `/skills/builtin/` 路由
     - `permissions`：8 条有序规则（`{pid}` 替换为当前项目），兜底 deny 最后
     - `checkpointer`：AsyncSqliteSaver（`data/agent_state.db`），按 thread_id 持久化
     - `context_schema`：AgentContext（project_id/session_id/run_id/... 经 Runtime.context 注入）
     - `middleware` 顺序（手册「二、(2)」）：
-      ModelRetry → ModelFallback → ModelCallLimit → TodoList
-      → RecapInjection → WorkspaceGuard → FileChangeNotify → WriteApproval
-    - `skills`：`["/skills/builtin/", "/skills/user/"]`（虚拟路径，后者同名覆盖）
-    - `subagents`：5 个内置写作子代理（general-purpose 由 deepagents 自动追加）
+      WriteApproval（harness/approval，最外层）→ 重试/降级/限次（harness/llm/resilience）
+      → TodoList → RecapInjection → HiddenContext → Steer → WorkspaceGuard（harness/guard）
+      → FileChangeNotify → ContentLock（harness/lock）
+    - `skills`：`["/skills/user/"]`（虚拟路径）+ 会话精选 `/skills/session-{sid}/`
+    - `subagents`：4 个内置写作子代理 planner/writer/reviewer/web-searcher
+      （subagents/builtin/*/spec.py + prompt.md；general-purpose 由 deepagents 自动追加）
     - `interrupt_on`：delete 工具无条件审批（参数级高危写入由 WriteApprovalMiddleware 处理）
 
     **不引入** LocalShellBackend / LangSmithSandbox（会激活 execute 且与 permissions 冲突）。
@@ -23,22 +26,19 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from deepagents import create_deep_agent
-from langchain.agents.middleware import (
-    ModelCallLimitMiddleware,
-    ModelRetryMiddleware,
-    TodoListMiddleware,
-)
+from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.llm.factory import get_chat_model
+from app.agent.harness.llm.resilience import build_resilience_middleware
+from app.agent.harness.sandbox import build_backend, build_permissions
 from app.agent.loop.checkpointer import get_checkpointer
 from app.agent.loop.context import AgentContext
+from app.agent.loop.llm.factory import get_chat_model
 from app.agent.loop.middleware import (
     ContentLockMiddleware,
     FileChangeNotifyMiddleware,
@@ -48,17 +48,16 @@ from app.agent.loop.middleware import (
     WorkspaceGuardMiddleware,
     WriteApprovalMiddleware,
 )
-from app.agent.prompts import render
-from app.agent.sandbox import build_backend, build_permissions
-from app.agent.subagents import BUILTIN_SUBAGENTS
+from app.agent.loop.prompts import render
+from app.agent.subagents.user import load_specs as load_user_specs
 from app.core.config import current_config_version, get_settings
 from app.core.logging import get_logger
-from app.db.models import Novel, SkillConfig, SubagentConfig
+from app.db.models import Novel, SkillConfig
 
 logger = get_logger(__name__)
 
-#: skills 虚拟路径（内置 + 用户自建，后者同名覆盖前者）
-SKILL_PATHS = ["/skills/builtin/", "/skills/user/"]
+#: skills 虚拟路径（技能 = 用户自建；会话精选目录由 build_agent 按需追加）
+SKILL_PATHS = ["/skills/user/"]
 
 #: delete 工具无条件审批（`interrupt_on` 只能做工具级开关，参数级见 WriteApprovalMiddleware）
 INTERRUPT_ON: dict[str, Any] = {"delete": True}
@@ -70,71 +69,22 @@ DEFAULT_MODEL_CALL_LIMIT = 40
 async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
     """从 DB 读取启用的子代理配置（内置已播种 + 用户自建）。
 
+    ★v1102：装载逻辑迁至 `subagents/user.load_specs`（内置在前 = 内置优先），
+    此处保留同名入口（builder/测试的既有调用点不变）。
     DB 为空（如未播种的测试环境）时回落内置定义，保证 agent 始终有写作子代理可用。
     """
-
-    rows = (
-        (
-            await session.execute(
-                select(SubagentConfig).where(SubagentConfig.enabled.is_(True)).order_by(SubagentConfig.created_at.asc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return [
-            {
-                "name": name,
-                "description": spec["description"],
-                "system_prompt": spec["system_prompt"],
-                "mode": spec.get("mode", "isolated"),
-                "skills": list(spec.get("skills") or []),
-                "tools": [],
-                "model_ref": None,
-            }
-            for name, spec in BUILTIN_SUBAGENTS.items()
-        ]
-
-    specs: list[dict[str, Any]] = []
-    for row in rows:
-        mode = row.mode or "isolated"
-        skills = _loads_list(row.skills_json)
-        if mode == "fork" and skills:
-            logger.warning("subagent_fork_skills_cleared", name=row.name)
-            skills = []
-        specs.append(
-            {
-                "name": row.name,
-                "description": row.description,
-                "system_prompt": row.system_prompt or BUILTIN_SUBAGENTS.get(row.name, {}).get("system_prompt", ""),
-                "mode": mode,
-                "skills": skills,
-                #: v1028：多选的内置工具名（read_file/edit_file/ls/grep/glob/web_search）
-                "tools": _loads_list(row.tools_json),
-                "model_ref": row.model_ref,
-            }
-        )
-    return specs
+    return await load_user_specs(session)
 
 
-def _loads_list(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        return []
-    return [str(x) for x in value] if isinstance(value, list) else []
-
-
-#: v1028：子代理可选的内置工具。键为 UI 展示名（read/edit/list/grep/glob/web_search），
+#: 子代理可选的内置工具。键为 UI 展示名（read/edit/list/grep/glob/web_search/write），
 #: 值为 deepagents FilesystemMiddleware 的工具名（web_search 走自研 registry，不在 fs 工具内）。
 _FS_TOOL_ALIASES = {
     "read_file": "read_file",
     "read": "read_file",
     "edit_file": "edit_file",
     "edit": "edit_file",
+    "write_file": "write_file",
+    "write": "write_file",
     "ls": "ls",
     "list": "ls",
     "grep": "grep",
@@ -227,7 +177,7 @@ def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
     extra: list[Any] = []
     if want_web_search:
         try:
-            from app.agent.tools.web_search import web_search
+            from app.agent.tools.builtin.web_search import web_search
 
             extra.append(web_search)
         except Exception as exc:  # pragma: no cover
@@ -290,27 +240,14 @@ def build_middleware_stack(
     # ⓪ 高危写入审批（最外层：保证 interrupt() 的 GraphInterrupt 不被吞）
     stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
 
-    # ① 重试：仅对超时 / 429 / 5xx / 连接错误重试（默认 retry_on 即覆盖这些）
-    try:
-        stack.append(ModelRetryMiddleware(max_retries=2, backoff_factor=2.0, jitter=True))
-    except Exception as exc:  # pragma: no cover - 参数兼容性兜底
-        logger.warning("model_retry_mw_fallback", error=str(exc))
-        stack.append(ModelRetryMiddleware())
-
-    # ② 降级链：主模型失败依次切换
-    if fallback_models:
-        try:
-            from langchain.agents.middleware import ModelFallbackMiddleware
-
-            stack.append(ModelFallbackMiddleware(primary_model, *fallback_models))
-        except Exception as exc:  # pragma: no cover
-            logger.warning("model_fallback_mw_unavailable", error=str(exc))
-
-    # ③ 调用次数上限：优雅收尾
-    try:
-        stack.append(ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="end"))
-    except Exception as exc:  # pragma: no cover
-        logger.warning("model_call_limit_mw_unavailable", error=str(exc))
+    # ①~③ LLM 容错三段（重试 → 降级 → 限次）：装配逻辑在 harness/llm/resilience
+    stack.extend(
+        build_resilience_middleware(
+            primary_model=primary_model,
+            fallback_models=fallback_models,
+            model_call_limit=model_call_limit,
+        )
+    )
 
     # ④ 待办：提供 write_todos 工具 → plan.update 事件（deepagents 默认不带，显式加入）
     try:
@@ -401,7 +338,7 @@ async def build_agent(
     tools: list[Any] = []
     tool_names: list[str] = []
     if tools_enabled:
-        from app.agent.mcp.server import weather_tools
+        from app.agent.more.mcp.server import weather_tools
         from app.agent.tools.registry import build_tools
 
         tools.extend(build_tools())

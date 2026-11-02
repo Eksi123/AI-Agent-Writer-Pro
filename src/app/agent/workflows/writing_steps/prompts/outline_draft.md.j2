@@ -1,0 +1,14 @@
+请为《{{ volume_title }} · {{ chapter_title }}》补写大纲小节。
+
+要求：
+1. 用 read_file 读大纲文件，在卷节「# {{ volume_title }}」下追加章小节「## {{ chapter_title }}」；若小节已存在但简介为空，用 edit_file 填写；
+2. 小节格式：
+   - 简介：（必填）本章剧情要点 3-6 条
+   - 衔接要点：与上一章的承接、伏笔、人物状态变化
+3. 内容依据项目梗概、附录设定与前后章节简介推导，不得与已有设定冲突；
+4. 只改大纲文件，不要动 volumes.yaml / 章节文件 / sort_order；
+5. 写完 read_file 回读自检，确认标题层级（# 卷 / ## 章）未被破坏。
+{% if instruction %}
+
+用户的补充指示：{{ instruction }}
+{% endif %}

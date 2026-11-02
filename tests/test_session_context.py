@@ -17,9 +17,9 @@ from langchain_core.messages import AIMessage
 from tests.fake_model import ScriptedFakeChatModel
 from tests.test_agent_e2e import _setup_provider_model
 
-from app.agent.knowledge import build_pinned_chapters
-from app.agent.llm.factory import register_model_override
 from app.agent.loop.builder import build_agent
+from app.agent.loop.knowledge import build_pinned_chapters
+from app.agent.loop.llm.factory import register_model_override
 from app.agent.loop.resolve import make_recap_provider, session_context_of
 from app.core.paths import session_skills_dir
 from app.db.models import AgentRun
@@ -71,23 +71,43 @@ class TestPinnedChapters:
         assert "上下文章" in recap
 
     async def test_session_context_of_resolves_ids_to_names(self, client, novel_id):
-        """subagent/skill 的 DB id 被解析为 name（builtin: 前缀也支持）。"""
+        """subagent/skill 的 DB id 被解析为 name（技能 = 用户自建）。"""
 
         subs = (await client.get("/api/v1/subagents")).json()["data"]
         writer = next(s for s in subs if s["name"] == "writer")
+
+        # 建一个用户技能，用它的 DB id 做会话选择
+        sk = (
+            await client.post(
+                "/api/v1/skills", json={"name": "ctx-skill", "description": "d", "body": "b"}
+            )
+        ).json()["data"]
 
         sid = (
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
         ).json()["data"]["id"]
         await client.patch(
             f"/api/v1/agent/sessions/{sid}/context",
-            json={"subagent_ids": [writer["id"]], "skill_ids": ["builtin:naming"]},
+            json={"subagent_ids": [writer["id"]], "skill_ids": [sk["id"]]},
         )
 
         async with session_scope() as db:
             sub_names, skill_names = await session_context_of(db, sid)
         assert sub_names == {"writer"}
-        assert skill_names == {"naming"}
+        assert skill_names == {"ctx-skill"}
+
+    async def test_legacy_builtin_prefix_ids_skipped(self, client, novel_id):
+        """历史 `builtin:{name}` 技能 id 已失效，解析时静默跳过（不报错、不产出 name）。"""
+        sid = (
+            await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
+        ).json()["data"]["id"]
+        await client.patch(
+            f"/api/v1/agent/sessions/{sid}/context",
+            json={"skill_ids": ["builtin:naming"]},
+        )
+        async with session_scope() as db:
+            _sub_names, skill_names = await session_context_of(db, sid)
+        assert skill_names == set()
 
 
 class TestProjectUsage:
@@ -274,40 +294,56 @@ class TestSessionUsage:
 
 class TestSessionSkillsMaterialization:
     async def test_materialize_selected_skills(self, client, session, novel_id):
-        """会话精选技能物化到 data/session-skills/{sid}/（内置复制 + 用户技能复制）。"""
+        """会话精选技能物化到 data/session-skills/{sid}/（技能 = 用户自建）。"""
 
-        # 建一个用户技能
-        resp = await client.post(
-            "/api/v1/skills", json={"name": "my-skill", "description": "用户技能描述", "body": "正文"}
-        )
-        assert resp.json()["code"] == 0
+        # 建两个用户技能
+        for name in ("my-skill", "other-skill"):
+            resp = await client.post(
+                "/api/v1/skills", json={"name": name, "description": "用户技能描述", "body": "正文"}
+            )
+            assert resp.json()["code"] == 0
 
         sid = "test-session-1"
-        count = await materialize_session_skills(session, sid, {"naming", "my-skill"})
+        count = await materialize_session_skills(session, sid, {"my-skill", "other-skill"})
         assert count == 2
 
         root = session_skills_dir(sid)
-        assert (root / "naming" / "SKILL.md").exists()
         assert (root / "my-skill" / "SKILL.md").exists()
-        text = (root / "naming" / "SKILL.md").read_text(encoding="utf-8")
-        assert "name: naming" in text
+        assert (root / "other-skill" / "SKILL.md").exists()
+        text = (root / "my-skill" / "SKILL.md").read_text(encoding="utf-8")
+        assert "name: my-skill" in text
 
     async def test_materialize_skips_missing(self, client, session):
 
         count = await materialize_session_skills(session, "s-x", {"no-such-skill"})
         assert count == 0
 
+    async def test_materialize_skips_disabled(self, client, session):
+        """停用的用户技能不进会话精选。"""
+        resp = await client.post(
+            "/api/v1/skills", json={"name": "off-skill", "description": "d", "body": "b"}
+        )
+        pk = resp.json()["data"]["id"]
+        await client.patch(f"/api/v1/skills/{pk}", json={"enabled": False})
+
+        count = await materialize_session_skills(session, "s-off", {"off-skill"})
+        assert count == 0
+
     async def test_rematerialize_clears_stale(self, client, session):
         """重新物化会清空旧选择（会话上下文变化后不留残影）。"""
+        for name in ("keep-skill", "drop-skill"):
+            await client.post(
+                "/api/v1/skills", json={"name": name, "description": "d", "body": "b"}
+            )
 
         sid = "test-session-2"
-        await materialize_session_skills(session, sid, {"naming", "prose-writing"})
+        await materialize_session_skills(session, sid, {"keep-skill", "drop-skill"})
         root = session_skills_dir(sid)
-        assert (root / "prose-writing").exists()
+        assert (root / "drop-skill").exists()
 
-        await materialize_session_skills(session, sid, {"naming"})
-        assert not (root / "prose-writing").exists()
-        assert (root / "naming" / "SKILL.md").exists()
+        await materialize_session_skills(session, sid, {"keep-skill"})
+        assert not (root / "drop-skill").exists()
+        assert (root / "keep-skill" / "SKILL.md").exists()
 
 
 class TestSubagentFiltering:
@@ -336,7 +372,7 @@ class TestSubagentFiltering:
             session, project_id=novel_id, model=fake, subagents_enabled=True, tools_enabled=False
         )
         assert set(agent["subagent_names"]) >= {
-            "planner", "writer", "editor", "continuity-checker", "researcher",
+            "planner", "writer", "reviewer", "web-searcher",
         }
 
 
@@ -346,16 +382,22 @@ class TestContextApiRoundtrip:
             await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})
         ).json()["data"]["id"]
 
+        sk = (
+            await client.post(
+                "/api/v1/skills", json={"name": "round-skill", "description": "d", "body": "b"}
+            )
+        ).json()["data"]
+
         await client.patch(
             f"/api/v1/agent/sessions/{sid}/context",
-            json={"subagent_ids": ["a1"], "skill_ids": ["builtin:naming"], "context_chapter_ids": ["c1", "c2"]},
+            json={"subagent_ids": ["a1"], "skill_ids": [sk["id"]], "context_chapter_ids": ["c1", "c2"]},
         )
 
         # 列表接口返回同构 DTO（前端 Chips 回填依赖）
         sessions = (await client.get("/api/v1/agent/sessions", params={"novel_id": novel_id})).json()["data"]
         sess = next(s for s in sessions if s["id"] == sid)
         assert sess["subagent_ids"] == ["a1"]
-        assert sess["skill_ids"] == ["builtin:naming"]
+        assert sess["skill_ids"] == [sk["id"]]
         assert sess["context_chapter_ids"] == ["c1", "c2"]
 
     async def test_update_context_audited(self, client, novel_id):

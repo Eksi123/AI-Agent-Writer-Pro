@@ -8,7 +8,7 @@
 
     - `stream_graph`：驱动一次 `astream`，映射 message.delta / message.complete /
       tool.* / subagent.* / usage / plan.update / interrupt.request / consult.request；
-    - 普通运行与门禁 G2 共用；从 runner 拆出以隔离「事件映射」与「run 生命周期」两类职责。
+    - 普通运行与流程 S2 共用；从 runner 拆出以隔离「事件映射」与「run 生命周期」两类职责。
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent.harness.approval.write_approval import INTERRUPT_KIND
 from app.agent.loop.context import AgentContext
-from app.agent.loop.emitter import Emitter
-from app.agent.loop.events import sse_bus
-from app.agent.loop.message_sync import MessageSyncer
-from app.agent.loop.middleware.write_approval import INTERRUPT_KIND
+from app.agent.tracing.messages.message_sync import MessageSyncer
+from app.agent.tracing.sse.emitter import Emitter
+from app.agent.tracing.sse.events import sse_bus
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
 from app.db.models import AgentInterrupt, AgentRun, AgentSession
@@ -59,7 +59,7 @@ async def stream_graph(
     user_message_id: str | None = None,
     resumed: bool = False,
 ) -> StreamResult:
-    """驱动一次 astream 并把 LangGraph 事件映射为 SSE（普通运行与门禁 G2 共用）。"""
+    """驱动一次 astream 并把 LangGraph 事件映射为 SSE（普通运行与流程 S2 共用）。"""
     result = StreamResult()
     await syncer.init_baseline(graph, config, user_message_id=user_message_id, resumed=resumed)
     active_subagents: set[str] = set()
@@ -247,7 +247,7 @@ async def _persist_and_emit_interrupt(
     两类中断：
     - 自定义 `WriteApprovalMiddleware`：payload `{kind: "writer_approval", ...}` → type=approval
     - langchain `HumanInTheLoopMiddleware`（batched）：payload `{action_requests, review_configs}` → type=approval
-    - 门禁咨询（M4）：payload `{kind: "gate_consult", ...}` → type=consult
+    - 流程咨询（M4）：payload `{kind: "workflow_consult", ...}` → type=consult
     """
     value = getattr(intr, "value", intr)
     if not isinstance(value, dict):
@@ -256,7 +256,7 @@ async def _persist_and_emit_interrupt(
     kind = value.get("kind")
     interrupt_id = new_id()
 
-    if kind == "gate_consult":
+    if kind == "workflow_consult":
         itype = "consult"
         tool_name = None
         emit_event = "consult.request"
@@ -265,7 +265,7 @@ async def _persist_and_emit_interrupt(
             "question": value.get("question"),
             "options": value.get("options") or [],
             "allow_text": bool(value.get("allow_text", True)),
-            "gate_stage": value.get("gate_stage"),
+            "workflow_stage": value.get("workflow_stage"),
         }
     elif kind == INTERRUPT_KIND:
         itype = "approval"

@@ -234,7 +234,7 @@ async def test_agent_write_source_recorded(client, chapter_id):
     assert result["last_writer"] == "agent"
     assert result["snapshotted"] is True
 
-    # 快照的 source 记录**触发写入的路径**（手册「二、(6) G2」：Agent 写入前快照 source="agent"）
+    # 快照的 source 记录**触发写入的路径**（手册「二、(6) S2」：Agent 写入前快照 source="agent"）
     revs = (await client.get(f"/api/v1/chapters/{chapter_id}/revisions")).json()["data"]
     assert len(revs) == 1
     assert revs[0]["source"] == "agent"

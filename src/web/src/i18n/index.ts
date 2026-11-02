@@ -278,8 +278,10 @@ export const zh = {
     requiredAll: '所有配置项均为必填',
   },
   subagents: {
-    /** v1028：顶部提示改为启用/停用按钮的悬浮说明 */
-    enableHint: '子代理供主代理按需委派（策划 / 撰写 / 润色 / 连贯性 / 资料检索）；停用后主代理不再委派。',
+    /** v1028：顶部提示改为启用/停用按钮的悬浮说明；★v1102 更新为 4 个内置子代理口径 */
+    enableHint: '子代理供主代理按需委派（策划 Planner / 撰写 Writer / 审查 Reviewer / 资料检索 Web_Searcher）；停用后主代理不再委派。',
+    /** ★v1102（SubAgents(4)）：新建弹窗名称输入框下方的小红字提示 */
+    nameDupHint: '尽量不要与内置子代理功能重复',
     enabledLabel: '启用',
     disabledLabel: '停用',
     resetDefault: '恢复默认',
@@ -307,8 +309,10 @@ export const zh = {
     nameLabel: '名称',
     descLabel: '描述',
     bodyLabel: '技能正文',
-    view: '查看',
     edit: '编辑',
+    /** ★v1102：启用开关悬浮说明 + 停用标签（去掉「查看」按钮） */
+    enableHint: '停用后该技能不可被主 Agent 调用，也不可被子代理绑定使用（内置基础工具始终启用）。',
+    disabledTag: '已停用',
     /** v1028：自建技能只包含提示词，正文必填 */
     requiredNameDescBody: '名称、描述、技能正文均为必填',
     deleteConfirm: '删除技能「{name}」会同时移除其物化目录。确定吗？',
@@ -363,7 +367,7 @@ export const zh = {
     copyMessage: '复制',
     usage: '用量：入 {in} / 出 {out}',
     planTitle: '计划',
-    gateStage: '门禁阶段',
+    workflowStage: '流程阶段',
     subagentLane: '子代理',
     fileChanged: 'AI 修改了文件：{path}',
     approvalTitle: '需要你审批',

@@ -45,6 +45,6 @@ async def put_outline(
 async def validate_outline(novel_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """解析校验：归一化一致性、缺失清单、序数与顺序冲突、未登记项、错误行号。
 
-    与 G0 复用同一份 `parse_outline`；校验结果不阻断保存，仅供前端警告条。
+    与 S0 复用同一份 `parse_outline`；校验结果不阻断保存，仅供前端警告条。
     """
     return ok(await story.validate_outline(session, novel_id))

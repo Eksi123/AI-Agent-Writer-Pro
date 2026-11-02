@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     agent_model_call_limit: int = 40
     #: LangGraph 硬上限（recursion_limit）
     agent_recursion_limit: int = 60
-    #: 门禁 G2 单章生成目标字数
+    #: 流程 S2 单章生成目标字数
     agent_word_target: int = 3000
 
     # ---- 业务默认值 ----

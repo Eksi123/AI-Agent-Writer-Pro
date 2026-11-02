@@ -83,10 +83,25 @@ def _loads_list(raw: str | None) -> list[str]:
 
 
 async def seed_builtins(session: AsyncSession) -> int:
-    """播种内置子代理（幂等：已存在的按 name 跳过，不覆盖用户改动）。"""
-    existing = set((await session.execute(select(SubagentConfig.name))).scalars().all())
+    """播种内置子代理（幂等：已存在的按 name 跳过，不覆盖用户改动）。
+
+    ★v1102 自愈清退：is_builtin 但名字已不在出厂目录的行（如旧 editor /
+    continuity-checker / researcher）直接删除——正常路径由 alembic 迁移
+    `a1v1102sub` 清退，这里兜住迁移未跑到的场景（如恢复旧库备份）。
+    """
+    catalog = builtin_subagents()
+    rows = (await session.execute(select(SubagentConfig))).scalars().all()
+    existing = {r.name for r in rows}
+
+    retired = [r for r in rows if r.is_builtin and r.name not in catalog]
+    for row in retired:
+        await session.delete(row)
+    if retired:
+        await session.flush()
+        logger.info("builtin_subagents_retired", names=[r.name for r in retired])
+
     created = 0
-    for name, spec in builtin_subagents().items():
+    for name, spec in catalog.items():
         if name in existing:
             continue
         session.add(
@@ -97,6 +112,10 @@ async def seed_builtins(session: AsyncSession) -> int:
                 system_prompt=spec["system_prompt"],
                 mode=spec.get("mode", "isolated"),
                 skills_json=json.dumps(spec.get("skills") or [], ensure_ascii=False),
+                #: 按职能预配的默认内置工具（read/write/edit/list/grep/glob/web_search 子集）
+                tools_json=json.dumps(spec.get("tools") or [], ensure_ascii=False)
+                if spec.get("tools")
+                else None,
                 enabled=True,
                 is_builtin=True,
             )
@@ -247,8 +266,10 @@ async def reset_builtin(session: AsyncSession, pk: str) -> dict[str, Any]:
     row.system_prompt = spec["system_prompt"]
     row.mode = spec.get("mode", "isolated")
     row.skills_json = json.dumps(spec.get("skills") or [], ensure_ascii=False)
-    #: v1028：恢复默认时一并清除自定义工具勾选
-    row.tools_json = None
+    #: 恢复默认时一并恢复按职能预配的默认工具集
+    row.tools_json = (
+        json.dumps(spec.get("tools") or [], ensure_ascii=False) if spec.get("tools") else None
+    )
     row.model_ref = None
     row.enabled = True
     row.updated_at = utcnow()

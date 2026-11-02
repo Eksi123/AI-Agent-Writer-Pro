@@ -23,13 +23,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.llm.factory import (
+from app.agent.loop.llm.factory import (
     build_chat_model,
     get_fallback_chain,
     invalidate_model_cache,
     provider_key_status,
 )
-from app.agent.tracing import reset_client
+from app.agent.more.langfuse import reset_client
 from app.core.config import current_config_version, get_settings, reload_settings
 from app.core.errors import BadRequestError, LlmProviderError, NotFoundError
 from app.core.logging import get_logger

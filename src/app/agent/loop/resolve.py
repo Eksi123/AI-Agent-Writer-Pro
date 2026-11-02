@@ -7,7 +7,7 @@
 说明: 运行前的解析：主模型与降级链、上下文窗口、Langfuse 回调、前情提要 provider、
     会话级子代理/技能上下文（手册「二、(1)」「三、(3) 输入窗口」）。
 
-    普通运行与门禁运行共用；从 runner 拆出以隔离「装配前解析」与「run 生命周期」两类职责。
+    普通运行与固定流程运行共用；从 runner 拆出以隔离「装配前解析」与「run 生命周期」两类职责。
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.knowledge import build_pinned_chapters, build_recap
-from app.agent.llm.factory import get_chat_model, get_default_chat_model, get_fallback_chain
-from app.agent.tracing import build_callback_handler
+from app.agent.loop.knowledge import build_pinned_chapters, build_recap
+from app.agent.loop.llm.factory import get_chat_model, get_default_chat_model, get_fallback_chain
+from app.agent.more.langfuse import build_callback_handler
 from app.core.logging import get_logger
 from app.db.models import AgentSession, SubagentConfig
 from app.db.session import session_scope
@@ -100,7 +100,8 @@ async def session_context_of(db: AsyncSession, session_id: str) -> tuple[set[str
     """读会话级子代理/技能选择，把 id 解析为 name（空集 = 用全局默认，不额外过滤）。
 
     - 子代理 id → `subagent_configs.name`；
-    - 技能 id 可为 DB uuid（用户技能 → name）或 `builtin:{name}`（内置技能 → name）。
+    - 技能 id → `skill_configs.name`（技能 = 用户自建；历史数据里的 `builtin:{name}`
+      前缀 id 已随包内技能目录移除而失效，解析时静默跳过）。
     """
 
     sess = await db.get(AgentSession, session_id)
@@ -127,16 +128,13 @@ async def session_context_of(db: AsyncSession, session_id: str) -> tuple[set[str
         sub_names = set(rows)
 
     skill_names: set[str] = set()
-    for sid in skill_ids:
-        if sid.startswith("builtin:"):
-            skill_names.add(sid.split(":", 1)[1])
-        else:
-            from app.db.models import SkillConfig
+    real_ids = [sid for sid in skill_ids if not sid.startswith("builtin:")]
+    if real_ids:
+        from app.db.models import SkillConfig
 
-            name = (
-                await db.execute(select(SkillConfig.name).where(SkillConfig.id == sid))
-            ).scalar_one_or_none()
-            if name:
-                skill_names.add(name)
+        rows = (
+            await db.execute(select(SkillConfig.name).where(SkillConfig.id.in_(real_ids)))
+        ).scalars().all()
+        skill_names = set(rows)
 
     return sub_names, skill_names

@@ -262,7 +262,7 @@ async def rebuild_summaries(session: AsyncSession, project_id: str) -> dict[str,
     # ① 摘要生成（尽力而为：无模型/失败只记录，不抛）
     summarize_note = "未生成（正文过短或缺少可用模型时跳过）"
     try:
-        from app.agent.knowledge import summarize_all_chapters
+        from app.agent.loop.knowledge import summarize_all_chapters
 
         result_summary = await summarize_all_chapters(session, project_id)
         await session.commit()

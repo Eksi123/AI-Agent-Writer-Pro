@@ -24,8 +24,8 @@ from tests.test_agent_e2e import (
     _setup_provider_model,
 )
 
-from app.agent.llm.factory import register_model_override
 from app.agent.loop.builder import build_agent, load_subagent_specs
+from app.agent.loop.llm.factory import register_model_override
 from app.core.config import get_settings
 from app.db.base import new_id
 from app.db.models import LlmModel, LlmProvider
@@ -68,13 +68,14 @@ class TestSubagentAssembly:
 
         specs = await load_subagent_specs(session)
         names = {s["name"] for s in specs}
-        assert {"planner", "writer", "editor", "continuity-checker", "researcher"} <= names
+        # ★v1102：4 个内置子代理
+        assert {"planner", "writer", "reviewer", "web-searcher"} <= names
 
         novel = (await client.post("/api/v1/novels", json={"title": "子代理装配书"})).json()["data"]
         fake = ScriptedFakeChatModel(responses=[AIMessage(content="ok")])
         async with get_sessionmaker()() as db:
             agent = await build_agent(db, project_id=novel["id"], model=fake, subagents_enabled=True)
-        assert set(agent["subagent_names"]) >= {"planner", "writer", "editor"}
+        assert set(agent["subagent_names"]) >= {"planner", "writer", "reviewer"}
 
     async def test_disabled_subagent_excluded(self, client, session):
 

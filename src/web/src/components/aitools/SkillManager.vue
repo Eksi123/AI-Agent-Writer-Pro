@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /**
- * 写作技能管理（v1028）：内置工具（只读）+ 用户自建（CRUD）。
+ * 写作技能管理（★v1102 架构优化 Tools(3)）：内置基础工具（只读置灰）+ 用户自建（CRUD）。
  *
- * v1028 变更：
- * - 删除顶部提示语与「重新物化」按钮；
- * - 内置项改为展示 Agent 基础工具 read / edit / list / grep / glob / web_search（不展示描述）；
- * - 每条技能右侧显示「查看」「编辑」，内置工具两项均置灰；
- * - 新建弹窗：无顶部标题；「技能名」→「名称」；描述/正文删除输入框提示；
- *   技能正文必填；删除 allowed-tools 与启用开关（自建技能只包含提示词）。
+ * v1102 变更：
+ * - 技能 = 用户自建：包内不再随包携带写作技能目录，列表只有「内置工具 + 自建技能」两类；
+ * - 所有技能都有「启用」设置（自建可切换、内置工具置灰恒启用）；
+ * - 去掉「查看」按钮；用户自建技能有「删除」；三个设置顺序 = 启用、编辑、删除；
+ * - 未启用的自建技能不可被主 Agent 调用、不可被子代理绑定（后端装配过滤）。
+ *
+ * v1028 保留：新建弹窗无顶部标题；技能正文必填；自建技能只包含提示词。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -24,10 +25,8 @@ const sortedSkills = computed(() =>
 )
 
 const dialogVisible = ref(false)
-const previewVisible = ref(false)
 const saving = ref(false)
 const editing = ref<SkillDto | null>(null)
-const previewing = ref<SkillDto | null>(null)
 const form = reactive({
   name: '',
   description: '',
@@ -55,6 +54,18 @@ async function load(): Promise<void> {
   }
 }
 
+/** 启用开关：仅用户自建技能可切换；内置工具置灰恒启用 */
+async function toggleEnabled(s: SkillDto, enabled: boolean): Promise<void> {
+  if (s.is_builtin) return
+  try {
+    await configApi.updateSkill(s.id, { enabled })
+    await load()
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+    await load()
+  }
+}
+
 onMounted(load)
 
 function extractBody(contentMd: string): string {
@@ -70,11 +81,6 @@ function openDialog(s?: SkillDto): void {
   form.description = s && !s.is_builtin ? s.description : ''
   form.body = s && !s.is_builtin ? extractBody(s.content_md) : ''
   dialogVisible.value = true
-}
-
-function preview(s: SkillDto): void {
-  previewing.value = s
-  previewVisible.value = true
 }
 
 async function save(): Promise<void> {
@@ -135,27 +141,40 @@ async function remove(s: SkillDto): Promise<void> {
           <el-tag size="small" :type="s.is_builtin ? 'info' : 'success'" effect="plain">
             {{ s.is_builtin ? t('skills.builtin') : t('skills.custom') }}
           </el-tag>
-          <el-tag v-if="!s.is_builtin && !s.enabled" size="small" type="info" effect="plain">
-            已停用
+          <el-tag v-if="!s.enabled" size="small" type="info" effect="plain">
+            {{ t('skills.disabledTag') }}
           </el-tag>
         </div>
 
+        <!-- 三个设置固定顺序 = 启用、编辑、删除（去掉「查看」）。
+             内置工具（kind=tool）启用与编辑均置灰不可改；自建技能三项全可用。 -->
         <div class="row">
-          <!-- v1028：查看 / 编辑；内置工具两项均置灰 -->
-          <el-button size="small" text :disabled="s.is_builtin" @click="preview(s)">
-            {{ t('skills.view') }}
-          </el-button>
+          <el-tooltip :content="t('skills.enableHint')" placement="top" :show-after="200">
+            <span class="switch-wrap">
+              <el-switch
+                :model-value="s.enabled"
+                size="small"
+                :disabled="s.kind === 'tool'"
+                @change="toggleEnabled(s, Boolean($event))"
+              />
+              <span class="switch-label">
+                {{ s.enabled ? t('subagents.enabledLabel') : t('subagents.disabledLabel') }}
+              </span>
+            </span>
+          </el-tooltip>
+
           <el-button size="small" plain :disabled="s.is_builtin" @click="openDialog(s)">
             {{ t('skills.edit') }}
           </el-button>
+
           <el-button v-if="!s.is_builtin" size="small" type="danger" plain @click="remove(s)">
             {{ t('common.delete') }}
           </el-button>
         </div>
       </div>
 
-      <!-- v1028：内置工具不展示描述 -->
-      <div v-if="!s.is_builtin && s.description" class="desc">{{ s.description }}</div>
+      <!-- 有描述才展示（内置工具带简短描述，自建技能带详情） -->
+      <div v-if="s.description" class="desc">{{ s.description }}</div>
     </div>
 
     <!-- 新建/编辑弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
@@ -180,11 +199,6 @@ async function remove(s: SkillDto): Promise<void> {
           {{ t('common.save') }}
         </el-button>
       </template>
-    </el-dialog>
-
-    <!-- 查看对话框 -->
-    <el-dialog v-model="previewVisible" :title="`SKILL.md · ${previewing?.name ?? ''}`" width="700px">
-      <pre class="skill-preview">{{ previewing?.content_md }}</pre>
     </el-dialog>
   </div>
 </template>
@@ -226,6 +240,19 @@ async function remove(s: SkillDto): Promise<void> {
   gap: 8px;
 }
 
+/* ★v1102：启用开关（与子代理页同款） */
+.switch-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.switch-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .skill-name {
   font-size: 14px;
 }
@@ -242,18 +269,6 @@ async function remove(s: SkillDto): Promise<void> {
 
 .text-sm {
   font-size: 12px;
-}
-
-.skill-preview {
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  padding: 10px;
-  margin: 0;
 }
 </style>
 

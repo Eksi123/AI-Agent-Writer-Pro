@@ -9,7 +9,7 @@
     职责（单一）：创建 run → 起后台任务 → 中断挂起 / 完成 / 失败 / 取消 → 收尾。
     - 事件映射在 `loop/streaming.py`；消息树落库在 `loop/message_sync.py`；
     - 模型与会话上下文解析在 `loop/resolve.py`；收尾与状态工具在 `loop/lifecycle.py`；
-    - 门禁四阶段编排在 `gates/runner.py`。
+    - 流程四阶段编排在 `chapter_workflow/runner.py`。
     （本模块只承担 run 生命周期；其余职责已按上述拆出，避免上帝文件）
 
     - 恢复：`Command(resume=...)` 续跑同一 run（thread_id 不变，seq 续增）
@@ -23,11 +23,8 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.agent.gates.runner import execute_gate_run
 from app.agent.loop.builder import build_agent
 from app.agent.loop.context import AgentContext
-from app.agent.loop.emitter import Emitter
-from app.agent.loop.events import sse_bus
 from app.agent.loop.lifecycle import (
     error_of,
     finalize,
@@ -36,7 +33,6 @@ from app.agent.loop.lifecycle import (
     publish_run_end,
     run_state_conflict,
 )
-from app.agent.loop.message_sync import MessageSyncer
 from app.agent.loop.resolve import (
     attach_langfuse,
     make_recap_provider,
@@ -45,7 +41,11 @@ from app.agent.loop.resolve import (
     session_context_of,
 )
 from app.agent.loop.streaming import interrupt_status, stream_graph
-from app.agent.memory import add_message, history_messages_for_seed
+from app.agent.tracing.messages.message_sync import MessageSyncer
+from app.agent.tracing.messages.tree import add_message, history_messages_for_seed
+from app.agent.tracing.sse.emitter import Emitter
+from app.agent.tracing.sse.events import sse_bus
+from app.agent.workflows.writing_steps.runner import execute_chapter_workflow
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
@@ -105,7 +105,7 @@ class RunManager:
         content: str,
         model_ref: str | None = None,
         parent_id: str | None = None,
-        gate_stage: str = "",
+        workflow_stage: str = "",
         target_chapter_id: str = "",
         hidden_context: str = "",
     ) -> str:
@@ -143,7 +143,7 @@ class RunManager:
                     project_id=project_id,
                     status="pending",
                     model_ref=model_ref or agent_session.model_ref,
-                    gate_stage=gate_stage or None,
+                    workflow_stage=workflow_stage or None,
                     target_chapter_id=target_chapter_id or None,
                     started_at=utcnow(),
                 )
@@ -286,15 +286,15 @@ async def _execute_run(
     user_message_id: str | None,
     resume_value: Any = None,
 ) -> None:
-    """一次运行（新消息 / 中断恢复 / 门禁）。异常一律收敛为 run 状态 + error 事件。"""
+    """一次运行（新消息 / 中断恢复 / 流程）。异常一律收敛为 run 状态 + error 事件。"""
     cancel_flag = run_manager._cancel_flags.setdefault(run_id, {"cancelled": False})
 
-    # 门禁运行分流：target_chapter_id 非空 → 四阶段编排（手册「二、(6)」）
+    # 固定流程运行分流：target_chapter_id 非空 → 四阶段编排（手册「二、(6)」）
     async with session_scope() as db:
         run = await db.get(AgentRun, run_id)
-        is_gate = bool(run is not None and run.target_chapter_id)
-    if is_gate:
-        await execute_gate_run(
+        is_workflow_run = bool(run is not None and run.target_chapter_id)
+    if is_workflow_run:
+        await execute_chapter_workflow(
             run_id=run_id,
             project_id=project_id,
             session_id=session_id,
@@ -367,7 +367,7 @@ async def _execute_run(
             run_id,
             session_id,
             "run.start",
-            {"model_ref": resolved_ref or "", "gate_stage": None, "resumed": resume_value is not None},
+            {"model_ref": resolved_ref or "", "workflow_stage": None, "resumed": resume_value is not None},
         )
 
         stream_input: Any

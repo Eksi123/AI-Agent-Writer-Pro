@@ -112,7 +112,7 @@ function keysOf(s: SubagentDto): string[] {
   const keys: string[] = []
   for (const name of s.tools ?? []) keys.push(`tool:${name}`)
   for (const path of s.skills ?? []) {
-    // 旧数据可能是 /skills/user/xxx 或 /skills/builtin/xxx；只回显自建技能
+    // 技能 = 用户自建（/skills/user/xxx）；历史数据里的 /skills/builtin/xxx 绑定已失效，不回显
     const m = path.startsWith(USER_SKILL_PREFIX) ? path.slice(USER_SKILL_PREFIX.length) : ''
     if (m) keys.push(`skill:${m}`)
   }
@@ -262,6 +262,8 @@ async function resetDefault(s: SubagentDto): Promise<void> {
             :placeholder="t('subagents.namePlaceholder')"
             maxlength="64"
           />
+          <!-- ★v1102（SubAgents(4)）：新建时小红字提示，避免与内置子代理功能重复 -->
+          <div v-if="!editing" class="name-dup-hint">{{ t('subagents.nameDupHint') }}</div>
         </el-form-item>
 
         <el-form-item :label="t('subagents.descLabel')" required>
@@ -394,6 +396,14 @@ async function resetDefault(s: SubagentDto): Promise<void> {
 
 .full {
   width: 100%;
+}
+
+/* ★v1102：新建子代理弹窗，名称下方的小红字提示 */
+.name-dup-hint {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.4;
+  margin-top: 4px;
 }
 
 .select-actions {

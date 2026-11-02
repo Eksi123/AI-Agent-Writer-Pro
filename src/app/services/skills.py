@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
-from app.core.paths import BUILTIN_SKILLS_DIR, session_skills_dir, skills_root
+from app.core.paths import session_skills_dir, skills_root
 from app.db.base import new_id, utcnow
 from app.db.models import SkillConfig
 from app.services import audit
@@ -128,18 +128,19 @@ def _extract_allowed_tools(content_md: str) -> list[str]:
     return [str(x) for x in value] if isinstance(value, list) else []
 
 
+# ---------------------------------------------------------------------------
+# 内置工具（read/edit/list/grep/glob/web_search/write）：UI 只读呈现，启用恒为真
+# ---------------------------------------------------------------------------
+
+
 async def list_skills(
     session: AsyncSession,
     *,
     include_builtin: bool = True,
-    include_builtin_writing: bool = False,
 ) -> list[dict[str, Any]]:
-    """用户自建技能（DB）+ 内置工具（v1028：read/edit/list/grep/glob/web_search，只读呈现）。
+    """用户自建技能（DB，可 CRUD/启停）+ 内置基础工具（只读呈现，启用置灰）。
 
-    `include_builtin_writing=True`（v1030）额外附上包内**写作技能**（novel-planning /
-    prose-writing …）。「AI 工具 → 技能管理」页只关心基础工具，故默认关闭；
-    会话级「工具添加」浮层需要它们（`builtin:{name}` id 由 `session_context_of` 解析、
-    `materialize_session_skills` 从包内目录复制到会话精选目录）。
+    ★技能 = 用户自建：包内不再随包携带写作技能目录，故列表只有两类。
     """
     result: list[dict[str, Any]] = []
 
@@ -150,13 +151,11 @@ async def list_skills(
 
     if include_builtin:
         result.extend(_builtin_skill_dtos())
-    if include_builtin_writing:
-        result.extend(_builtin_writing_dtos())
     return result
 
 
-#: v1028：内置技能 = Agent 基础工具（展示名用文档口径 read/edit/list/grep/glob/web_search，
-#: 值为 deepagents / registry 里的真实工具名；不展示描述，UI 查看/编辑置灰）
+#: 内置基础工具（展示名用文档口径 read/edit/list/grep/glob/web_search/write，
+#: 值为 deepagents FilesystemMiddleware / registry 里的真实工具名；不展示描述，UI 置灰）
 BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "read_file", "label": "read"},
     {"tool": "edit_file", "label": "edit"},
@@ -164,6 +163,8 @@ BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "grep", "label": "grep"},
     {"tool": "glob", "label": "glob"},
     {"tool": "web_search", "label": "web_search"},
+    #: 子代理落盘必备（writer/planner 需要写文件；UI 展示名 write）
+    {"tool": "write_file", "label": "write"},
 ]
 
 #: 真实工具名集合（子代理多选勾选后按此解析为工具实例）
@@ -177,14 +178,14 @@ def _builtin_skill_dtos() -> list[dict[str, Any]]:
             {
                 "id": f"builtin:{item['tool']}",
                 "name": item["label"],
-                "description": "",  # v1028：内置技能不展示描述
+                "description": "",  # 内置工具不展示描述
                 "content_md": "",
                 "allowed_tools": [],
                 "assets": [],
                 "enabled": True,
                 "is_builtin": True,
                 "materialized": True,
-                #: v1030：区分「基础工具」与「包内写作技能」（后者 tool_name 为 None）
+                #: 区分「基础工具」与用户自建技能（后者 tool_name 为 None）
                 "kind": "tool",
                 #: 真实工具名（前端多选勾选后回传，供子代理装配解析）
                 "tool_name": item["tool"],
@@ -193,49 +194,6 @@ def _builtin_skill_dtos() -> list[dict[str, Any]]:
             }
         )
     return out
-
-
-def _builtin_writing_dtos() -> list[dict[str, Any]]:
-    """v1030：包内写作技能（`src/app/agent/skills/{name}/SKILL.md`）只读呈现。
-
-    仅用于会话级「工具添加」浮层：id 形如 `builtin:prose-writing`，
-    `session_context_of` 去掉前缀得到技能名，`materialize_session_skills` 据此复制。
-    """
-    out: list[dict[str, Any]] = []
-    for d in sorted(_builtin_dirs(), key=lambda p: p.name):
-        content = (d / "SKILL.md").read_text(encoding="utf-8") if (d / "SKILL.md").is_file() else ""
-        if not content:
-            logger.warning("builtin_writing_skill_missing", name=d.name)
-            continue
-        out.append(
-            {
-                "id": f"builtin:{d.name}",
-                "name": d.name,
-                "description": _extract_description(content),
-                "content_md": content,
-                "allowed_tools": _extract_allowed_tools(content),
-                "assets": [],
-                "enabled": True,
-                "is_builtin": True,
-                "materialized": True,
-                "kind": "writing",
-                "tool_name": None,
-                "created_at": None,
-                "updated_at": None,
-            }
-        )
-    return out
-
-
-def _extract_description(content_md: str) -> str:
-    m = re.match(r"^---\n(.*?)\n---", content_md, re.S)
-    if not m:
-        return ""
-    try:
-        front = yaml.safe_load(m.group(1)) or {}
-    except yaml.YAMLError:
-        return ""
-    return str(front.get("description") or "")
 
 
 async def create_skill(
@@ -253,10 +211,6 @@ async def create_skill(
     dup = (await session.execute(select(SkillConfig).where(SkillConfig.name == name))).scalar_one_or_none()
     if dup is not None:
         raise BadRequestError(f"技能名已存在：{name}")
-    # 与内置技能同名会在 /skills/user/ 覆盖 /skills/builtin/（deepagents 行为），禁止以免混淆
-    builtin_names = {d.name for d in _builtin_dirs()}
-    if name in builtin_names:
-        raise BadRequestError(f"技能名与内置技能冲突：{name}（用户技能会覆盖同名内置技能）")
 
     content_md = render_skill_md(name, description, body, allowed_tools=allowed_tools)
 
@@ -286,12 +240,6 @@ async def create_skill(
     return _dto(row, materialized=enabled)
 
 
-def _builtin_dirs() -> list[Any]:
-    if not BUILTIN_SKILLS_DIR.is_dir():
-        return []
-    return [d for d in BUILTIN_SKILLS_DIR.iterdir() if d.is_dir()]
-
-
 async def update_skill(session: AsyncSession, pk: str, **fields: Any) -> dict[str, Any]:
     row = await session.get(SkillConfig, pk)
     if row is None:
@@ -310,8 +258,6 @@ async def update_skill(session: AsyncSession, pk: str, **fields: Any) -> dict[st
         ).scalar_one_or_none()
         if dup is not None:
             raise BadRequestError(f"技能名已存在：{name}")
-        if name in {d.name for d in _builtin_dirs()}:
-            raise BadRequestError(f"技能名与内置技能冲突：{name}")
         old_name = row.name
         changes["name"] = {"from": old_name, "to": name}
         unmaterialize_skill(old_name)  # 目录名即技能名，改名要迁移物化目录
@@ -395,12 +341,11 @@ async def resync_materialization(session: AsyncSession) -> dict[str, Any]:
 async def materialize_session_skills(
     session: AsyncSession, session_id: str, skill_names: set[str]
 ) -> int:
-    """把会话选中的技能物化到 `data/session-skills/{session_id}/{name}/SKILL.md`。
+    """把会话选中的**用户自建技能**物化到 `data/session-skills/{session_id}/{name}/SKILL.md`。
 
     手册「三、(3) 输入窗口」：用户可主动添加写作 Skill 作为会话上下文；
     deepagents `skills=` 只接受目录级虚拟路径，故按会话生成精选目录再挂载。
-    内置技能从包内复制，用户技能从 `data/skills/`（或 DB content_md）复制。
-    返回实际物化的技能数。
+    技能均为用户自建（DB content_md / `data/skills/` 物化副本），返回实际物化数。
     """
 
     target_root = session_skills_dir(session_id)
@@ -414,18 +359,13 @@ async def materialize_session_skills(
     user_by_name = {r.name: r for r in rows}
 
     for name in sorted(skill_names):
-        src = BUILTIN_SKILLS_DIR / name / "SKILL.md"
-        content: str | None = None
-        if src.is_file():
-            content = src.read_text(encoding="utf-8")
-        elif name in user_by_name:
-            content = user_by_name[name].content_md
-        if not content:
+        row = user_by_name.get(name)
+        if row is None or not row.enabled:
             logger.warning("session_skill_missing", session_id=session_id, name=name)
             continue
         dest = target_root / name
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / "SKILL.md").write_text(content, encoding="utf-8")
+        (dest / "SKILL.md").write_text(row.content_md, encoding="utf-8")
         count += 1
     logger.info("session_skills_materialized", session_id=session_id, count=count)
     return count

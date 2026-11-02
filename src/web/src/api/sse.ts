@@ -66,7 +66,7 @@ export class SseClient {
       'plan.update',
       'file.changed',
       'context.compact',
-      'gate.update',
+      'workflow.update',
       'consult.request',
       'interrupt.request',
       'usage',

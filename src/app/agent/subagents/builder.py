@@ -6,9 +6,21 @@
 时间: 2026-10-27
 说明: 内置子代理 → deepagents `SubAgent` 装配（手册「二、(3) Sub-agents」）。
 
-    每个子代理可配置模型覆盖（model_ref）、专属提示词、可用技能、上下文模式
-    （mode，默认 isolated；fork 禁用 skills）。`general-purpose` 由 deepagents
-    在传入 subagents 时自动追加。
+    ★v1102（架构优化）：
+    - 内置定义改为 `builtin/{name}/spec.py + prompt.md`（提示词独立文件），
+      由 `builtin/__init__.py` 聚合为 `BUILTIN_SUBAGENTS`；
+    - spec 新增 `label`（UI 展示名）与 `workflows`（固定流程绑定，见 agent/workflows）；
+    - **内置优先**：用户自建子代理与内置同名时，DB 唯一约束直接挡住；功能重叠由
+      UI 红字提示 + 装配顺序（内置在前）保证优先。
+
+    每个子代理可配置模型覆盖（model_ref）、专属提示词、工具白名单、可用技能、
+    上下文模式（mode，默认 isolated；fork 禁用 skills）。
+    `general-purpose` 由 deepagents 在传入 subagents 时自动追加。
+
+    派发语义（手册「二、(3)」，主 Agent ↔ 子 Agent）：
+    主 Agent 统筹决策 → 经 `task` 工具派发子 Agent 任务 → 子 Agent 独立执行
+    （mode=isolated，不继承主 Agent 上下文）→ 结果回传主 Agent 汇总。
+    技能渐进披露：子 Agent 只在需要时自己 `read_file` 读 SKILL.md。
 """
 
 from __future__ import annotations
@@ -77,3 +89,9 @@ def build_subagents(
         result.append(agent)  # type: ignore[arg-type]
 
     return result
+
+
+def workflows_of(name: str) -> list[str]:
+    """子代理绑定的固定流程名（agent/workflows 下的流程；空列表 = 不绑定）。"""
+    spec = BUILTIN_SUBAGENTS.get(name) or {}
+    return list(spec.get("workflows") or [])

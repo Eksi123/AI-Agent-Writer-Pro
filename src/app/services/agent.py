@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.memory import load_tree, set_active_leaf
+from app.agent.tracing.messages import load_tree, set_active_leaf
 from app.core.errors import ApiError, ErrorCode, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
@@ -342,12 +342,12 @@ async def run_dto(session: AsyncSession, run_id: str) -> dict[str, Any]:
         .all()
     )
 
-    gate_result: Any = None
-    if run.gate_result_json:
+    workflow_result: Any = None
+    if run.workflow_result_json:
         try:
-            gate_result = json.loads(run.gate_result_json)
+            workflow_result = json.loads(run.workflow_result_json)
         except ValueError:
-            gate_result = run.gate_result_json
+            workflow_result = run.workflow_result_json
 
     return {
         "id": run.id,
@@ -363,9 +363,9 @@ async def run_dto(session: AsyncSession, run_id: str) -> dict[str, Any]:
         "error": run.error,
         "started_at": run.started_at,
         "ended_at": run.ended_at,
-        "gate_stage": run.gate_stage,
-        "gate_retry_count": run.gate_retry_count,
-        "gate_result": gate_result,
+        "workflow_stage": run.workflow_stage,
+        "workflow_retry_count": run.workflow_retry_count,
+        "workflow_result": workflow_result,
         "target_chapter_id": run.target_chapter_id,
         "interrupts": [_interrupt_dto(i) for i in interrupts],
     }
@@ -604,7 +604,7 @@ async def require_session_of_project(
 # ---------------------------------------------------------------------------
 #
 # 这一组是纯取数逻辑，住在服务层，使 14 个 API 模块取数路径一致（都经 services）；
-# agent 运行层（loop/runner、gates/runner）也复用这里的 `project_word_count`。
+# agent 运行层（loop/runner、chapter_workflow/runner）也复用这里的 `project_word_count`。
 
 
 async def list_sessions(db: AsyncSession, project_id: str | None = None) -> list[dict[str, Any]]:

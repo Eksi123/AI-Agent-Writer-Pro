@@ -15,24 +15,21 @@
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
-import app.agent.tracing as tracing
-from app.agent.loop.builder import SKILL_PATHS, build_middleware_stack
-from app.agent.loop.middleware.workspace_guard import WorkspaceGuardMiddleware
-from app.agent.loop.middleware.write_approval import (
+import app.agent.more.langfuse as tracing
+from app.agent.harness.approval.write_approval import (
     DEFAULT_EDIT_THRESHOLD,
     DEFAULT_OVERWRITE_THRESHOLD,
     _normalize_decision,
     classify_risk,
     virtual_to_host,
 )
-from app.agent.memory import add_message, load_tree, set_active_leaf
-from app.agent.sandbox.backend import BUILTIN_SKILLS_DIR
-from app.agent.sandbox.permissions import PERMISSION_RULES
+from app.agent.harness.guard.workspace_guard import WorkspaceGuardMiddleware
+from app.agent.harness.sandbox.permissions import PERMISSION_RULES
+from app.agent.loop.builder import SKILL_PATHS, build_middleware_stack
 from app.agent.subagents import BUILTIN_SUBAGENTS, build_subagents
+from app.agent.tracing.messages import add_message, load_tree, set_active_leaf
 from app.core.config import get_settings
 from app.core.paths import workspace_dir
 from app.db.base import new_id
@@ -269,8 +266,8 @@ class TestBuilderAssembly:
         assert PERMISSION_RULES[-1][1] == ["/**"] and PERMISSION_RULES[-1][2] == "deny"
 
     def test_skill_paths(self):
-
-        assert SKILL_PATHS == ["/skills/builtin/", "/skills/user/"]
+        # 技能 = 用户自建：只挂 /skills/user/（会话精选由 build_agent 按需追加）
+        assert SKILL_PATHS == ["/skills/user/"]
 
 
 class TestSubagents:
@@ -279,16 +276,28 @@ class TestSubagents:
         agents = build_subagents()
         names = [a["name"] for a in agents]
         assert names == list(BUILTIN_SUBAGENTS.keys())
-        assert set(names) == {"planner", "writer", "editor", "continuity-checker", "researcher"}
+        assert set(names) == {"planner", "writer", "reviewer", "web-searcher"}
         for a in agents:
             assert a["mode"] == "isolated"
             assert a["description"] and a["system_prompt"]
 
-    def test_fork_mode_clears_skills(self):
+    def test_builtin_default_tools_by_role(self):
+        """内置子代理按职能预配默认内置工具（没有工具干不了活）。"""
+        specs = BUILTIN_SUBAGENTS
+        # 写作者/策划需要落盘：read + write + edit
+        for name in ("writer", "planner"):
+            assert {"read_file", "write_file", "edit_file"} <= set(specs[name]["tools"])
+        # 审查者只读
+        assert set(specs["reviewer"]["tools"]) == {"read_file", "ls", "grep", "glob"}
+        # 检索者只有 web_search
+        assert specs["web-searcher"]["tools"] == ["web_search"]
 
+    def test_fork_mode_clears_skills(self):
+        """fork 模式禁用 skills（deepagents 限制）；技能均为用户自建路径。"""
         agents = build_subagents(prompt_overrides={})
-        writer = next(a for a in agents if a["name"] == "writer")
-        assert writer["skills"] == ["/skills/builtin/prose-writing"]
+        for a in agents:
+            for sp in a.get("skills") or []:
+                assert sp.startswith("/skills/user/")
 
     def test_enabled_filter(self):
 
@@ -330,36 +339,35 @@ class TestTracingDegrade:
 
 
 # ---------------------------------------------------------------------------
-# 内置技能合规
+# 内置工具与技能边界（技能 = 用户自建）
 # ---------------------------------------------------------------------------
 
 
-class TestBuiltinSkills:
-    def test_all_skills_have_valid_frontmatter(self):
+class TestBuiltinToolsAndSkills:
+    def test_package_has_no_builtin_skills_dir(self):
+        """包内不再随包携带写作技能目录（tools/builtin 只放内置工具代码）。"""
+        from pathlib import Path
 
+        builtin_dir = Path(__file__).resolve().parents[1] / "src" / "app" / "agent" / "tools" / "builtin"
+        assert not (builtin_dir / "skills").exists()
 
-        name_re = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-        dirs = [d for d in BUILTIN_SKILLS_DIR.iterdir() if d.is_dir()]
-        assert len(dirs) >= 8
+    def test_builtin_tool_dtos(self):
+        """内置工具清单：read/edit/list/grep/glob/web_search/write，展示名与真实名对应。"""
+        from app.services.skills import BUILTIN_TOOL_DTOS, BUILTIN_TOOL_NAMES
 
-        for d in dirs:
-            skill_md = d / "SKILL.md"
-            assert skill_md.exists(), f"{d.name} 缺 SKILL.md"
-            text = skill_md.read_text(encoding="utf-8")
-            m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
-            assert m, f"{d.name} frontmatter 格式错误"
-            fm = m.group(1)
-            name = re.search(r"^name:\s*(.+)$", fm, re.M).group(1).strip()
-            desc = re.search(r"^description:\s*(.+)$", fm, re.M).group(1).strip()
-            # name 必须等于目录名、小写连字符、≤64
-            assert name == d.name, f"{d.name}: name={name} 与目录名不符"
-            assert name_re.match(name) and len(name) <= 64
-            assert 0 < len(desc) <= 1024
-            assert skill_md.stat().st_size < 10 * 1024 * 1024
+        labels = {d["label"] for d in BUILTIN_TOOL_DTOS}
+        assert {"read", "edit", "list", "grep", "glob", "web_search", "write"} <= labels
+        assert "write_file" in BUILTIN_TOOL_NAMES
 
-    def test_subagent_skill_paths_exist(self):
+    def test_subagent_tools_are_known_builtin_tools(self):
+        """内置子代理预配的工具必须都在内置工具清单内（装配别名可解析）。"""
+        from app.agent.loop.builder import _FS_TOOL_ALIASES
+        from app.agent.subagents.builtin import BUILTIN_SUBAGENTS
 
+        known = set(_FS_TOOL_ALIASES)
         for name, spec in BUILTIN_SUBAGENTS.items():
+            unknown = [t for t in (spec.get("tools") or []) if t not in known]
+            assert not unknown, f"{name} 预配了未知工具 {unknown}"
+            # 技能绑定只允许用户自建路径（或为空）
             for sp in spec.get("skills") or []:
-                rel = sp.replace("/skills/builtin/", "")
-                assert (BUILTIN_SKILLS_DIR / rel / "SKILL.md").exists(), f"{name} 引用了不存在的技能 {sp}"
+                assert sp.startswith("/skills/user/"), f"{name} 绑定了非用户技能 {sp}"

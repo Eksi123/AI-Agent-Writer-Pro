@@ -1,17 +1,24 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.tools
 文件名: __init__.py
 作者: xionggaoqing
-时间: 2026-10-27
-说明: Agent 内置工具：只有少量不碰路径的工具（写作业务函数**不注册为工具**）。
+时间: 2026-11-02
+说明: 工具与技能（架构优化：tools 与 skills 合并）。
 
-    - `web_search.py`：联网搜索工具实现（Wikipedia + DuckDuckGo 免 Key 双源，
-      源不可用必须返回**明确错误**而非静默空结果）；
-    - `registry.py`：内置工具装配清单（builder 经 `build_tools()` 取用）。
+    - `builtin/`：**只放内置工具实现**——`web_search.py`（联网搜索）。
+      文件类工具（ls/read_file/write_file/edit_file/delete/glob/grep）由 deepagents
+      FilesystemMiddleware 按 backend + permissions 自动提供，不在本仓库落文件；
+      无随包出厂技能目录（技能 = 用户自建）；
+    - `registry.py`：内置自定义工具装配清单（`build_tools()`，builder 取用；非工具本体）；
+    - `users/`：用户自建技能装载（物化目录 `data/skills/`，经 `/skills/user/` 路由；
+      配置数据在 DB `skill_configs`，由 services/skills 维护）。
+
+    ★边界约定（手册「二、(3)」）：写作业务函数不作为 Agent 工具（下沉为 REST 接口）；
+    Agent 对小说内容的操作一律通过 deepagents 内置文件工具完成。
 """
 
+from app.agent.tools.builtin.web_search import web_search
 from app.agent.tools.registry import build_tools
-from app.agent.tools.web_search import web_search
 
 __all__ = ["build_tools", "web_search"]

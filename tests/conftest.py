@@ -20,9 +20,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.agent.llm.factory import clear_model_overrides
 from app.agent.loop import checkpointer as cp
-from app.agent.loop.events import sse_bus
+from app.agent.loop.llm.factory import clear_model_overrides
+from app.agent.tracing.sse.events import sse_bus
 from app.core.config import get_settings
 from app.core.paths import data_root, workspace_dir
 from app.db.bootstrap import init_database

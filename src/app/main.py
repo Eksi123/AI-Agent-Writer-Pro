@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
 
 
 async def _seed_agent_config() -> None:
-    """播种内置子代理 + 按 DB 状态重新物化用户技能（幂等，失败不阻断启动）。"""
+    """播种内置子代理 + 按 DB 状态重新物化用户技能与启用态内置技能（幂等，失败不阻断启动）。"""
     try:
         from app.db.session import session_scope
         from app.services import skills as skills_service

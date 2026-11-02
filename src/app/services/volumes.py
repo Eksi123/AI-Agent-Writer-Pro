@@ -670,7 +670,7 @@ async def _summarize_after_save(project_id: str, volume_id: str, chapter_id: str
     无可用模型 / 正文过短时 summarize 内部自行跳过。
     """
     try:
-        from app.agent.knowledge.summarize import summarize_chapter
+        from app.agent.loop.knowledge.summarize import summarize_chapter
         from app.db.session import session_scope
 
         async with session_scope() as db:

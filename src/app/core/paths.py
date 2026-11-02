@@ -33,11 +33,6 @@ SUMMARIES_DIR = "summaries"
 NOVEL_META_FILE = "novel.yaml"
 VOLUMES_FILE = "volumes.yaml"
 
-#: 内置技能目录（随包只读，物理位置在 `agent/skills/`）。
-#: 放这里而不是 agent 内：它只是个**路径常量**（目录本体仍在 agent/skills/），
-#: services 与 agent 都要用，下沉到 core 可消除 services → agent 的反向依赖。
-BUILTIN_SKILLS_DIR = Path(__file__).resolve().parents[1] / "agent" / "skills"
-
 
 def data_root() -> Path:
     root = Path(get_settings().data_root).resolve()

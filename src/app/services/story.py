@@ -244,7 +244,7 @@ def _find_vol_by_norm(volumes: list[dict[str, Any]], normalized: str) -> dict[st
 async def validate_outline(session: AsyncSession, project_id: str) -> dict[str, Any]:
     """解析校验：归一化一致性、缺失清单、序数与顺序冲突、未登记项、错误行号。
 
-    与 G0 复用同一份 `parse_outline`，避免两套解析漂移。校验不阻断保存。
+    与 S0 复用同一份 `parse_outline`，避免两套解析漂移。校验不阻断保存。
     """
 
     await novels.get_novel(session, project_id)

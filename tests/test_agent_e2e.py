@@ -20,8 +20,8 @@ import pytest
 from langchain_core.messages import AIMessage
 from tests.fake_model import ScriptedFakeChatModel
 
-from app.agent.llm.factory import register_model_override
-from app.agent.loop.events import sse_bus
+from app.agent.loop.llm.factory import register_model_override
+from app.agent.tracing.sse.events import sse_bus
 
 
 async def _setup_provider_model(client, *, model_id: str = "fake-model") -> tuple[str, str]:

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 咨询卡片（consult.request 事件，M4 门禁使用；M3 先落地组件与契约）。
+ * 咨询卡片（consult.request 事件，M4 流程使用；M3 先落地组件与契约）。
  * 选项按钮 + 自由输入框；decision=option|text 走同一 resolve 接口。
  */
 import { computed, ref } from 'vue'
@@ -52,7 +52,7 @@ async function submitText(): Promise<void> {
   <div class="consult-card">
     <div class="card-head">
       <el-tag type="primary" size="small">{{ t('agent.consultTitle') }}</el-tag>
-      <el-tag v-if="consult.gateStage" size="small" type="info">{{ consult.gateStage }}</el-tag>
+      <el-tag v-if="consult.workflowStage" size="small" type="info">{{ consult.workflowStage }}</el-tag>
     </div>
 
     <div class="question">{{ consult.question }}</div>

@@ -20,7 +20,7 @@ from collections import deque
 
 import pytest
 
-from app.agent.loop.events import RunStream, SseBus, SseEvent
+from app.agent.tracing.sse.events import RunStream, SseBus, SseEvent
 from app.core.config import get_settings
 
 

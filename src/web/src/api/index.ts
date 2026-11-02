@@ -317,9 +317,9 @@ export interface SkillDto {
   enabled: boolean
   is_builtin: boolean
   materialized: boolean
-  /** v1030：内置项类型 —— `tool`=Agent 基础工具，`writing`=包内写作技能；用户自建为空 */
+  /** 内置项类型 —— `tool`=Agent 基础工具（只读置灰）；用户自建技能为 `writing` */
   kind?: 'tool' | 'writing'
-  /** v1028：内置技能对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search）；写作技能为 null */
+  /** 内置工具对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search/write_file）；自建技能为 null */
   tool_name?: string | null
   created_at?: string | null
   updated_at?: string | null
@@ -346,9 +346,8 @@ export const configApi = {
 
   resetSubagent: (id: string) => post<SubagentDto>(`/subagents/${id}/reset`),
 
-  /** `includeWriting=true`（v1030）额外返回包内写作技能，供会话级「工具添加」浮层勾选 */
-  listSkills: (includeWriting = false) =>
-    get<SkillDto[]>('/skills', { params: { include_writing: includeWriting } }),
+  /** 技能 = 用户自建；接口返回自建技能 + 内置工具（kind=tool 为 Agent 基础工具，只读展示） */
+  listSkills: () => get<SkillDto[]>('/skills'),
 
   createSkill: (payload: {
     name: string
@@ -462,7 +461,7 @@ export const agentApi = {
   getMessages: (id: string) => get<MessageTree>(`/agent/sessions/${id}/messages`),
 
   /** 发消息 → 202 + {run_id}；事件走 streamUrl(run_id)
-   * ★v1101：active_chapter_id = 用户当前编辑/阅读的章（门禁意图检测的目标章回落）；
+   * ★v1101：active_chapter_id = 用户当前编辑/阅读的章（流程意图检测的目标章回落）；
    * hidden_context = 隐藏上下文（润色提示词），随本轮送给模型但不入消息树不展示 */
   postMessage: (
     id: string,

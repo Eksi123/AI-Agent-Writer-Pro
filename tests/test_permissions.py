@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.agent.loop.middleware.workspace_guard import _TOOL_OPERATION, WorkspaceGuardMiddleware
-from app.agent.sandbox.permissions import PERMISSION_RULES, build_permissions
+from app.agent.harness.guard.workspace_guard import _TOOL_OPERATION, WorkspaceGuardMiddleware
+from app.agent.harness.sandbox.permissions import PERMISSION_RULES, build_permissions
 
 PID = "p" * 36
 OTHER = "o" * 36
@@ -90,14 +90,14 @@ class TestGuardPathMatrix:
     def test_other_project_read_allow(self, guard):
         assert guard.check_path(f"/projects/{OTHER}/novel.yaml", "read", PID) is None
 
-    # 规则 4：/skills/** 读通过
-    @pytest.mark.parametrize("path", ["/skills/builtin/prose-writing/SKILL.md", "/skills/user/my-skill/SKILL.md"])
+    # 规则 4：/skills/** 读通过（技能 = 用户自建）
+    @pytest.mark.parametrize("path", ["/skills/user/my-skill/SKILL.md", "/skills/user/x/y.md"])
     def test_skills_read_allow(self, guard, path):
         assert guard.check_path(path, "read", PID) is None
 
-    # 规则 5：/skills/** 写被拒
+    # 规则 5：/skills/** 写被拒（技能由服务层维护）
     def test_skills_write_denied(self, guard):
-        result = guard.check_path("/skills/builtin/prose-writing/SKILL.md", "write", PID)
+        result = guard.check_path("/skills/user/my-skill/SKILL.md", "write", PID)
         assert result is not None and "只读" in result
 
     # 规则 6/7：卸载区读写通过
@@ -122,7 +122,7 @@ class TestGuardPathMatrix:
         [
             f"/projects/{PID}/../{OTHER}/novel.yaml",
             "/projects/../../etc/passwd",
-            "/skills/builtin/../../workspaces/x/novel.yaml",
+            "/skills/user/../../workspaces/x/novel.yaml",
         ],
     )
     def test_dotdot_rejected(self, guard, path):

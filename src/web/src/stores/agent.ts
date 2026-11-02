@@ -37,13 +37,13 @@ export interface PendingInterrupt {
   reason?: string
 }
 
-/** 待决咨询卡片（M4 门禁使用） */
+/** 待决咨询卡片（M4 流程使用） */
 export interface PendingConsult {
   interruptId: string
   question: string
   options: { value: string; label: string }[] | string[]
   allowText: boolean
-  gateStage?: string
+  workflowStage?: string
 }
 
 /**
@@ -109,11 +109,11 @@ export const useAgentStore = defineStore('agent', () => {
   const fileChanged = ref<{ path: string; chapterId: string | null; kind: string; at: number } | null>(null)
   /** 计划待办（plan.update） */
   const todos = ref<{ content: string; status: string }[]>([])
-  /** 门禁状态（gate.update，M4） */
-  const gateStage = ref<string | null>(null)
-  const gateRetryCount = ref(0)
-  const gateG1Skipped = ref(false)
-  const gateResults = ref<Record<string, string>>({})
+  /** 流程状态（workflow.update，M4） */
+  const workflowStage = ref<string | null>(null)
+  const workflowRetryCount = ref(0)
+  const workflowPrecheckSkipped = ref(false)
+  const workflowResults = ref<Record<string, string>>({})
   /** 子代理泳道 */
   const activeSubagents = ref<string[]>([])
   /** 最近一次运行的用量 */
@@ -303,8 +303,8 @@ export const useAgentStore = defineStore('agent', () => {
     pendingConsult.value = null
     streaming.value = []
     todos.value = []
-    gateStage.value = null
-    gateResults.value = {}
+    workflowStage.value = null
+    workflowResults.value = {}
     pendingUserMessage.value = null
   }
 
@@ -323,10 +323,10 @@ export const useAgentStore = defineStore('agent', () => {
     pendingConsult.value = null
     streaming.value = []
     todos.value = []
-    gateStage.value = null
-    gateRetryCount.value = 0
-    gateG1Skipped.value = false
-    gateResults.value = {}
+    workflowStage.value = null
+    workflowRetryCount.value = 0
+    workflowPrecheckSkipped.value = false
+    workflowResults.value = {}
     pendingUserMessage.value = null
     // v1029：先清零（→ 剩余 100%），再按该会话最近一次 run 还原真实占用；
     // 全新会话没有任何 run，还原结果仍是 0，故「新会话回到 100%」自然成立。
@@ -359,7 +359,7 @@ export const useAgentStore = defineStore('agent', () => {
               question: String(payload.question ?? ''),
               options: (payload.options as PendingConsult['options']) ?? [],
               allowText: Boolean(payload.allow_text ?? true),
-              gateStage: payload.gate_stage as string | undefined,
+              workflowStage: payload.workflow_stage as string | undefined,
             }
           }
         }
@@ -440,13 +440,13 @@ export const useAgentStore = defineStore('agent', () => {
     clearError()
     // v1030续(1)：乐观回显——发出的用户消息立即出现在会话里（run 收尾刷新后替换）
     // ★v1101：记下发送时刻；并带上「当前正在编辑/阅读的章」——
-    // 后端意图检测命中且消息未点名章节时，用它作门禁目标章
+    // 后端意图检测命中且消息未点名章节时，用它作流程目标章
     pendingUserMessage.value = { content, sentAt: new Date().toISOString() }
     try {
       const { run_id: runId } = await agentApi.postMessage(currentSessionId.value, {
         content,
         model_ref: modelRef,
-        active_chapter_id: activeChapterIdForGate() || undefined,
+        active_chapter_id: activeChapterIdForWorkflow() || undefined,
         // ★v1101：隐藏上下文（润色提示词）随本轮送给模型，不入消息树不展示
         hidden_context: hiddenContext || undefined,
       })
@@ -468,15 +468,15 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   /**
-   * ★v1101：当前正在编辑/阅读的章 id（供后端门禁意图检测作目标章回落）。
+   * ★v1101：当前正在编辑/阅读的章 id（供后端流程意图检测作目标章回落）。
    * 编辑模式看 editor store，阅读模式看 reader store 的当前章。
    */
-  function activeChapterIdForGate(): string | null {
+  function activeChapterIdForWorkflow(): string | null {
     if (useEditorStore().chapterId) return useEditorStore().chapterId
     return useReaderStore().activeChapterId ?? null
   }
 
-  /** ★v1101：删除[生成本章]按钮——门禁改由用户消息意图触发（后端检测） */
+  /** ★v1101：删除[生成本章]按钮——流程改由用户消息意图触发（后端检测） */
 
   /** ★v1031：删除[重新生成]功能（store 侧 regenerate 一并移除） */
 
@@ -566,13 +566,13 @@ export const useAgentStore = defineStore('agent', () => {
       case 'plan.update':
         todos.value = (data.todos as { content: string; status: string }[]) ?? []
         break
-      case 'gate.update':
-        gateStage.value = (data.gate_stage as string) ?? null
-        gateResults.value = {
-          ...gateResults.value,
-          [String(data.gate_stage ?? '')]: String(data.gate_result ?? ''),
+      case 'workflow.update':
+        workflowStage.value = (data.workflow_stage as string) ?? null
+        workflowResults.value = {
+          ...workflowResults.value,
+          [String(data.workflow_stage ?? '')]: String(data.workflow_result ?? ''),
         }
-        gateRetryCount.value = Number(data.retry_count ?? gateRetryCount.value)
+        workflowRetryCount.value = Number(data.retry_count ?? workflowRetryCount.value)
         break
       case 'file.changed':
         fileChanged.value = {
@@ -613,7 +613,7 @@ export const useAgentStore = defineStore('agent', () => {
           question: String(data.question ?? ''),
           options: (data.options as PendingConsult['options']) ?? [],
           allowText: Boolean(data.allow_text ?? true),
-          gateStage: data.gate_stage as string | undefined,
+          workflowStage: data.workflow_stage as string | undefined,
         }
         break
       case 'error':
@@ -729,10 +729,10 @@ export const useAgentStore = defineStore('agent', () => {
     clearError,
     fileChanged,
     todos,
-    gateStage,
-    gateRetryCount,
-    gateG1Skipped,
-    gateResults,
+    workflowStage,
+    workflowRetryCount,
+    workflowPrecheckSkipped,
+    workflowResults,
     activeSubagents,
     lastUsage,
     usage,

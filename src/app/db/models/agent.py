@@ -85,7 +85,7 @@ class ToolCallLog(Base):
 
 
 class AgentRun(Base):
-    """一次「用户发消息 → Agent 跑完」的运行（含门禁字段）。"""
+    """一次「用户发消息 → Agent 跑完」的运行（含流程字段）。"""
 
     __tablename__ = "agent_runs"
     __table_args__ = (Index("ix_agent_runs_session", "session_id", "started_at"),)
@@ -104,16 +104,16 @@ class AgentRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[str] = mapped_column(String(32), nullable=False, default=utcnow)
     ended_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    #: G0|G1|G2|G3|NULL（非生成类运行为空）
-    gate_stage: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    gate_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    gate_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: 门禁生成目标章（gate 运行专用）
+    #: S0|S1|S2|S3|NULL（非生成类运行为空）
+    workflow_stage: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    workflow_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    workflow_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 流程生成目标章（固定流程运行专用）
     target_chapter_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class AgentInterrupt(Base):
-    """中断：approval（工具审批）| consult（门禁咨询卡片）。"""
+    """中断：approval（工具审批）| consult（流程咨询卡片）。"""
 
     __tablename__ = "agent_interrupts"
     __table_args__ = (Index("ix_agent_interrupts_run", "run_id", "decided_at"),)
