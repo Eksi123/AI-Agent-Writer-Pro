@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import pytest
-from tests.conftest import workspace_of
+from conftest import workspace_of
 
 from app.services.outline import normalize_title, parse_outline
 

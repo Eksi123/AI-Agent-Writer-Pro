@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.db.base
 文件名: base.py
@@ -12,17 +12,21 @@
     - JSON 列命名统一 `*_json`，存 TEXT；
     - 枚举以 TEXT + 应用层校验实现；
     - 连接建立时 `PRAGMA foreign_keys=ON`。
+    
+    注意：ID 生成和时间处理工具已迁移到 app.utils，此处保留向后兼容性导出。
 """
 
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import MetaData, String, event
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# 从 utils 导入工具函数（保持向后兼容）
+from app.utils.id import new_id, short_id
+from app.utils.time import utcnow, parse_ts
 
 #: 命名约定（Alembic autogenerate 稳定生成约束名）
 NAMING_CONVENTION = {
@@ -36,35 +40,6 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
-
-
-def new_id() -> str:
-    """应用层生成主键（uuid4 字符串）。"""
-    return str(uuid.uuid4())
-
-
-def short_id(existing: set[str] | None = None) -> str:
-    """卷 / 章短 ID：uuid 前 8 位；冲突时重取。一旦生成**永不改变**（铁律 10）。"""
-    taken = existing or set()
-    while True:
-        candidate = uuid.uuid4().hex[:8]
-        if candidate not in taken:
-            return candidate
-
-
-def utcnow() -> str:
-    """UTC ISO-8601 文本（`YYYY-MM-DDTHH:MM:SS.sssZ`）。"""
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def parse_ts(value: str | None) -> datetime | None:
-    """把库内时间戳解析回 datetime（容错：解析失败返回 None 而不抛）。"""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 class TimestampMixin:

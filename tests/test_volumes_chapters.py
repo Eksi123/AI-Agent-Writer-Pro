@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import frontmatter
 import pytest
-from tests.conftest import workspace_of
+from conftest import workspace_of
 
 from app.main import app
 from app.services import volumes as volumes_service

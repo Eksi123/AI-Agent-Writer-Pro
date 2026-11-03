@@ -19,7 +19,7 @@ from __future__ import annotations
 import shutil
 
 import pytest
-from tests.conftest import data_root_of, workspace_of
+from conftest import data_root_of, workspace_of
 
 from app.core.errors import NotFoundError
 from app.db.session import get_sessionmaker

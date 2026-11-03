@@ -11,7 +11,9 @@
 
 services:
   app:
-    build: .
+    build:
+      context: ../../
+      dockerfile: src/deploy/Dockerfile
     container_name: ai-writer-pro
     ports:
       - "127.0.0.1:8000:8000"   # 单用户本地应用：默认只绑回环；局域网访问改为 "8000:8000"

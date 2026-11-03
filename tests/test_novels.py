@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 import yaml
 from sqlalchemy import select
-from tests.conftest import workspace_of
+from conftest import workspace_of
 
 from app.core.paths import logs_root, trash_root
 from app.db.models import AuditLog

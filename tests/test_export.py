@@ -253,3 +253,103 @@ async def test_calibre_detection_is_bool(client):
     data = (await client.get("/api/v1/health")).json()["data"]
     assert isinstance(data["calibre_available"], bool)
     assert data["fts5_available"] is True
+
+
+# ---------------------------------------------------------------------------
+# 导出预检 (from test_workflows.py)
+# ---------------------------------------------------------------------------
+
+from app.agent.workflows.novel_export.preflight import run_export_preflight
+
+
+class TestExportPreflight:
+    async def test_no_chapters_blocks(self, client, session, novel_id):
+        result = await run_export_preflight(session, novel_id, "epub")
+        assert result["passed"] is False
+        assert any(c["code"] == "no_chapters" for c in result["checks"])
+
+    async def test_empty_and_draft_warnings(self, client, session, novel_id, chapter_id):
+        result = await run_export_preflight(session, novel_id, "markdown")
+        assert result["passed"] is True  # 只有警告，无阻断
+        codes = {c["code"] for c in result["checks"]}
+        # fixture 章节正文很短（<50 字）→ short_chapters；未定稿 → draft_chapters
+        assert "short_chapters" in codes or "empty_chapters" in codes
+
+    async def test_mobi_without_calibre_blocks(self, client, session, novel_id, chapter_id, monkeypatch):
+        import app.services.exporters as exporters
+
+        monkeypatch.setattr(exporters, "calibre_available", lambda: False)
+        result = await run_export_preflight(session, novel_id, "mobi")
+        assert result["passed"] is False
+        assert any(c["code"] == "calibre_missing" for c in result["checks"])
+
+    async def test_api_endpoint(self, client, novel_id):
+        resp = await client.get(f"/api/v1/novels/{novel_id}/export-preflight", params={"format": "epub"})
+        assert resp.json()["code"] == 0
+        assert "passed" in resp.json()["data"]
+
+
+# ---------------------------------------------------------------------------
+# 全书一致性审查 (from test_workflows.py)
+# ---------------------------------------------------------------------------
+
+from langchain_core.messages import AIMessage
+
+
+class TestBookConsistencyAudit:
+    async def test_skipped_without_model(self, client, session, novel_id, chapter_id):
+        """有章节但未配置模型 → skipped（带 reason，不抛错）。"""
+        from app.agent.workflows.book_consistency.audit import run_book_consistency_audit
+
+        result = await run_book_consistency_audit(session, novel_id)
+        assert result["status"] == "skipped"
+        assert "未配置可用模型" in result["reason"]
+
+    async def test_skipped_without_chapters(self, client, session, novel_id):
+        """无章节时 skipped（章节检查先于模型解析，无需配模型）。"""
+        from app.agent.workflows.book_consistency.audit import run_book_consistency_audit
+
+        result = await run_book_consistency_audit(session, novel_id)
+        assert result["status"] == "skipped"
+        assert result["reason"] == "尚无章节"
+
+    async def test_audit_with_fake_model(self, client, session, novel_id, volume_id, chapter_id):
+        """假模型返回结构化问题 → 汇总排序 + 报告落盘。"""
+        from fake_model import ScriptedFakeChatModel
+
+        from app.agent.loop.llm.factory import register_model_override
+        from app.agent.workflows.book_consistency.audit import run_book_consistency_audit
+        from app.services.llm import create_model, create_provider
+
+        provider = await create_provider(
+            session, name="审计测试厂商2", type="openai_compatible", api_key_env=None
+        )
+        model = await create_model(
+            session, provider_id=provider["id"], model_id="fake-audit2", is_default=True
+        )
+        fake = ScriptedFakeChatModel(
+            responses=[
+                AIMessage(
+                    content=(
+                        '{"issues": [{"level": "suggestion", "chapter": "拾荒少年的清晨",'
+                        ' "type": "timeline", "detail": "季节描写前后不一", "advice": "统一为初春"}],'
+                        ' "summary": "总体连贯"}'
+                    )
+                )
+            ]
+        )
+        register_model_override(model["model_ref"], fake)
+
+        result = await run_book_consistency_audit(session, novel_id)
+        assert result["status"] == "done"
+        assert result["volumes_checked"] >= 1
+        assert len(result["issues"]) == 1
+        assert result["issues"][0]["type"] == "timeline"
+
+        from app.core.paths import workspace_dir
+
+        report = workspace_dir(novel_id) / "outline" / "consistency-audit.md"
+        assert report.exists()
+        text = report.read_text(encoding="utf-8")
+        assert "一致性审查报告" in text
+        assert "季节描写前后不一" in text

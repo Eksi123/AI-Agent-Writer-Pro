@@ -59,6 +59,7 @@ node_modules/
 .yarn/
 .pnp.*
 .pnpm-store/
+.vite/
 src/web/dist/
 src/web/dist-ssr/
 *.local
@@ -93,6 +94,9 @@ pnpm-debug.log*
 !.vscode/launch.json
 .history/
 
+# ---- MCP ----
+.playwright-mcp/
+
 # ---- 操作系统 ----
 .DS_Store
 .DS_Store?
@@ -105,9 +109,9 @@ desktop.ini
 
 # ---- 临时 / 备份 ----
 *.bak
-# *.tmp
-# *.temp
+*.tmp
+*.temp
 *~
 .cache/
-# temp/
-# tmp/
+temp/
+tmp/

@@ -345,3 +345,69 @@ class TestResolveTarget:
         assert target.target_path == f"/projects/{novel_id}/chapters/v{vol_id}/c{ch_id}.md"
         assert target.volume_title == "第一卷 荒原"
         assert target.chapter_title == "第一章 出山"
+
+
+# ---------------------------------------------------------------------------
+# 流程意图检测 (from test_workflow_intent.py)
+# ---------------------------------------------------------------------------
+
+
+from app.agent.workflows.writing_steps.intent import detect_workflow_target, has_workflow_intent
+
+
+_CHAPTERS = [
+    {"id": "c1", "title": "第一章 出山", "sort_order": 1},
+    {"id": "c2", "title": "第二章 星海", "sort_order": 2},
+    {"id": "c3", "title": "第三章 归途", "sort_order": 3},
+]
+
+
+class TestWorkflowIntent:
+    """测试流程意图识别：哪些用户消息应该触发写作流程"""
+
+    def test_generate_by_outline_hits(self):
+        assert has_workflow_intent("请根据大纲里第二章的章简介生成正文")
+        assert has_workflow_intent("按大纲「第三章 归途」的章简介写本章正文")
+        assert has_workflow_intent("根据大纲生成正文")
+        assert has_workflow_intent("用章简介重写这一章")
+
+    def test_modify_by_outline_hits(self):
+        assert has_workflow_intent("按大纲第二章简介修改正文，多加环境描写")
+        assert has_workflow_intent("根据大纲把本章正文重写一遍")
+
+    def test_plain_chat_not_workflow(self):
+        assert not has_workflow_intent("帮我看看这段文字哪里不通顺")
+        assert not has_workflow_intent("总结一下这本书的主线")
+        assert not has_workflow_intent("写一段开场白给我参考")
+
+    def test_outline_only_edit_not_workflow(self):
+        """只改大纲/简介（不碰正文）→ 不触发流程。"""
+        assert not has_workflow_intent("修改大纲，把第二章简介写详细点")
+        assert not has_workflow_intent("帮我补充第三章的简介")
+        # 但同时提到正文 → 仍算正文意图
+        assert has_workflow_intent("修改大纲简介后，按新简介重写本章正文")
+
+
+class TestDetectWorkflowTarget:
+    """测试工作流目标检测：从用户消息中提取章节信息"""
+
+    def test_explicit_title_wins(self):
+        cid = detect_workflow_target("按大纲「第三章 归途」的章简介生成正文", _CHAPTERS, "c1")
+        assert cid == "c3"
+
+    def test_ordinal_mention(self):
+        cid = detect_workflow_target("根据大纲第二章简介生成正文", _CHAPTERS, "c1")
+        assert cid == "c2"
+        cid = detect_workflow_target("根据大纲第2章简介生成正文", _CHAPTERS, "c1")
+        assert cid == "c2"
+
+    def test_fallback_active_chapter(self):
+        cid = detect_workflow_target("按大纲生成本章正文", _CHAPTERS, "c2")
+        assert cid == "c2"
+
+    def test_no_target_no_gate(self):
+        """意图命中但既没点名也没当前章 → 不进流程（普通对话）。"""
+        assert detect_workflow_target("按大纲生成正文", _CHAPTERS, None) is None
+
+    def test_no_intent_returns_none(self):
+        assert detect_workflow_target("聊聊人物动机", _CHAPTERS, "c1") is None

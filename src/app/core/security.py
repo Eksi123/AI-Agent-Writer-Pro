@@ -71,10 +71,11 @@ def is_valid_secret_key_name(env_name: str) -> bool:
 
     规则（宽松，满足「没有名称要求限制，可以任意命名」）：
     ① 是合法的环境变量名（字母/下划线开头，仅含字母数字下划线）；
-    ② 不与应用自身的配置键（`Settings` 字段名）冲突——否则会写坏 `.env` 里的配置行。
+    ② 不与应用自身的配置键（`Settings` 字段名）冲突——否则会写坏 `.env` 里的配置行；
+    ③ 长度不超过 64 个字符（合理的实践限制）。
     """
     name = (env_name or "").strip()
-    if not name or not _ENV_NAME_RE.match(name):
+    if not name or len(name) > 64 or not _ENV_NAME_RE.match(name):
         return False
     return name.upper() not in _reserved_config_keys()
 

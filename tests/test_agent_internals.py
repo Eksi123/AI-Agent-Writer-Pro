@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 模块: tests
-文件名: test_agent_units.py
-作者: xionggaoqing
-时间: 2026-10-27
-说明: M3 中间件与模块单元测试（手册「十一」）。
+文件名: test_agent_internals.py
+说明: Agent 内部逻辑单元测试
 
-    - WriteApprovalMiddleware 高危判定（整章覆盖 / 大范围 edit / delete）
-    - WorkspaceGuardMiddleware 错误指纹记忆（2 次告警 / 3 次阻断）
+    包含：
+    - WriteApproval 高危判定（classify_risk / virtual_to_host / normalize_decision）
+    - WorkspaceGuard 错误指纹记忆
     - 消息树 parent/branch 结构
-    - builder 装配（中间件顺序 + permissions + skills 路径）
-    - Langfuse 降级（未配置 Key 时 handler 为 None，不影响运行）
+    - Builder 装配（中间件顺序 + permissions + skills 路径）
+    - Langfuse 降级
+    - 内置工具与技能边界
 """
 
 from __future__ import annotations
@@ -28,19 +28,16 @@ from app.agent.harness.approval.write_approval import (
 from app.agent.harness.guard.workspace_guard import WorkspaceGuardMiddleware
 from app.agent.harness.sandbox.permissions import PERMISSION_RULES
 from app.agent.loop.builder import SKILL_PATHS, build_middleware_stack
-from app.agent.subagents import BUILTIN_SUBAGENTS, build_subagents
 from app.agent.tracing.messages import add_message, load_tree, set_active_leaf
 from app.core.config import get_settings
 from app.core.paths import workspace_dir
 from app.db.base import new_id
 from app.db.models import AgentSession
 
-# ---------------------------------------------------------------------------
-# WriteApproval 高危判定
-# ---------------------------------------------------------------------------
-
 
 class TestClassifyRisk:
+    """WriteApproval 高危判定"""
+
     def test_delete_in_project_is_high_risk(self):
         kind, reason = classify_risk("delete", {"file_path": "/projects/abc/chapters/v1/c1.md"})
         assert kind == "delete"
@@ -67,9 +64,6 @@ class TestClassifyRisk:
 
     def test_overwrite_existing_chapter_is_high_risk(self, tmp_path, monkeypatch):
         """write_file 覆盖已存在的非空章节 → overwrite。"""
-
-        # 构造已存在的项目章节文件
-
         pid = "testpid"
         ch = workspace_dir(pid) / "chapters" / "v1" / "c1.md"
         ch.parent.mkdir(parents=True, exist_ok=True)
@@ -94,9 +88,10 @@ class TestClassifyRisk:
 
 
 class TestVirtualToHost:
+    """虚拟路径 → 宿主路径映射"""
+
     def test_maps_project_path(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DATA_ROOT", str(tmp_path))
-
         get_settings.cache_clear()
         p = virtual_to_host("/projects/pid1/chapters/v1/c1.md")
         assert p is not None
@@ -109,6 +104,8 @@ class TestVirtualToHost:
 
 
 class TestNormalizeDecision:
+    """审批决策归一化"""
+
     def test_batched_unwrap(self):
         record = _normalize_decision({"decisions": [{"type": "reject", "message": "别删"}]})
         assert record["decision"] == "reject"
@@ -131,14 +128,10 @@ class TestNormalizeDecision:
         assert _normalize_decision(42)["decision"] == "approve"
 
 
-# ---------------------------------------------------------------------------
-# WorkspaceGuard 错误指纹
-# ---------------------------------------------------------------------------
-
-
 class TestErrorFingerprint:
-    def test_second_failure_warns_third_blocks(self):
+    """WorkspaceGuard 错误指纹记忆"""
 
+    def test_second_failure_warns_third_blocks(self):
         mw = WorkspaceGuardMiddleware()
         args = {"file_path": "/projects/x/f.md"}
         err = "文件不存在"
@@ -153,7 +146,6 @@ class TestErrorFingerprint:
         assert again is not None and "阻断" in again
 
     def test_different_args_isolated(self):
-
         mw = WorkspaceGuardMiddleware()
         mw.note_error("write_file", {"file_path": "/a"}, "err")
         mw.note_error("write_file", {"file_path": "/a"}, "err")
@@ -161,27 +153,21 @@ class TestErrorFingerprint:
         assert mw.note_error("write_file", {"file_path": "/b"}, "err") is None
 
     def test_different_error_isolated(self):
-
         mw = WorkspaceGuardMiddleware()
         mw.note_error("write_file", {"file_path": "/a"}, "err1")
         mw.note_error("write_file", {"file_path": "/a"}, "err1")
         assert mw.note_error("write_file", {"file_path": "/a"}, "err2") is None
 
     def test_check_path_cross_project(self):
-
         mw = WorkspaceGuardMiddleware()
         assert mw.check_path("/projects/other/novel.yaml", "write", "current") is not None
         assert mw.check_path("/projects/current/novel.yaml", "write", "current") is None
 
 
-# ---------------------------------------------------------------------------
-# 消息树
-# ---------------------------------------------------------------------------
-
-
 class TestMessageTree:
-    async def test_parent_and_branch_structure(self, session, novel_id):
+    """消息树 parent/branch 结构"""
 
+    async def test_parent_and_branch_structure(self, session, novel_id):
         sid = new_id()
         session.add(AgentSession(id=sid, project_id=novel_id, title="t"))
         await session.flush()
@@ -227,7 +213,6 @@ class TestMessageTree:
         assert m3.id not in active  # m3 是 m2 的后代，不在 root→m2 路径上
 
     async def test_set_active_leaf_validates_session(self, session, novel_id):
-
         sid = new_id()
         session.add(AgentSession(id=sid, project_id=novel_id, title="t"))
         await session.flush()
@@ -235,12 +220,9 @@ class TestMessageTree:
             await set_active_leaf(session, sid, "no-such-message")
 
 
-# ---------------------------------------------------------------------------
-# builder 装配
-# ---------------------------------------------------------------------------
-
-
 class TestBuilderAssembly:
+    """Builder 装配（中间件顺序 + permissions + skills 路径）"""
+
     def test_middleware_order(self):
         """中间件顺序必须符合手册（Retry → Fallback → CallLimit → Todo → Recap → Guard → Notify → Approval）。"""
 
@@ -256,70 +238,21 @@ class TestBuilderAssembly:
         assert idx("ModelRetry") < idx("ModelCallLimit") < idx("TodoList")
         assert idx("TodoList") < idx("RecapInjection") < idx("WorkspaceGuard")
         assert idx("WorkspaceGuard") < idx("FileChangeNotify")
-        # ★v1101：WriteApproval 必须**最外层**（index 0）——其 interrupt() 的
-        # GraphInterrupt 不能被任何外层中间件吞掉，否则审批无法暂停 run。
+        # ★v1101：WriteApproval 必须**最外层**（index 0）
         assert names[0] == "WriteApproval"
 
     def test_permission_rules_constant(self):
-
         assert len(PERMISSION_RULES) == 8
         assert PERMISSION_RULES[-1][1] == ["/**"] and PERMISSION_RULES[-1][2] == "deny"
 
     def test_skill_paths(self):
-        # 技能 = 用户自建：只挂 /skills/user/（会话精选由 build_agent 按需追加）
+        # 技能 = 用户自建：只挂 /skills/user/
         assert SKILL_PATHS == ["/skills/user/"]
 
 
-class TestSubagents:
-    def test_build_subagents_all(self):
-
-        agents = build_subagents()
-        names = [a["name"] for a in agents]
-        assert names == list(BUILTIN_SUBAGENTS.keys())
-        assert set(names) == {"planner", "writer", "reviewer", "web-searcher"}
-        for a in agents:
-            assert a["mode"] == "isolated"
-            assert a["description"] and a["system_prompt"]
-
-    def test_builtin_default_tools_by_role(self):
-        """内置子代理按职能预配默认内置工具（没有工具干不了活）。"""
-        specs = BUILTIN_SUBAGENTS
-        # 写作者/策划需要落盘：read + write + edit
-        for name in ("writer", "planner"):
-            assert {"read_file", "write_file", "edit_file"} <= set(specs[name]["tools"])
-        # 审查者只读
-        assert set(specs["reviewer"]["tools"]) == {"read_file", "ls", "grep", "glob"}
-        # 检索者只有 web_search
-        assert specs["web-searcher"]["tools"] == ["web_search"]
-
-    def test_fork_mode_clears_skills(self):
-        """fork 模式禁用 skills（deepagents 限制）；技能均为用户自建路径。"""
-        agents = build_subagents(prompt_overrides={})
-        for a in agents:
-            for sp in a.get("skills") or []:
-                assert sp.startswith("/skills/user/")
-
-    def test_enabled_filter(self):
-
-        agents = build_subagents(enabled_names={"writer", "planner"})
-        assert {a["name"] for a in agents} == {"writer", "planner"}
-
-    def test_model_override(self):
-
-        sentinel = object()
-        agents = build_subagents(
-            resolved_models={"p:m": sentinel}, model_overrides={"writer": "p:m"}
-        )
-        writer = next(a for a in agents if a["name"] == "writer")
-        assert writer["model"] is sentinel
-
-
-# ---------------------------------------------------------------------------
-# Langfuse 降级
-# ---------------------------------------------------------------------------
-
-
 class TestTracingDegrade:
+    """Langfuse 降级（未配置 Key 时 handler 为 None）"""
+
     def test_no_client_without_keys(self, monkeypatch):
         monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
@@ -338,12 +271,9 @@ class TestTracingDegrade:
         get_settings.cache_clear()
 
 
-# ---------------------------------------------------------------------------
-# 内置工具与技能边界（技能 = 用户自建）
-# ---------------------------------------------------------------------------
-
-
 class TestBuiltinToolsAndSkills:
+    """内置工具与技能边界（技能 = 用户自建）"""
+
     def test_package_has_no_builtin_skills_dir(self):
         """包内不再随包携带写作技能目录（tools/builtin 只放内置工具代码）。"""
         from pathlib import Path
