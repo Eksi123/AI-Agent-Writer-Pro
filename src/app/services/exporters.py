@@ -328,21 +328,23 @@ def _manifest_json(title: str, fmt: str, vols: list[ExportVolume], has_outline: 
 
 
 def _write_markdown(zf: zipfile.ZipFile, title: str, vols: list[ExportVolume]) -> None:
-    """markdown：所有章节 md 集合（目录 + 各章独立文件）。"""
+    """markdown：两层目录结构（小说名/卷名/章节.md）。"""
+    novel_dir = safe_filename(title)
+
     toc_lines = [f"# {title}", "", "## 目录", ""]
     for vi, vol in enumerate(vols, start=1):
         toc_lines.append(f"{vi}. **{vol.title}**")
         for ci, ch in enumerate(vol.chapters, start=1):
             toc_lines.append(f"   {vi}.{ci} {ch['title']}")
-    zf.writestr("正文/00-目录.md", "\n".join(toc_lines) + "\n")
+    zf.writestr(f"{novel_dir}/目录.md", "\n".join(toc_lines) + "\n")
 
-    for vi, vol in enumerate(vols, start=1):
-        vol_dir = f"正文/{vi:02d}-{safe_filename(vol.title)}"
-        zf.writestr(f"{vol_dir}/00-卷首.md", f"# {vol.title}\n")
-        for ci, ch in enumerate(vol.chapters, start=1):
+    for vol in vols:
+        vol_dir = f"{novel_dir}/{safe_filename(vol.title)}"
+        zf.writestr(f"{vol_dir}/简介.md", f"# {vol.title}\n")
+        for ch in vol.chapters:
             body = ch["content"].strip()
             zf.writestr(
-                f"{vol_dir}/{ci:03d}-{safe_filename(ch['title'])}.md",
+                f"{vol_dir}/{safe_filename(ch['title'])}.md",
                 f"# {ch['title']}\n\n{body}\n" if body else f"# {ch['title']}\n",
             )
 

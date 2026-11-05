@@ -88,8 +88,8 @@ async def test_export_markdown_zip_contents(client, book):
         assert any(n.endswith("-大纲.md") for n in names), "zip 内必须含大纲原 md"
         # manifest
         assert "export-manifest.json" in names
-        # 章节 md 集合
-        chapter_files = [n for n in names if n.startswith("正文/") and n.endswith(".md")]
+        # 章节 md 集合（两层目录结构：小说名/卷名/章节.md）
+        chapter_files = [n for n in names if n.endswith(".md") and not n.endswith("-大纲.md") and "/" in n and "目录.md" not in n and "简介.md" not in n]
         assert len(chapter_files) >= 3
 
         manifest = json.loads(zf.read("export-manifest.json"))
