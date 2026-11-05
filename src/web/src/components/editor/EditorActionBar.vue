@@ -3,7 +3,7 @@
  * 编辑模式工具栏上的卷章结构操作条：插入卷 / 插入章节 / 重命名 / 删除。
  *
  * 插入规则：大纲节点只支持「往后插入卷」（落在第 1 位）；章节节点支持往前 / 往后插入
- * 卷与章节。★v1101：插入卷与插入章节一样**不再让用户填序号**——落位序号按插入方向
+ * 卷与章节。插入卷与插入章节一样**不再让用户填序号**——落位序号按插入方向
  * 自动推算（往前 = 当前位置，往后 = 当前位置 + 1；其后各项顺延 +1，删除后重新连续编号）。
  * 插入卷必须同时给出第一章章节名（不允许空卷）；重命名弹窗含「章名 + 卷名」
  * （卷名默认当前卷，即不改卷名）；删除需二次确认，大纲节点上不允许删除。
@@ -12,6 +12,7 @@ import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { chaptersApi } from '@/api'
 import { errorMessage } from '@/api/http'
+import { useEditorStore } from '@/stores/editor'
 import { useProjectStore } from '@/stores/project'
 import { useReaderStore } from '@/stores/reader'
 import { t } from '@/i18n'
@@ -21,6 +22,7 @@ import type { Chapter, Volume } from '@/types'
 
 const project = useProjectStore()
 const reader = useReaderStore()
+const editorStore = useEditorStore()
 
 const volumes = computed(() => project.volumeTree)
 
@@ -41,6 +43,9 @@ const targetVolume = computed<Volume | null>(() => current.value?.volume ?? null
 /** 是否停在大纲节点（大纲或尚未打开任何章节） */
 const onOutline = computed(() => reader.activeOutline || !reader.activeChapterId)
 
+/** AI 正在编辑该项目的章/大纲 → 禁止删除卷/章（后端同样 409 兜底） */
+const projectBusy = computed(() => editorStore.isProjectBusy(project.currentNovelId))
+
 // ---------------------------------------------------------------------------
 // 插入弹窗
 // ---------------------------------------------------------------------------
@@ -53,7 +58,7 @@ const submitting = ref(false)
 const kind = ref<InsertKind>('volume')
 const dir = ref<InsertDir>('before')
 /** volume：title=卷名、firstChapter=第一章章节名；chapter：只用 title。
- * ★v1101：序号一律自动推算，弹窗不再提供序号输入框。 */
+ * 序号一律自动推算，弹窗不再提供序号输入框。 */
 const form = ref({ title: '', firstChapter: '' })
 
 /** 卷总数（插入卷时的序号上限 = N+1） */
@@ -73,7 +78,7 @@ function volumeOrdinalFor(d: InsertDir): number {
 }
 
 /**
- * 自动推算「插入章节」的落位序号（★界面上不让用户填，按插入方向直接算）：
+ * 自动推算「插入章节」的落位序号（界面上不让用户填，按插入方向直接算）：
  * 往前 = 当前章序号，往后 = 当前章序号 + 1。
  */
 function chapterOrdinalFor(d: InsertDir): number | null {
@@ -106,7 +111,7 @@ const titleError = computed(() => {
   return kind.value === 'volume' ? validateVolumeName(raw) : validateChapterName(raw)
 })
 
-/** v1030续：插入卷必须同时给出第一章章节名（★不支持空卷） */
+/** 插入卷必须同时给出第一章章节名（不支持空卷） */
 const firstChapterError = computed(() => {
   if (kind.value !== 'volume') return ''
   const raw = form.value.firstChapter
@@ -125,7 +130,7 @@ async function submitInsert(): Promise<void> {
   try {
     if (kind.value === 'volume') {
       if (!project.currentNovelId) return
-      // ★v1101：卷序号与章节序号一样自动推算（按插入方向），用户不再填写
+      // 卷序号与章节序号一样自动推算（按插入方向），用户不再填写
       const ordinal = volumeOrdinalFor(dir.value)
       const vol = await project.createVolume(title, '', ordinal, form.value.firstChapter.trim())
       // 新卷的第一章：直接打开它，便于接着写
@@ -180,7 +185,7 @@ function openRename(): void {
   }
   renameForm.value = {
     chapter: current.value.chapter.title,
-    // v1029：卷名默认填入当前章所对应卷名（也就是默认不修改卷名）
+    // 卷名默认填入当前章所对应卷名（也就是默认不修改卷名）
     volume: current.value.volume.title,
   }
   renameVisible.value = true
@@ -211,6 +216,11 @@ async function submitRename(): Promise<void> {
 async function onDelete(): Promise<void> {
   if (onOutline.value || !current.value) {
     ElMessage.warning(t('volumeChapter.deleteOutlineDenied'))
+    return
+  }
+  // AI 编辑中禁止删除
+  if (projectBusy.value) {
+    ElMessage.warning('AI写作中请稍候…')
     return
   }
   const { volume, chapter } = current.value
@@ -255,7 +265,7 @@ async function onDelete(): Promise<void> {
 
 <template>
   <div class="editor-actions">
-    <!-- 往前插入小说卷（v1030续：大纲节点不支持，只有定位到章节时可用） -->
+    <!-- 往前插入小说卷 -->
     <el-tooltip
       v-if="!onOutline"
       :content="t('volumeChapter.insertBeforeVolume')"
@@ -277,7 +287,7 @@ async function onDelete(): Promise<void> {
       </button>
     </el-tooltip>
 
-    <!-- v1030续：插入章节只在定位到某一章时可用 -->
+    <!-- 插入章节只在定位到某一章时可用 -->
     <template v-if="!onOutline">
       <span class="act-sep" />
 
@@ -313,7 +323,7 @@ async function onDelete(): Promise<void> {
 
     <!-- 删除 -->
     <el-tooltip :content="t('common.delete')" placement="bottom">
-      <button class="act-btn danger" :disabled="onOutline || !current" @click="onDelete">
+      <button class="act-btn danger" :disabled="onOutline || !current || projectBusy" @click="onDelete">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
           <path d="M6 7h12v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V7zm3 3v7h2v-7H9zm4 0v7h2v-7h-2zM9 4h6l1 1h3v2H5V5h3l1-1z" />
         </svg>
@@ -321,9 +331,9 @@ async function onDelete(): Promise<void> {
     </el-tooltip>
 
     <!-- ============ 插入弹窗（输入框无提示词） ============ -->
-    <!-- ★v1031：弹窗不再展示标题（「往前/往后插入小说卷」「插入章节」等提示全部去掉），
+    <!-- 弹窗不再展示标题（「往前/往后插入小说卷」「插入章节」等提示全部去掉），
          卷序号 / 章节名下方的自动推算提示也一并删除 -->
-    <!-- ★v1101：插入卷也不再让用户填序号——与章节一致，按插入方向自动推算 -->
+    <!-- 插入卷也不再让用户填序号——与章节一致，按插入方向自动推算 -->
     <el-dialog v-model="dialogVisible" width="440px">
       <el-form label-width="96px" @submit.prevent>
         <!-- 插入卷：卷名 + 章节名（序号自动） -->

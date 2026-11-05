@@ -28,7 +28,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 const cityLabel = computed(() => weather.value?.city || settings.settings.city || '—')
 
 /**
- * ★v1101：坐标来源提示——浏览器定位被拒/超时/不可用时，天气按「通用设置 → 回落城市」
+ * 坐标来源提示——浏览器定位被拒/超时/不可用时，天气按「通用设置 → 回落城市」
  * 查询，组件在城市名旁灰色小字标明，避免用户误以为是实时定位结果。
  * located = 浏览器定位成功；city = 按城市名；fallback_city = 定位失败回落。
  */
@@ -36,14 +36,14 @@ const weatherSource = computed(() => weather.value?.source ?? '')
 const isFallbackCity = computed(() => weatherSource.value === 'fallback_city')
 const locateDenied = ref(false)
 
-/** v1030：第三排三项都带单位前缀（温度 X° / 湿度 Y% / 风速 Z 级） */
+/** 第三排三项都带单位前缀（温度 X° / 湿度 Y% / 风速 Z 级） */
 const tempLabel = computed(() => {
   const w = weather.value
   if (!w || w.temperature == null) return '温度 --'
   return `温度 ${Math.round(w.temperature)}°`
 })
 
-/** v1030：风速以「风力等级」为单位（蒲福风级 0–12 级） */
+/** 风速以「风力等级」为单位（蒲福风级 0–12 级） */
 const windLabel = computed(() => {
   const level = weather.value?.wind_level
   if (level == null) return '风速 --'
@@ -68,7 +68,7 @@ const aqiClass = computed(() => {
   return 'aqi-severe'
 })
 
-/** v1029：第二排右侧「空气质量等级」（无 AQI 时展示占位） */
+/** 第二排右侧「空气质量等级」（无 AQI 时展示占位） */
 const aqiText = computed(() => weather.value?.aqi_level || '空气质量 --')
 
 async function loadWeather(force = false): Promise<void> {
@@ -133,8 +133,8 @@ onBeforeUnmount(() => {
     <div class="widget-row">
       <ZodiacPet />
       <div class="wx-card" :class="{ 'wx-loading': loading }">
-        <!-- 第一排：城市居中独占一行（★v1031：不再悬浮展示完整地址）
-             ★v1101：定位失败回落设置城市时，城市名旁灰色小字标明来源 -->
+        <!-- 第一排：城市居中独占一行
+             定位失败回落设置城市时，城市名旁灰色小字标明来源 -->
         <div class="wx-row wx-head">
           <span
             v-if="locating"
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           >（回落城市）</span>
         </div>
 
-        <!-- 第二排：★v1101：天气组与空气质量组自适应同行排布——恒留间距、永不重叠；
+        <!-- 第二排：天气组与空气质量组自适应同行排布——恒留间距、永不重叠；
              空间不足时天气说明省略号截断（空气质量组不压缩），不超出组件；
              icon / 天气情况 / 等级 / AQI 数值四个元素在同一条水平线上 -->
         <div class="wx-main">
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <!-- 第三排：温度 X° / 湿度 Y% / 风速 Z 级（v1030 带单位） -->
+        <!-- 第三排：温度 X° / 湿度 Y% / 风速 Z 级 -->
         <div v-if="weather" class="wx-row wx-meta muted">
           <span>{{ tempLabel }}</span>
           <span>{{ humidityLabel }}</span>
@@ -231,7 +231,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-/* ★v1101：城市名旁的来源小字（定位失败回落设置城市时显示） */
+/* 城市名旁的来源小字（定位失败回落设置城市时显示） */
 .wx-source {
   flex-shrink: 0;
   font-size: 10px;
@@ -239,7 +239,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 第二排：★v1101 自适应布局——天气组在左、空气质量组紧随其后，两组之间恒留 10px
+/* 第二排：自适应布局——天气组在左、空气质量组紧随其后，两组之间恒留 10px
    间距（flex gap，永不重叠）；空间不足时天气说明先省略号截断（min-width:0 + 可收缩），
    空气质量组不收缩，整体不超出组件宽度 */
 .wx-main {
@@ -309,7 +309,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-/* AQI 等级语义色（v1030：染色文字，不再是小色块） */
+/* AQI 等级语义色 */
 .aqi-none { color: var(--text-muted); }
 .aqi-good { color: #52c41a; }
 .aqi-moderate { color: #d4b106; }

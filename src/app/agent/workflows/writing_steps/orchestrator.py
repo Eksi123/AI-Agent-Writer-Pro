@@ -44,6 +44,7 @@ from app.db.base import new_id, utcnow
 from app.db.models import ChapterRevision, Novel
 from app.db.session import session_scope
 from app.services import audit, files
+from app.services.volumes import meta_int
 from app.services.outline import normalize_title, parse_outline
 from app.services.workspace import WorkspaceGuard
 
@@ -378,7 +379,7 @@ async def _wf_precheck(runner: WorkflowRunner) -> None:
 async def prepare_generate(runner: WorkflowRunner) -> str:
     """S2 前置：快照旧正文（source=agent）+ 构建前情提要 + 返回生成指令。
 
-    ★生成前必须先快照（手册「二、(6) S2」），保证重生成可回滚。
+    生成前必须先快照（手册「二、(6) S2」），保证重生成可回滚。
     自带 session 作用域（调用点在 advance_workflow 的 session_scope 之外）。
     """
 
@@ -389,8 +390,13 @@ async def prepare_generate(runner: WorkflowRunner) -> str:
     async with session_scope() as db:
         # 快照旧正文（幂等：同 run 同 version 只快照一次）
         await _snapshot_before_generation(db, target, run_id=runner.run_id)
-        # 前情提要
-        recap = await build_recap(db, target.project_id, before_chapter_id=target.chapter_id)
+        # 前情提要只带上一章（生成主要承接前一章；跨卷锚点由 build_recap 自动补）
+        recap = await build_recap(
+            db,
+            target.project_id,
+            before_chapter_id=target.chapter_id,
+            max_chapters=1,
+        )
 
     state.record("S2", "prepared", recap_len=len(recap), retry=state.postcheck_retry)
     await runner.emit_workflow("S2", "generating", retry=state.postcheck_retry)
@@ -402,7 +408,7 @@ async def prepare_generate(runner: WorkflowRunner) -> str:
         target_path=target.target_path,
         intro=state.intro,
         link=state.link,
-        recap=recap[:6000],
+        recap=recap[:1500],
         feedback=state.postcheck_feedback,
         word_target=state.word_target,
     )
@@ -425,7 +431,7 @@ async def _snapshot_before_generation(db: AsyncSession, target: WorkflowTarget, 
             select(ChapterRevision).where(
                 ChapterRevision.chapter_id == target.chapter_id,
                 ChapterRevision.run_id == run_id,
-                ChapterRevision.version == int(meta.get("version") or 1),
+                ChapterRevision.version == meta_int(meta, "version", 1),
             )
         )
     ).scalars().first()
@@ -437,7 +443,7 @@ async def _snapshot_before_generation(db: AsyncSession, target: WorkflowTarget, 
             id=new_id(),
             novel_id=target.project_id,
             chapter_id=target.chapter_id,
-            version=int(meta.get("version") or 1),
+            version=meta_int(meta, "version", 1),
             content_md=content,
             word_count=files.count_words(content),
             source="agent",
@@ -451,7 +457,7 @@ async def _snapshot_before_generation(db: AsyncSession, target: WorkflowTarget, 
         "chapter.snapshot.before_generation",
         entity_type="chapter",
         entity_id=f"{target.project_id}:{target.chapter_id}",
-        detail={"run_id": run_id, "version": int(meta.get("version") or 1)},
+        detail={"run_id": run_id, "version": meta_int(meta, "version", 1)},
     )
 
 

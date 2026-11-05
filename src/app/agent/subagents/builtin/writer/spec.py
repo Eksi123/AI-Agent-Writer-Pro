@@ -4,7 +4,7 @@
 文件名: spec.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: Writer 子代理出厂定义（架构优化 v1102）。
+说明: Writer 子代理出厂定义。
 
     职责：大纲与小说正文的撰写修改**全流程**（原 writer + editor 合并）：
     按大纲章简介生成正文、续写、扩写，以及去水词/修病句/统一称谓的润色打磨。
@@ -18,7 +18,7 @@ from typing import Any
 SPEC: dict[str, Any] = {
     "name": "writer",
     "label": "Writer",
-    "description": "撰写修改全流程：按大纲章简介生成/续写章节正文，也负责润色校对（去水词、修病句、统一称谓语气）。生成、续写或打磨正文时委派给它。",
+    "description": "撰写修改：按大纲章简介生成/续写正文，也做润色校对。要生成或打磨正文时委派。",
     "skills": [],
     #: 默认内置工具（按职能）：写正文必须能读大纲/前章并落盘章节文件
     "tools": ["read_file", "write_file", "edit_file", "ls", "grep", "glob"],

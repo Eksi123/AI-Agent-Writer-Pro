@@ -18,7 +18,7 @@ from app.services.naming import (
     validate_volume_title,
 )
 
-#: 书名应被拒绝的名字（v1028 规则：空 / 全阿拉伯数字 / 含 #$% 等特殊字符）
+#: 书名应被拒绝的名字
 NOVEL_REJECTED = [
     "",
     "   ",
@@ -42,7 +42,7 @@ NOVEL_REJECTED = [
     "星海~拾荒",
 ]
 
-#: v1029：卷名/章名的命名规则**与书名一致**（需求 5-(1.5)），故共用同一份拒绝清单
+#: 卷名/章名的命名规则**与书名一致**（需求 5-(1.5)），故共用同一份拒绝清单
 REJECTED = list(NOVEL_REJECTED)
 
 #: 应通过的名字（合法名）
@@ -56,7 +56,7 @@ ACCEPTED = [
     "拾荒者（外传）",
 ]
 
-#: v1028：书名允许默认名/序号名/标点（规则只禁空、全数字、特殊字符）
+#: 书名允许默认名/序号名/标点（规则只禁空、全数字、特殊字符）
 NOVEL_ACCEPTED = [
     *ACCEPTED,
     "未命名小说",
@@ -103,13 +103,13 @@ def test_titles_accepted(good):
 
 @pytest.mark.parametrize("good", NOVEL_ACCEPTED)
 def test_volume_chapter_accepted(good):
-    """v1029：卷名/章名与书名同规则，书名可接受的卷章名也应接受。"""
+    """卷名/章名与书名同规则，书名可接受的卷章名也应接受。"""
     assert validate_volume_title(good)
     assert validate_chapter_title(good)
 
 
 def test_full_width_space_normalized():
-    """全角空格归一为半角后保留（v1029：默认名对卷章不再拒绝，与书名同规则）。"""
+    """全角空格归一为半角后保留。"""
     assert validate_volume_title("未命名\u3000卷") == "未命名 卷"
     # 空/全空白仍拒绝
     with pytest.raises(NamingInvalidError):

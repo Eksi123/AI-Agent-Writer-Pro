@@ -1,7 +1,7 @@
 /**
  * 设置 store：通用设置（主题/字号/字体/自动保存间隔/回落城市）。
  * 全部持久化到后端 `user_settings` 单行表。
- * v1028：主题为 深色/浅色/护眼 三种（system 仅兼容旧数据，按浅色渲染）。
+ * 主题为 深色/浅色/护眼 三种（system 仅兼容旧数据，按浅色渲染）。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -19,11 +19,12 @@ export const SETTINGS_DEFAULTS: UserSettings = {
   autosave_interval_sec: 30,
   city: '北京',
   pet_idle_minutes: 30,
+  export_dir: '',
 }
 
 const DEFAULTS = SETTINGS_DEFAULTS
 
-/** 字体族 → CSS font-family（v1028：只给开源免费字体） */
+/** 字体族 → CSS font-family */
 const FONT_STACKS: Record<string, string> = {
   serif: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif',
   hei: '"Source Han Sans SC", "Noto Sans SC", "Heiti SC", "SimHei", sans-serif',
@@ -39,12 +40,12 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 已持久化到后端的设置快照（本地预览未保存时可回滚到这里） */
   const persisted = ref<UserSettings>({ ...DEFAULTS })
 
-  /** 后端自检：FTS5 可用性 / calibre 是否安装（决定 mobi 是否置灰） */
+  /** 后端自检：FTS5 可用性 / PDF 依赖（reportlab）是否安装 */
   const health = ref<Health | null>(null)
-  const calibreAvailable = computed(() => health.value?.calibre_available ?? false)
+  const pdfAvailable = computed(() => health.value?.pdf_available ?? false)
   const fts5Available = computed(() => health.value?.fts5_available ?? true)
 
-  /** v1028：三主题（light | dark | eye）；旧数据 system 归一到 light */
+  /** 三主题（light | dark | eye）；旧数据 system 归一到 light */
   const theme = computed<'light' | 'dark' | 'eye'>(() => {
     const v = settings.value.theme
     return v === 'dark' || v === 'eye' ? v : 'light'
@@ -94,7 +95,7 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  /** v1028：仅本地即时预览（主题/字号/字体变更立即生效，不落库；点「保存」才持久化） */
+  /** 仅本地即时预览（主题/字号/字体变更立即生效，不落库；点「保存」才持久化） */
   function preview(patch: Partial<UserSettings>): void {
     settings.value = { ...settings.value, ...patch }
     applyToDom()
@@ -106,7 +107,7 @@ export const useSettingsStore = defineStore('settings', () => {
     applyToDom()
   }
 
-  /** v1028：恢复默认设置（后端 POST /settings/reset） */
+  /** 恢复默认设置（后端 POST /settings/reset） */
   async function reset(): Promise<void> {
     saving.value = true
     error.value = null
@@ -130,7 +131,7 @@ export const useSettingsStore = defineStore('settings', () => {
     saving,
     error,
     health,
-    calibreAvailable,
+    pdfAvailable,
     fts5Available,
     theme,
     isDark,

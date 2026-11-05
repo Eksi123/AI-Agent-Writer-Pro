@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.services.volumes
 文件名: volumes.py
@@ -13,7 +13,7 @@
     - 修订快照触发：手动保存 / Agent 写章前 / 章节定稿；**自动保存不快照**；
     - 删除卷级联删除其下章节文件。
 
-    ★v1029 顺序模型变更（大纲降级为「参考资料」而非结构约束）：
+    顺序模型变更（大纲降级为「参考资料」而非结构约束）：
     - `sort_order` 由本服务直接维护：不传 `ordinal` → 追加到末尾（`max+1`）；
       传 `ordinal` → 插入到该位置，**其后各项自动顺延 +1**（往前/往后插入卷章）；
     - 删除章后卷内章重新连续编号（1..N）；**某卷下章节删空后该卷一并删除**，卷层同样重新连续编号；
@@ -37,6 +37,7 @@ from app.db.base import new_id, short_id, utcnow
 from app.db.models import ChapterRevision
 from app.services import audit, files, novels, recycle
 from app.services.naming import validate_chapter_title, validate_volume_title
+from app.services.outline import normalize_title, parse_outline
 from app.services.workspace import WorkspaceGuard
 
 logger = get_logger(__name__)
@@ -47,19 +48,38 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def meta_int(meta: dict[str, Any], key: str, default: int) -> int:
+    """frontmatter 数值容错解析。
+
+    Agent 直写文件时可能产出非规范值（如 `version: v1`），`int()` 直转会抛
+    ValueError 把目录/正文接口打成 500。这里提取字符串里的数字，取不到回落默认值。
+    """
+    raw = meta.get(key)
+    if raw is None or raw == "":
+        return default
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    digits = "".join(ch for ch in str(raw) if ch.isdigit())
+    return int(digits) if digits else default
+
+
 def _vol_dto(vol: dict[str, Any], chapters: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     dto = {
         "id": vol.get("id"),
         "title": vol.get("title"),
         "summary": vol.get("summary") or "",
-        "sort_order": int(vol.get("sort_order") or 0),
+        "sort_order": meta_int(vol, "sort_order", 0),
         "created_at": vol.get("created_at"),
         "updated_at": vol.get("updated_at"),
     }
     if chapters is not None:
         dto["chapters"] = chapters
         dto["chapter_count"] = len(chapters)
-        dto["word_count"] = sum(int(c.get("word_count") or 0) for c in chapters)
+        dto["word_count"] = sum(meta_int(c, "word_count", 0) for c in chapters)
     return dto
 
 
@@ -68,17 +88,141 @@ def _chapter_dto(meta: dict[str, Any], chapter_id: str, vol_id: str) -> dict[str
         "id": chapter_id,
         "volume_id": vol_id,
         "title": meta.get("title"),
-        "sort_order": int(meta.get("sort_order") or 0),
-        "word_count": int(meta.get("word_count") or 0),
+        "sort_order": meta_int(meta, "sort_order", 0),
+        "word_count": meta_int(meta, "word_count", 0),
         "status": meta.get("status") or "draft",
-        "version": int(meta.get("version") or 1),
+        "version": meta_int(meta, "version", 1),
         "updated_at": meta.get("updated_at"),
     }
 
 
+def _outline_volume_sections(project_id: str) -> list[tuple[str, set[str]]]:
+    """大纲卷节清单 `[(卷名, {归一化章名})]`（只含有章小节的卷节）。
+
+    文档标题 H1 / 附录节因没有章小节而自然排除；用于孤儿卷登记与卷名纠偏时
+    按「章节名交集」把卷目录匹配到大纲卷节。
+    """
+    try:
+        meta = files.read_novel_meta(project_id)
+        rel = str(meta.get("outline_file") or "").strip()
+        if not rel:
+            return []
+        path = workspaces_root() / project_id / rel
+        if not path.is_file():
+            return []
+        parsed = parse_outline(path.read_text(encoding="utf-8"))
+        return [(v.title, {c.normalized for c in v.chapters}) for v in parsed.volumes if v.chapters]
+    except Exception as exc:  # 大纲缺失/解析失败不阻断自愈
+        logger.warning("outline_volume_sections_failed", project_id=project_id, error=str(exc))
+        return []
+
+
+def _match_outline_volume(chapter_norms: set[str], sections: list[tuple[str, set[str]]]) -> str | None:
+    for title, norms in sections:
+        if norms & chapter_norms:
+            return title
+    return None
+
+
+def register_orphan_volumes(project_id: str) -> list[str]:
+    """自愈登记「孤儿卷目录」+ 纠偏错误卷名。
+
+    Agent 可能绕过卷章服务直接 `write_file` 到 `chapters/v{X}/c{Y}.md`（自造路径），
+    导致章节文件已存在但 `volumes.yaml` 里没有该卷 → 目录树为空；或登记时卷名
+    取错来源（如误用首章标题）→ 目录里「卷」显示成章名。
+
+    卷名的唯一权威来源是**大纲的卷节（H1）**：按「卷目录内章节名 ∩ 大纲卷节章名」
+    匹配；匹配不到才回落「卷 N」。已登记但卷名不在大纲卷节集合内的，同样纠偏。
+
+    Returns:
+        本次新登记的卷 id 列表（空 = 无需登记；纠偏不计入返回值）。
+    """
+    volumes = files.read_volumes(project_id)
+    registered = {str(v.get("id")) for v in volumes}
+    sections = _outline_volume_sections(project_id)
+    outline_titles = {normalize_title(t) for t, _ in sections}
+    chapters_root = workspaces_root() / project_id / "chapters"
+    if not chapters_root.is_dir():
+        return []
+
+    def _volume_facts(vdir: Any) -> tuple[set[str], int, str]:
+        """卷目录 → (归一化章名集合, 首章序号, 首章标题)。"""
+        norms: set[str] = set()
+        first_order = 0
+        first_title = ""
+        for cfile in sorted(vdir.glob("c*.md")):
+            try:
+                meta = files.read_chapter_meta(project_id, vdir.name[1:], cfile.stem[1:])
+            except Exception:  # pragma: no cover - 坏文件跳过
+                continue
+            title = str(meta.get("title") or "")
+            norms.add(normalize_title(title))
+            if not first_title:
+                first_title = title
+                first_order = meta_int(meta, "sort_order", 0)
+        return norms, first_order, first_title
+
+    added: list[dict[str, Any]] = []
+    now = utcnow()
+    changed = False
+
+    # ① 纠偏：已登记卷名不在大纲卷节集合内 → 按章节交集改回大纲卷名
+    for vol in volumes:
+        vid = str(vol.get("id"))
+        vdir = chapters_root / f"v{vid}"
+        if not vdir.is_dir():
+            continue
+        if normalize_title(str(vol.get("title") or "")) in outline_titles:
+            continue
+        norms, _order, _title = _volume_facts(vdir)
+        matched = _match_outline_volume(norms, sections)
+        if matched and matched != vol.get("title"):
+            logger.warning(
+                "volume_title_corrected", project_id=project_id, volume_id=vid,
+                old=vol.get("title"), new=matched,
+            )
+            vol["title"] = matched
+            vol["updated_at"] = now
+            changed = True
+
+    # ② 登记：未登记的卷目录补进 volumes.yaml（卷名取大纲卷节）
+    for vdir in sorted(chapters_root.iterdir()):
+        if not vdir.is_dir() or not vdir.name.startswith("v"):
+            continue
+        vol_id = vdir.name[1:]
+        if vol_id in registered or not vol_id:
+            continue
+        if not any(vdir.glob("c*.md")):
+            continue  # 空目录不登记
+        norms, first_order, first_title = _volume_facts(vdir)
+        title = _match_outline_volume(norms, sections) or first_title or f"卷 {len(registered) + len(added) + 1}"
+        added.append(
+            {
+                "id": vol_id,
+                "title": title,
+                "summary": "",
+                "sort_order": first_order or (len(registered) + len(added) + 1),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    if added or changed:
+        files.write_volumes(project_id, volumes + added if added else volumes)
+    if added:
+        ids = [str(v["id"]) for v in added]
+        logger.warning("orphan_volumes_registered", project_id=project_id, volume_ids=ids)
+        return ids
+    return []
+
+
 async def list_volumes(session: AsyncSession, project_id: str) -> list[dict[str, Any]]:
-    """卷列表（含各卷章节）。按 `sort_order` 只读排序渲染。"""
+    """卷列表（含各卷章节）。按 `sort_order` 只读排序渲染。
+
+    读取前先自愈登记孤儿卷目录（Agent 直写章节文件而未登记卷的兜底）。
+    """
     await novels.get_novel(session, project_id)  # 404 校验
+    register_orphan_volumes(project_id)
     volumes = sorted(
         files.read_volumes(project_id),
         key=lambda v: (int(v.get("sort_order") or 0), str(v.get("title") or "")),
@@ -92,7 +236,7 @@ async def list_volumes(session: AsyncSession, project_id: str) -> list[dict[str,
 
 
 # ---------------------------------------------------------------------------
-# v1029：序号（位置）编辑 —— 插入即唯一的位置编辑入口
+# 序号（位置）编辑 —— 插入即唯一的位置编辑入口
 # ---------------------------------------------------------------------------
 
 
@@ -129,9 +273,9 @@ async def create_volume(
     """新建卷：**显式命名**。
 
     - 不传 `ordinal` → 追加到末尾（`sort_order = max+1`，兼容旧行为）；
-    - 传 `ordinal`（v1029 往前/往后插入）→ 插入到该位置，其后各卷顺延 +1；
-    - v1030续：传 `first_chapter_title` → 卷建立后立刻在它里面建第一章
-      （★**不支持空卷**，插入卷必须同时给出第一章的章节名）。
+    - 传 `ordinal`→ 插入到该位置，其后各卷顺延 +1；
+    - 传 `first_chapter_title` → 卷建立后立刻在它里面建第一章
+      （**不支持空卷**，插入卷必须同时给出第一章的章节名）。
     """
     await novels.get_novel(session, project_id)
     clean = validate_volume_title(title)
@@ -167,7 +311,7 @@ async def create_volume(
     )
     logger.info("volume_created", project_id=project_id, volume_id=vol_id, title=clean)
 
-    # v1030续：插入卷时一并创建它的第一章（避免空卷）
+    # 插入卷时一并创建它的第一章（避免空卷）
     first_chapter: dict[str, Any] | None = None
     if first_chapter_title and first_chapter_title.strip():
         first_chapter = await create_chapter(
@@ -213,8 +357,8 @@ async def update_volume(
 async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
     """删除卷：**级联删除其下章节文件**（前端二次确认列出章名与字数）。
 
-    v1029：删除后其余卷重新连续编号（1..N）。
-    ★v1031：其下章节先进回收站（可回收 / 彻底删除），再删文件。
+    删除后其余卷重新连续编号（1..N）。
+    其下章节先进回收站（可回收 / 彻底删除），再删文件。
     """
     project_id, volumes, vol = _locate_volume(vol_id)
     guard = WorkspaceGuard(project_id)
@@ -223,7 +367,7 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
     chapters = await list_chapters(session, project_id, vol_id)
     removed_files: list[str] = []
     for ch in chapters:
-        # ★v1031：归档到回收站（卷名/序号一并快照，供「卷 → 被删章节」目录展示）
+        # 归档到回收站（卷名/序号一并快照，供「卷 → 被删章节」目录展示）
         recycle.archive_chapter(
             project_id,
             vol_id=vol_id,
@@ -332,7 +476,7 @@ async def create_chapter(
     """新建章：**显式命名**。
 
     - 不传 `ordinal` → 追加到卷末尾（`sort_order = max+1`，兼容旧行为）；
-    - 传 `ordinal`（v1029 往前/往后插入章节）→ 插入到该位置，其后各章顺延 +1。
+    - 传 `ordinal`→ 插入到该位置，其后各章顺延 +1。
     """
     project_id, _volumes, vol = _locate_volume(vol_id)
     clean = validate_chapter_title(title)
@@ -433,7 +577,7 @@ async def update_chapter_meta(
 
     定稿（status → finalized）会触发一次修订快照（手册「五」触发时机）。
 
-    v1029：重命名弹窗同时含「章名 + 卷名」（卷名默认填当前章所属卷名，默认不修改）；
+    重命名弹窗同时含「章名 + 卷名」（卷名默认填当前章所属卷名，默认不修改）；
     `volume_title` 有变更时**重命名该章所属的卷**（章仍留在原卷）。
     """
     project_id, vol_id, meta, content = _locate_chapter(chapter_id)
@@ -490,18 +634,18 @@ async def update_chapter_meta(
 
 
 async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, Any]:
-    """删除章文件。★不提供跨卷移动——换卷需新建同名章复制正文再删旧章。
+    """删除章文件。不提供跨卷移动——换卷需新建同名章复制正文再删旧章。
 
-    v1029：
+    
     - 删除后卷内其余章重新连续编号（1..N）；
     - **某一卷下所有章节都删除后，该卷一并删除**（卷层同样重新连续编号）。
 
-    ★v1031：删除的章节先进回收站（可回收 / 彻底删除）。
+    删除的章节先进回收站（可回收 / 彻底删除）。
     """
     project_id, vol_id, meta, _content = _locate_chapter(chapter_id)
     guard = WorkspaceGuard(project_id)
 
-    # ★v1031：归档到回收站（带书名 / 卷名快照）
+    # 归档到回收站（带书名 / 卷名快照）
     volumes_meta = files.read_volumes(project_id)
     vol_meta = files.find_volume(volumes_meta, vol_id) or {}
     recycle.archive_chapter(
@@ -529,7 +673,7 @@ async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, An
     volume_deleted = False
     siblings = await list_chapters(session, project_id, vol_id)
     if not siblings:
-        # ★卷下章节删空 → 卷也不存在
+        # 卷下章节删空 → 卷也不存在
         await delete_volume(session, vol_id)
         volume_deleted = True
     else:
@@ -570,9 +714,9 @@ async def read_content(session: AsyncSession, chapter_id: str) -> dict[str, Any]
         "project_id": project_id,
         "title": meta.get("title"),
         "content": content,
-        "word_count": int(meta.get("word_count") or 0),
+        "word_count": meta_int(meta, "word_count", 0),
         "status": meta.get("status") or "draft",
-        "version": int(meta.get("version") or 1),
+        "version": meta_int(meta, "version", 1),
         "updated_at": meta.get("updated_at"),
         "last_writer": meta.get("last_writer") or "manual",
         "path": str(chapter_file(project_id, vol_id, chapter_id)),
@@ -596,7 +740,7 @@ async def write_content(
     - `source`: manual | agent。
     """
     project_id, vol_id, meta, old_content = _locate_chapter(chapter_id)
-    current_version = int(meta.get("version") or 1)
+    current_version = meta_int(meta, "version", 1)
 
     if base_version != current_version:
         raise VersionConflictError(
@@ -642,7 +786,7 @@ async def write_content(
         commit=True,
     )
 
-    # ★v1101：定稿入口移除后，章节摘要（AI 前情提要的记忆来源）改由**手动保存**触发
+    # 定稿入口移除后，章节摘要（AI 前情提要的记忆来源）改由**手动保存**触发
     # （自动保存不触发，防频繁调 LLM）；后台执行，失败只记日志不阻断保存。
     if not is_autosave:
         asyncio.get_running_loop().create_task(_summarize_after_save(project_id, vol_id, chapter_id))
@@ -664,7 +808,7 @@ async def write_content(
 
 
 async def _summarize_after_save(project_id: str, volume_id: str, chapter_id: str) -> None:
-    """★v1101：手动保存后后台刷新章节摘要（供 AI 前情提要使用）。
+    """手动保存后后台刷新章节摘要（供 AI 前情提要使用）。
 
     定稿入口已移除；摘要不再依赖 `status=finalized`。force=True 保证改稿后摘要同步更新。
     无可用模型 / 正文过短时 summarize 内部自行跳过。
@@ -695,7 +839,7 @@ async def _snapshot(
         id=new_id(),
         novel_id=project_id,
         chapter_id=chapter_id,
-        version=int(meta.get("version") or 1),
+        version=meta_int(meta, "version", 1),
         content_md=content,
         word_count=files.count_words(content),
         source=source,
@@ -766,7 +910,7 @@ async def restore_revision(
 
     await _snapshot(session, project_id, chapter_id, meta, current, source="manual")
 
-    new_version = int(meta.get("version") or 1) + 1
+    new_version = meta_int(meta, "version", 1) + 1
     meta.update(
         {
             "version": new_version,
@@ -802,9 +946,9 @@ async def restore_revision(
 
 
 def assert_no_manual_reorder() -> None:
-    """★设计守卫：本模块**不提供**任何拖拽重排 / 跨卷移动能力。
+    """设计守卫：本模块**不提供**任何拖拽重排 / 跨卷移动能力。
 
-    v1029：位置编辑的唯一入口是「插入」（`create_volume` / `create_chapter` 的
+    位置编辑的唯一入口是「插入」（`create_volume` / `create_chapter` 的
     `ordinal` 参数，插入后其后各项自动顺延）；仍无 reorder / move 接口。
     该函数供测试断言「无 reorder/move 入口」时调用，也作为文档化契约。
     """
@@ -812,3 +956,4 @@ def assert_no_manual_reorder() -> None:
     leaked = forbidden & set(globals())
     if leaked:  # pragma: no cover - 契约破坏时立即失败
         raise AssertionError(f"违反铁律 10：出现了手工重排函数 {leaked}")
+

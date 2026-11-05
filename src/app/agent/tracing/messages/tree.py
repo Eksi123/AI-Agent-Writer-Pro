@@ -228,7 +228,7 @@ def active_path_to_langchain(by_id: dict[str, Message], leaf_id: str | None) -> 
 async def history_messages_for_seed(
     session: AsyncSession, session_id: str, *, exclude_id: str | None = None
 ) -> list[BaseMessage]:
-    """活跃路径 → LangChain 消息列表（★v1101：checkpoint 为空时回填历史用）。
+    """活跃路径 → LangChain 消息列表。
 
     与 `active_path_to_langchain` 的区别：tool 消息的 `tool_call_id` 与其父 assistant
     消息的 tool_calls **按序配对**（而非用消息 id），保证 LangGraph 校验通过；

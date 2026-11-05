@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * AI 写作助手会话框（v1028 重构，整体参考 VS Code Copilot 会话框）：
+ * AI 写作助手会话框：
  *
  * 头部：只展示「当前会话数量 + 当前小说项目 token 使用量」（删除原「AI助手」标题与 + 号）
  * 中部：
@@ -12,6 +12,8 @@
  *   - 运行中点击发送箭头 → 三选项：停止并发送 / 通过消息引导发送 / 添加到队列
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '@/stores/agent'
 import { useProjectStore } from '@/stores/project'
@@ -35,8 +37,8 @@ const sending = ref(false)
 const messageHost = ref<HTMLElement | null>(null)
 const overview = ref<LlmOverview | null>(null)
 /**
- * v1028：选中的模型（未选中或无模型 → Model Off）。
- * ★v1031：默认值取「上次使用的模型」（localStorage 记忆），而不是后端的默认模型。
+ * 选中的模型（未选中或无模型 → Model Off）。
+ * 默认值取「上次使用的模型」（localStorage 记忆），而不是后端的默认模型。
  */
 const modelRef = ref<string>('')
 
@@ -66,15 +68,15 @@ function onModelPicked(value: string): void {
 }
 /** 发送方式三选项弹层 */
 const sendMenu = ref(false)
-/** ★v1101：本轮待随消息发送的隐藏上下文（选区润色提示词，不在会话展示） */
+/** 本轮待随消息发送的隐藏上下文（选区润色提示词，不在会话展示） */
 const pendingHidden = ref('')
 
-/** v1028：会话记录最多展示 50 条 */
+/** 会话记录最多展示 50 条 */
 const MAX_SESSIONS = 50
 const sessionList = computed(() => agent.sessions.slice(0, MAX_SESSIONS))
 
 /**
- * ★v1101：会话是否「AI 思考执行中」——服务端 is_running 或本地运行标记任一命中即算
+ * 会话是否「AI 思考执行中」——服务端 is_running 或本地运行标记任一命中即算
  * （本地标记覆盖「刚发出消息、服务端尚未落 running」的瞬时空窗）。
  */
 function isSessionRunning(s: { id: string; is_running?: boolean }): boolean {
@@ -82,7 +84,7 @@ function isSessionRunning(s: { id: string; is_running?: boolean }): boolean {
 }
 
 /**
- * v1029：输入框随内容自适应上拉，**最多到页面高度的 1/3**。
+ * 输入框随内容自适应上拉，**最多到页面高度的 1/3**。
  * Element Plus 的 autosize 以「行数」为单位，故按视口高度换算最大行数
  * （行高与 .chat-input 的 line-height 保持一致）。
  */
@@ -103,7 +105,7 @@ const inputAutosize = computed(() => ({ minRows: 2, maxRows: maxInputRows.value 
 const sessionCountLabel = computed(() => t('agent.sessionCount', { n: agent.usage.session_count }))
 
 /**
- * ★v1101：token 数量统一单位——千级显示 K、百万级显示 M（整数时去掉多余的 .0）。
+ * token 数量统一单位——千级显示 K、百万级显示 M（整数时去掉多余的 .0）。
  * 例：47324 → 47.3K；1200000 → 1.2M；33000 → 33K；500 → 500。
  */
 function formatTokens(n: number): string {
@@ -117,7 +119,7 @@ function stripTrailingZero(s: string): string {
   return s.endsWith('.0') ? s.slice(0, -2) : s
 }
 
-/** v1029：token 使用量（★v1101 单位统一 K/M） */
+/** token 使用量 */
 const tokenLabel = computed(() => t('agent.tokenTotal', { n: formatTokens(agent.usage.tokens_total) }))
 
 // ---------------------------------------------------------------------------
@@ -128,7 +130,7 @@ const selectedModel = computed(() =>
   (overview.value?.models ?? []).find((m) => m.model_ref === modelRef.value) ?? null,
 )
 
-/** 已使用上下文 = 最近一次模型调用的输入 token（近似当前上下文占用）；★v1101 单位统一 K/M */
+/** 已使用上下文 = 最近一次模型调用的输入 token（近似当前上下文占用）；单位统一 K/M */
 const contextLabel = computed(() =>
   selectedModel.value
     ? `${formatTokens(Math.max(0, agent.lastUsage.tokens_in))} / ${formatTokens(selectedModel.value.max_context || 0)}`
@@ -136,10 +138,12 @@ const contextLabel = computed(() =>
 )
 
 /**
- * v1029（大模型选择弹窗 1.4）：剩余上下文百分比 = 1 − 已占用token ÷ 窗口总容量。
+ * （大模型选择弹窗 1.4）：剩余上下文百分比 = 1 − 已注入token ÷ 模型配置窗口。
+ * - 已注入 = 当前会话最近一次模型调用的输入 token（含隐藏上下文/前情提要）；
+ * - 窗口 = 当前选中模型的 Context Length（模型行 max_context）；
  * - 无模型 / 窗口未知 → null（不展示，避免误导）；
- * - 结果夹在 [0, 100]：占用超过窗口时归 0（此时后端压缩机制已介入）；
- * - 每次模型回复刷新（lastUsage 由 usage 事件更新），新会话回到 100%。
+ * - 结果夹在 [0, 100]：占用超过窗口时归 0；
+ * - 剩余 <10% 时后端自动开启上下文压缩（触发点 = 窗口 × 90%）。
  */
 const contextRemainingPct = computed<number | null>(() => {
   const model = selectedModel.value
@@ -150,7 +154,7 @@ const contextRemainingPct = computed<number | null>(() => {
   return Math.max(0, Math.min(100, remaining))
 })
 
-/** 剩余 <20% → 高亮警示（接近窗口，压缩机制即将/已经介入） */
+/** 剩余 <20% → 高亮警示（压缩机制即将/已经介入） */
 const contextLow = computed(
   () => contextRemainingPct.value !== null && contextRemainingPct.value < 20,
 )
@@ -166,26 +170,39 @@ interface DisplayMessage {
   toolCalls: { name: string; args?: Record<string, unknown> }[]
   streaming: boolean
   createdAt?: string | null
+  /** 用户消息携带的添加文件标签（仿 VS Code Copilot，展示在气泡上方） */
+  attachments?: string[]
 }
+
+/**
+ * 发送内容 → 添加文件标签 的映射。
+ * 消息正文（含隐藏上下文后的可见部分）作为键，持久化用户气泡与乐观回显气泡
+ * 都按内容查表展示附件 chips；会话内常驻，历史消息也能看到当时带了哪些文件。
+ */
+const attachmentLabels = ref<Record<string, string[]>>({})
 
 const displayMessages = computed<DisplayMessage[]>(() => {
   const persisted: DisplayMessage[] = agent.messages
-    // ★v1101：中间件注入的 system（前情提要等）属内部上下文，绝不渲染成气泡
+    // 中间件注入的 system（前情提要等）属内部上下文，绝不渲染成气泡
     .filter((m) => m.role !== 'system')
     .map((m) => ({
       key: m.id,
-      role: m.role === 'user' ? 'user' : 'assistant',
+      // tool 消息保留独立角色——collapseTurns 视其为中间过程，
+      // 绝不当作「最终回复」展示（修复重进会话看到 @@ lines … 工具结果的问题）
+      role: m.role === 'user' ? 'user' : m.role === 'tool' ? 'tool' : 'assistant',
       content: String(m.content ?? ''),
       toolCalls: m.tool_calls ?? [],
       streaming: false,
       createdAt: m.created_at,
+      // 用户气泡上方展示发送时携带的添加文件
+      attachments: m.role === 'user' ? attachmentLabels.value[String(m.content ?? '')] : undefined,
     }))
-  // ★v1031 续：AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
+  // AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
   // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
   const shown = collapseTurns(persisted)
-  // v1030续(1)：乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
+  // 乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
   // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
-  // ★v1031：pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
+  // pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
   const pending = agent.pendingUserMessage
   if (pending) {
     const lastUser = [...shown].reverse().find((m) => m.role === 'user')
@@ -197,25 +214,67 @@ const displayMessages = computed<DisplayMessage[]>(() => {
         toolCalls: [],
         streaming: false,
         createdAt: pending.sentAt,
+        attachments: attachmentLabels.value[pending.content],
       })
     }
   }
-  // ★v1101：运行中的中间消息（流式回复片段 / 工具结果）一律不显示——
-  // 像 VS Code Copilot 那样只留「AI 正在思考…」状态行，run 结束后一次性展示最终答案。
-  if (agent.running) return shown
-  const live: DisplayMessage[] = agent.streaming.map((s) => ({
-    key: s.messageId,
-    role: s.messageId.startsWith('tool:') ? 'tool' : 'assistant',
-    content: s.content,
-    toolCalls: s.toolCalls,
-    streaming: !s.done,
-    createdAt: null,
-  }))
-  return [...shown, ...live]
+  // 中间思考/工具调用过程改由下方「思考与工具调用过程」折叠区承载
+  // （运行中展开、run 结束自动收起，仿 VS Code Copilot）；
+  // 气泡里只保留每轮问答的最终回复，run 收尾竞态窗口也不再泄漏工具结果。
+  return shown
 })
 
 /**
- * ★v1031 续：把已持久化的消息按「轮」折叠——每个 user 消息开启一轮，
+ * 运行中的中间过程条目（流式思考文本 + 工具调用/结果），
+ * 渲染进可折叠的「思考与工具调用过程」区块。
+ */
+interface ProcessItem {
+  key: string
+  kind: 'text' | 'tool'
+  title: string
+  body: string
+  done: boolean
+}
+
+const liveProcess = computed<ProcessItem[]>(() =>
+  agent.streaming.map((s) => {
+    if (s.messageId.startsWith('tool:')) {
+      let name = s.toolCalls[0]?.name ?? 'tool'
+      let status = ''
+      let excerpt = ''
+      let dur = ''
+      try {
+        const d = JSON.parse(s.content) as Record<string, unknown>
+        name = String(d.tool_name ?? name)
+        status = String(d.status ?? '')
+        excerpt = String(d.result_excerpt ?? d.error ?? '')
+        if (d.duration_ms != null) dur = `${d.duration_ms}ms`
+      } catch {
+        /* 非 JSON 载荷原样展示 */
+      }
+      return {
+        key: s.messageId,
+        kind: 'tool' as const,
+        title: `${name}${status ? ` · ${status}` : ''}${dur ? ` · ${dur}` : ''}`,
+        body: excerpt,
+        done: s.done,
+      }
+    }
+    return { key: s.messageId, kind: 'text' as const, title: '', body: s.content, done: s.done }
+  }),
+)
+
+/** 过程区默认展开；run 结束自动收起（用户运行中也可手动折叠/展开） */
+const processOpen = ref(false)
+watch(
+  () => agent.running,
+  (running) => {
+    processOpen.value = running
+  },
+)
+
+/**
+ * 把已持久化的消息按「轮」折叠——每个 user 消息开启一轮，
  * 该轮到下一个 user 消息之间的 assistant / tool 消息都视为思考过程，
  * 只保留**最后一条有正文的 assistant 消息**作为本轮回复（并去掉它身上的工具卡片）。
  * 找不到有正文的 assistant（异常轮）时原样保留，避免渲染空气泡。
@@ -233,7 +292,7 @@ function collapseTurns(list: DisplayMessage[]): DisplayMessage[] {
       }
     }
     if (finalIdx >= 0) out.push({ ...turn[finalIdx], toolCalls: [] })
-    // ★v1101：本轮没有最终文字回复（运行中 / 暂停等审批 / 失败）→ 不展示中间过程，
+    // 本轮没有最终文字回复（运行中 / 暂停等审批 / 失败）→ 不展示中间过程，
     // 状态由「AI 正在思考…」状态行、审批/咨询卡片或错误卡片承载，
     // 避免裸的工具调用被误当成 AI 的回答。
     turn = []
@@ -256,6 +315,16 @@ function stampOf(iso?: string | null): string {
   if (Number.isNaN(d.getTime())) return ''
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/**
+ * AI 回复按 Markdown 渲染（加粗 / 列表 / 表格 / 代码块等），
+ * 与大纲阅读视图同形制（markdown-it + DOMPurify 消毒）。
+ */
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(md.render(text || ''))
 }
 
 /** 会话记录里的小字号日期 */
@@ -287,7 +356,7 @@ async function loadOverview(): Promise<void> {
   try {
     overview.value = await llmApi.overview()
     /**
-     * ★v1031：默认选中「上次使用的模型」，而不是后端标记的默认（新建）模型。
+     * 默认选中「上次使用的模型」，而不是后端标记的默认（新建）模型。
      * 记忆值失效（模型已删/被禁用）时回落到后端默认模型；都没有则留空（Model Off）。
      */
     if (!modelRef.value) {
@@ -304,7 +373,7 @@ async function loadOverview(): Promise<void> {
 const hasModels = computed(() => (overview.value?.models.length ?? 0) > 0)
 
 onMounted(async () => {
-  // v1029：输入框最大高度 = 视口的 1/3，随窗口尺寸变化重算
+  // 输入框最大高度 = 视口的 1/3，随窗口尺寸变化重算
   recalcInputRows()
   window.addEventListener('resize', recalcInputRows)
   await loadOverview()
@@ -326,7 +395,7 @@ watch(
 )
 
 /**
- * ★v1031 续：对话视图粘性守卫——回答结束（或任何非用户主动操作）后若会话视图被
+ * 对话视图粘性守卫——回答结束（或任何非用户主动操作）后若会话视图被
  * 隐式重置回列表，自动粘回原会话，保证「回答结束后仍停留在对话视图」。
  * 用户主动返回 / 删除会话 / 切换小说时先 markUserLeftChat()，不参与粘回。
  */
@@ -418,7 +487,7 @@ async function removeSession(id: string): Promise<void> {
   }
 }
 
-// ★v1031：删除「导出会话」功能（含会话记录列表 ··· 里的导出入口）
+// 删除「导出会话」功能（含会话记录列表 ··· 里的导出入口）
 
 // ---------------------------------------------------------------------------
 // 发送 / 运行中三选项（停止并发送 / 通过消息引导发送 / 添加到队列）
@@ -427,13 +496,13 @@ async function removeSession(id: string): Promise<void> {
 const canSend = computed(() => input.value.trim().length > 0 && !!project.currentNovelId)
 
 /**
- * ★v1031：底部发送按键的形态判定依据——运行中是否已输入「追加消息」。
+ * 底部发送按键的形态判定依据——运行中是否已输入「追加消息」。
  * 有输入 → 追加形态（停止后发送 / 添加到队列 / 添加为引导）；无输入 → 停止形态。
  */
 const hasInput = computed(() => input.value.trim().length > 0)
 
 /**
- * v1030续(4)：Agent / 大模型运行报错时，给出**中文提示 + 应该怎么做**（灰色异常态）。
+ * Agent / 大模型运行报错时，给出**中文提示 + 应该怎么做**（灰色异常态）。
  * 由 store 里的 {error, errorCode} 归一而来，避免直接把英文/原始 message 抛给用户。
  */
 const errorInfo = computed<AgentErrorInfo | null>(() =>
@@ -445,7 +514,7 @@ function dismissError(): void {
   agent.clearError()
 }
 
-/** ★v1101：聊天框任何情况下都不展示输入提示（placeholder 已删除） */
+/** 聊天框任何情况下都不展示输入提示（placeholder 已删除） */
 
 async function send(): Promise<void> {
   const content = input.value.trim()
@@ -462,9 +531,9 @@ async function send(): Promise<void> {
   }
   sending.value = true
   input.value = ''
-  // ★v1031：实际发起问答的模型即为「上次使用的模型」
+  // 实际发起问答的模型即为「上次使用的模型」
   rememberModelRef(modelRef.value)
-  // ★v1101：隐藏上下文（润色提示词）随本条消息发送后清空
+  // 隐藏上下文（润色提示词）随本条消息发送后清空
   const hidden = pendingHidden.value
   pendingHidden.value = ''
   try {
@@ -518,6 +587,28 @@ function queueSend(): void {
   ElMessage.success(t('agent.queued'))
 }
 
+// ---------------------------------------------------------------------------
+// 排队消息——在会话流内展示；点击气泡回聊天框编辑/再发送；× 删除。
+// AI 已在思考处理的消息（普通用户气泡）不提供任何编辑/删除入口。
+// ---------------------------------------------------------------------------
+
+/** 点击排队气泡：内容回到聊天输入框（移出队列），用户编辑后再次发送 */
+function editQueuedFromChat(id: number): void {
+  const item = agent.queued.find((q) => q.id === id)
+  if (!item) return
+  agent.removeQueued(id)
+  input.value = item.content
+  pendingHidden.value = item.hiddenContext ?? ''
+  void nextTick(() => {
+    const box = document.querySelector<HTMLTextAreaElement>('.chat-input textarea')
+    box?.focus()
+  })
+}
+
+function removeQueueItem(id: number): void {
+  agent.removeQueued(id)
+}
+
 async function onStop(): Promise<void> {
   await agent.cancelRun()
   ElMessage.info(t('agent.cancelledRun'))
@@ -538,7 +629,7 @@ function formatToolCall(tc: { name: string; args?: Record<string, unknown> }): s
 }
 
 // ---------------------------------------------------------------------------
-// 「+」添加内容（v1029）：大纲 / 章节 / 本地文件，改由 ContextPicker 统一承载
+// 「+」添加内容：大纲 / 章节 / 本地文件，改由 ContextPicker 统一承载
 // ---------------------------------------------------------------------------
 
 /** 已添加的上下文块（随下一条消息一起发送；发送后释放） */
@@ -546,9 +637,9 @@ const blocks = ref<ContextBlock[]>([])
 const addPopover = ref(false)
 
 /**
- * v1031：正文选区[AI润色]加入的上下文块（限定 AI 修改范围）。
+ * 正文选区[AI润色]加入的上下文块（限定 AI 修改范围）。
  * 与「添加文件」同形制展示/发送；本轮问答结束后一并释放。
- * v1030续(6)：块内带上「所在章节 + 段落范围 + 前后文」，让大模型知道这段文本
+ * 块内带上「所在章节 + 段落范围 + 前后文」，让大模型知道这段文本
  * 在文章中的位置，从而只针对该范围润色修改。
  */
 const selectionBlocks = computed<ContextBlock[]>(() =>
@@ -567,7 +658,7 @@ const selectionBlocks = computed<ContextBlock[]>(() =>
 const allBlocks = computed<ContextBlock[]>(() => [...selectionBlocks.value, ...blocks.value])
 
 /**
- * ★v1101：可见消息只含「添加文件」块；选区润色块走**隐藏上下文**
+ * 可见消息只含「添加文件」块；选区润色块走**隐藏上下文**
  * （随消息一起发给 Agent，但不在会话里展示提示词）。
  */
 const visibleBlocks = computed<ContextBlock[]>(() =>
@@ -597,8 +688,9 @@ function removeBlock(idx: number): void {
 }
 
 /**
- * 组装最终**可见**消息：已选工具（#子代理 / @技能）+ 添加文件块 + 用户输入。
- * ★v1101：选区润色块不再拼进可见消息（改走隐藏上下文，见 composeHiddenContext）。
+ * 组装最终**可见**消息：已选工具（#子代理 / @技能）+ 用户输入。
+ * 添加文件/大纲/章节的**正文不再塞进对话框**——内容改走隐藏上下文
+ * （随消息送给模型，但会话里只保留文件名标记与用户问题）。
  */
 function composeMessage(): string {
   const question = input.value.trim()
@@ -611,48 +703,58 @@ function composeMessage(): string {
     parts.push(`【本次指定使用的工具】${marks}\n请优先调用以上工具完成本次任务。`)
   }
 
-  for (const b of visibleBlocks.value) {
-    parts.push(`【${b.label}】\n${b.text}`)
-  }
-
   if (question) parts.push(question)
   return parts.join('\n\n---\n\n')
 }
 
 /**
- * ★v1101：组装**隐藏上下文**（选区润色提示词）——随本轮消息一起发给 Agent，
+ * 组装**隐藏上下文**（选区润色提示词）——随本轮消息一起发给 Agent，
  * 后端以 system 消息请求级注入模型，不入消息树、不在会话里展示。
+ * 添加的大纲/章节/本地文件正文也走这里——对话框里只留文件名标记，
+ * 内容以「【文件名】…」形式随隐藏上下文送给模型。
  */
 function composeHiddenContext(): string {
-  const polys = allBlocks.value.filter((b) => b.rangeLabel && b.chapterId)
-  if (!polys.length) return ''
-  const parts = polys.map((b) => {
-    const lines = [
-      `【选中待润色文本】${b.label}`,
-      `所在章节 id：${b.chapterId}`,
-      `所在范围：${b.rangeLabel}`,
-    ]
-    if (b.before) lines.push('', '（选区前文，仅供衔接，请勿修改）', b.before)
-    lines.push('', '（选中文本原文，只允许修改这一段）', b.text)
-    if (b.after) lines.push('', '（选区后文，仅供衔接，请勿修改）', b.after)
-    lines.push(
-      '',
-      '请按我的要求润色以上选中文本：只输出修改后的这一段（不要输出前文/后文），' +
-        '完成后把修改结果写回该章节对应位置（写回前会先存快照，可回滚）。',
+  const sections: string[] = []
+
+  const attached = visibleBlocks.value
+  if (attached.length) {
+    sections.push(
+      attached.map((b) => `【${b.label}】\n${b.text}`).join('\n\n---\n\n'),
     )
-    return lines.join('\n')
-  })
-  return parts.join('\n\n---\n\n')
+  }
+
+  const polys = allBlocks.value.filter((b) => b.rangeLabel && b.chapterId)
+  if (polys.length) {
+    const parts = polys.map((b) => {
+      const lines = [
+        `【选中待润色文本】${b.label}`,
+        `所在章节 id：${b.chapterId}`,
+        `所在范围：${b.rangeLabel}`,
+      ]
+      if (b.before) lines.push('', '（选区前文，仅供衔接，请勿修改）', b.before)
+      lines.push('', '（选中文本原文，只允许修改这一段）', b.text)
+      if (b.after) lines.push('', '（选区后文，仅供衔接，请勿修改）', b.after)
+      lines.push(
+        '',
+        '请按我的要求润色以上选中文本：只输出修改后的这一段（不要输出前文/后文），' +
+          '完成后把修改结果写回该章节对应位置（写回前会先存快照，可回滚）。',
+      )
+      return lines.join('\n')
+    })
+    sections.push(parts.join('\n\n---\n\n'))
+  }
+
+  return sections.join('\n\n---\n\n')
 }
 
-/** v1029：当前问答结束后释放文件缓存（上下文块清空）；v1031：选区润色块一并释放 */
+/** 当前问答结束后释放文件缓存（上下文块清空）；选区润色块一并释放 */
 function releaseAttached(): void {
   blocks.value = []
   agent.clearPendingSelections()
 }
 
 // ---------------------------------------------------------------------------
-// 「工具」：子代理 / 技能（v1029 由 ToolsPicker 承载目录展示）
+// 「工具」：子代理 / 技能
 // ---------------------------------------------------------------------------
 
 interface ChipItem {
@@ -704,7 +806,7 @@ watch(
       chips.value = []
       return
     }
-    // v1102：发送时新建会话的流程自行保留/持久化 chips，避免被此处回填清空
+    // 发送时新建会话的流程自行保留/持久化 chips，避免被此处回填清空
     if (keepChipsAcrossSessionChange.value) return
     await loadToolNames()
     const items: ChipItem[] = []
@@ -718,7 +820,7 @@ watch(
   },
 )
 
-/** v1029：选中子代理/技能 → chips 展示 `#名` / `@名`，并持久化到会话（后端据此装配 agent） */
+/** 选中子代理/技能 → chips 展示 `#名` / `@名`，并持久化到会话（后端据此装配 agent） */
 async function toggleChip(kind: ChipItem['kind'], id: string, label: string): Promise<void> {
   const exists = chips.value.some((c) => c.kind === kind && c.id === id)
   chips.value = exists
@@ -745,20 +847,30 @@ function removeChip(kind: ChipItem['kind'], id: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// ★v1101：[生成本章]按钮已移除——流程（四阶段工作流）改为用户在对话中表达
+// [生成本章]按钮已移除——流程（四阶段工作流）改为用户在对话中表达
 // 「按大纲某章简介生成/修改正文」的意图时由后端自动触发。
 // ---------------------------------------------------------------------------
 
 /** 回车/点击发送：把已选工具与上下文块合并进 input，再走正常发送或运行中三选项 */
 function onSubmit(): void {
   if (!project.currentNovelId) return
-  // v1029：已添加的大纲/章节/本地文件、已选的 #子代理 / @技能 与用户输入合并成一条消息
-  // ★v1101：选区[AI润色]块不再拼进可见消息——提示词走隐藏上下文随消息一起发送
-  if ((visibleBlocks.value.length || chips.value.length) && input.value.trim()) {
+  // 已添加的大纲/章节/本地文件、已选的 #子代理 / @技能 与用户输入合并成一条消息
+  // 选区[AI润色]块不再拼进可见消息——提示词走隐藏上下文随消息一起发送
+  // 添加文件正文也走隐藏上下文；只有附件没有输入文字时同样允许发送
+  pendingHidden.value = composeHiddenContext()
+  if (input.value.trim() && (visibleBlocks.value.length || chips.value.length)) {
     input.value = composeMessage()
   }
-  pendingHidden.value = composeHiddenContext()
   if (!input.value.trim()) return
+  // 记录「发送内容 → 添加文件标签」，用户气泡上方据此展示附件 chips
+  if (visibleBlocks.value.length) {
+    attachmentLabels.value = {
+      ...attachmentLabels.value,
+      [input.value.trim()]: visibleBlocks.value.map((b) => b.label),
+    }
+  }
+  // 发送后清空输入区附件 chips（内容已随隐藏上下文送出，不再重复添加）
+  releaseAttached()
   // 运行中 → 弹出三选项（停止并发送 / 通过消息引导发送 / 添加到队列）
   if (agent.running) {
     sendMenu.value = true
@@ -769,7 +881,7 @@ function onSubmit(): void {
 }
 
 /**
- * v1029：当前问答结束后释放文件缓存。
+ * 当前问答结束后释放文件缓存。
  * `agent.running` 由 true → false 表示本轮 run 收尾（run.end / 缓冲丢失 / 取消），
  * 此时把已添加的大纲、章节、本地文件内容从内存中释放（不再随下一条消息携带）。
  */
@@ -786,16 +898,16 @@ watch(
 
 <template>
   <div class="agent-panel">
-    <!-- 头部：当前会话数量 + 当前小说项目 token 使用量（v1028 删除「AI助手」与 + 号） -->
+    <!-- 头部：当前会话数量 + 当前小说项目 token 使用量 -->
     <div class="panel-head">
-      <!-- v1029：会话数换成「层叠文档」icon（原对话气泡留给 token 统计区分度） -->
+      <!-- 会话数换成「层叠文档」icon（原对话气泡留给 token 统计区分度） -->
       <span class="head-stat" :title="t('agent.sessionListTitle')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
           <path d="M12 3 3 7.5 12 12l9-4.5L12 3zM5 11.2 3 12.2l9 4.5 9-4.5-2-1-7 3.5-7-3.5zM5 15.4 3 16.4l9 4.5 9-4.5-2-1-7 3.5-7-3.5z" />
         </svg>
         {{ sessionCountLabel }}
       </span>
-      <!-- ★v1101：Token 消耗量悬浮展示 input / output 各自明细 -->
+      <!-- Token 消耗量悬浮展示 input / output 各自明细 -->
       <el-tooltip
         v-if="project.currentNovel"
         placement="bottom"
@@ -803,7 +915,7 @@ watch(
         popper-class="usage-tip-popper"
       >
         <template #content>
-          <!-- ★v1101：悬浮只展示一行入/出明细（单位 K/M） -->
+          <!-- 悬浮只展示一行入/出明细（单位 K/M） -->
           <div class="usage-tip">{{ t('agent.usage', {
             in: formatTokens(agent.usage.tokens_in), out: formatTokens(agent.usage.tokens_out) }) }}</div>
         </template>
@@ -817,8 +929,8 @@ watch(
       <div class="head-spacer" />
     </div>
 
-    <!-- v1029：删除「尚未配置大模型…」提示——未配置或未选择大模型时不需要提示
-         v1030续：头部不再放[新建会话]；运行状态条（AI 正在思考… / 停止）移入会话内部 -->
+    <!-- 删除「尚未配置大模型…」提示——未配置或未选择大模型时不需要提示
+         头部不再放[新建会话]；运行状态条（AI 正在思考… / 停止）移入会话内部 -->
 
     <!-- ============ 无小说项目 ============ -->
     <div v-if="!project.currentNovel" class="panel-body center-body">
@@ -828,12 +940,12 @@ watch(
     <!-- ============ 会话记录列表 ============ -->
     <div v-else-if="!agent.currentSessionId" class="panel-body scroll-y">
       <div v-if="!sessionList.length" class="center-body">
-        <!-- ★v1101：聊天框任何情况下都不再展示输入提示文案 -->
+        <!-- 聊天框任何情况下都不再展示输入提示文案 -->
         <div class="empty-tip">{{ t('agent.noSession') }}</div>
       </div>
       <template v-else>
-        <!-- v1030续(3)：删除「会话记录 2/50」这一行——会话数量已在最上方头部展示 -->
-        <!-- v1030续(4)：会话列表态下的报错同样给出中文提示与处置建议（灰色） -->
+        <!-- 删除「会话记录 2/50」这一行——会话数量已在最上方头部展示 -->
+        <!-- 会话列表态下的报错同样给出中文提示与处置建议（灰色） -->
         <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
           <div class="msg-content error-content">
             <div class="error-title">{{ errorInfo.title }}</div>
@@ -855,7 +967,7 @@ watch(
             <div class="session-title">{{ s.title }}</div>
             <div class="session-date">{{ dateOf(s.updated_at || s.created_at) }}</div>
           </div>
-          <!-- ★v1101：该会话有 Agent 正在思考执行 → 条目右侧灰色小字提示 -->
+          <!-- 该会话有 Agent 正在思考执行 → 条目右侧灰色小字提示 -->
           <span v-if="isSessionRunning(s)" class="session-running">{{ t('agent.sessionRunning') }}</span>
           <el-dropdown trigger="click" placement="bottom-end" @command="(cmd: string) => {
             if (cmd === 'rename') renameSession(s.id, s.title)
@@ -865,7 +977,7 @@ watch(
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="rename">{{ t('agent.renameSession') }}</el-dropdown-item>
-                <!-- ★v1031：删除「导出会话」入口 -->
+                <!-- 删除「导出会话」入口 -->
                 <el-dropdown-item command="delete">{{ t('agent.deleteSession') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -876,7 +988,7 @@ watch(
 
     <!-- ============ 会话对话 ============ -->
     <template v-else>
-      <!-- v1030续(1)：会话内只保留「返回 + 会话标题」，右上角的[新建会话]与[···]已删除
+      <!-- 会话内只保留「返回 + 会话标题」，右上角的[新建会话]与[···]已删除
            （重命名 / 导出 / 删除改由会话记录列表的 ··· 提供；新会话回到列表直接发消息即可开启） -->
       <div class="chat-head">
         <el-button text size="small" class="back-btn" @click="backToList">
@@ -898,16 +1010,34 @@ watch(
           class="msg"
           :class="[`msg-${msg.role}`, { 'msg-streaming': msg.streaming }]"
         >
+        <!-- 添加文件标签（仿 VS Code Copilot，展示在用户消息上方；灰色不可删除） -->
+          <div v-if="msg.attachments?.length" class="msg-attachments">
+            <el-tag
+              v-for="label in msg.attachments"
+              :key="label"
+              size="small"
+              type="info"
+              effect="plain"
+              class="attachment-tag"
+              disable-transitions
+            >
+              {{ label }}
+            </el-tag>
+          </div>
           <div class="msg-content">
             <template v-if="msg.toolCalls?.length">
               <div v-for="(tc, i) in msg.toolCalls" :key="i" class="tool-card">
                 <code>{{ formatToolCall(tc) }}</code>
               </div>
             </template>
-            <span v-if="msg.content" class="msg-text">{{ msg.content }}</span>
+            <div v-if="msg.content && msg.role === 'assistant'" class="msg-text">
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <div class="novel-prose msg-prose" v-html="renderMarkdown(msg.content)" />
+            </div>
+            <span v-else-if="msg.content" class="msg-text">{{ msg.content }}</span>
             <span v-if="msg.streaming" class="cursor-blink">▌</span>
           </div>
-          <!-- v1028：每个问答下方小字标记日期和时间 -->
+          <!-- 每个问答下方小字标记日期和时间 -->
           <div class="msg-foot">
             <span v-if="msg.createdAt" class="msg-time">{{ stampOf(msg.createdAt) }}</span>
             <span v-else-if="msg.streaming" class="msg-time">{{ t('agent.running') }}</span>
@@ -923,24 +1053,83 @@ watch(
           </div>
         </div>
 
-        <!-- v1030续(1)：「AI 正在思考…」放进会话内部（模仿主流 AI Agent），
+        <!-- 「AI 正在思考…」放进会话内部（模仿主流 AI Agent），
              不再占用会话框最上方一整行
-             ★v1031：[停止] 从状态条移到底部发送按键（三形态：发送 / 停止 / 追加消息） -->
-        <div
-          v-if="agent.running || agent.activeSubagents.length || agent.workflowStage"
-          class="status-inline"
-        >
-          <span v-if="agent.running" class="dot-pulse" />
-          <span v-if="agent.running" class="status-text">{{ t('agent.running') }}</span>
-          <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
-            {{ t('agent.subagentLane') }}: {{ sa }}
-          </el-tag>
-          <el-tag v-if="agent.workflowStage" size="small" type="warning">
-            {{ t('agent.workflowStage') }}: {{ agent.workflowStage }}
-          </el-tag>
+             [停止] 从状态条移到底部发送按键（三形态：发送 / 停止 / 追加消息）
+             置于「模型思考与工具调用过程」折叠区**上方**；
+             子代理/流程标签一并收纳进过程区头部，状态行只留思考提示 -->
+        <div v-if="agent.running" class="status-inline">
+          <span class="dot-pulse" />
+          <span class="status-text">{{ t('agent.running') }}</span>
         </div>
 
-        <!-- v1030续(4)：Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
+        <!-- 运行中「通过消息引导发送」的引导消息（展示在队列消息之前；
+             已注入正在跑的 run，不可编辑/删除；run 结束后清空） -->
+        <div v-for="s in agent.steered" :key="`s-${s.id}`" class="queue-bubble msg-user">
+          <div class="msg-content steer-content">
+            <el-tag size="small" type="warning" effect="plain" class="steer-tag">引导</el-tag>
+            <span class="msg-text">{{ s.content }}</span>
+          </div>
+          <div class="msg-foot">
+            <span class="msg-time">{{ stampOf(s.sentAt) }}</span>
+          </div>
+        </div>
+
+        <!-- 排队中的补充消息（展示在「AI 正在思考…」下方；点击回聊天框编辑/再发送，× 在右上角删除） -->
+        <div v-for="q in agent.queued" :key="`q-${q.id}`" class="queue-bubble msg-user">
+          <button
+            class="queue-del"
+            :title="t('common.delete')"
+            @click.stop="removeQueueItem(q.id)"
+          >
+            ×
+          </button>
+          <div class="msg-content" @click="editQueuedFromChat(q.id)">
+            <span class="msg-text">{{ q.content }}</span>
+          </div>
+          <div class="msg-foot">
+            <span v-if="q.queuedAt" class="msg-time">{{ stampOf(q.queuedAt) }}</span>
+          </div>
+        </div>
+
+        <!-- 模型思考与工具调用过程（运行中展开、run 结束自动收起，仿 VS Code Copilot；无边框） -->
+        <div v-if="liveProcess.length" class="process-block">
+          <button class="process-head" @click="processOpen = !processOpen">
+            <svg
+              class="chev"
+              :class="{ collapsed: !processOpen }"
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M8.6 4.6 14.3 10.3l-5.7 5.7-1.4-1.4L11.5 12 7.2 7.7z" />
+            </svg>
+            <span>
+              {{ processOpen ? '收起模型思考与工具调用过程' : `展开模型思考与工具调用过程（${liveProcess.length}）` }}
+            </span>
+            <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
+              {{ t('agent.subagentLane') }}: {{ sa }}
+            </el-tag>
+            <el-tag v-if="agent.workflowStage" size="small" type="warning">
+              {{ t('agent.workflowStage') }}: {{ agent.workflowStage }}
+            </el-tag>
+            <span v-if="agent.running" class="dot-pulse" />
+          </button>
+          <div v-if="processOpen" class="process-body scroll-y">
+            <div v-for="p in liveProcess" :key="p.key" class="process-item">
+              <div v-if="p.kind === 'tool'" class="process-title">
+                <code>{{ p.title }}</code>
+                <span v-if="!p.done" class="dot-pulse" />
+              </div>
+              <pre v-if="p.body" class="process-text">{{ p.body }}</pre>
+              <span v-if="p.kind === 'text' && !p.done" class="cursor-blink">▌</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
              整块灰色（代表异常不可用），像一条助手消息一样留在会话里 -->
         <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
           <div class="msg-content error-content">
@@ -972,7 +1161,7 @@ watch(
 
     <!-- ============ 输入区（copilot 形制） ============ -->
     <div class="panel-input">
-      <!-- 已添加的上下文块（v1031：含正文选区[AI润色]加入的限定范围块） -->
+      <!-- 已添加的上下文块（发送后存为工作区文件，AI 按需读取；提示语见 title） -->
       <div v-if="allBlocks.length" class="blocks-row">
         <el-tag
           v-for="(b, i) in allBlocks"
@@ -980,13 +1169,18 @@ watch(
           size="small"
           closable
           :type="b.kind === 'outline' ? 'warning' : b.kind === 'chapter' ? 'success' : 'info'"
+          :title="
+            i < selectionBlocks.length
+              ? b.label
+              : t('agent.attachmentStoredHint', { label: b.label })
+          "
           @close="i < selectionBlocks.length ? removeSelectionBlock(i) : removeBlock(i - selectionBlocks.length)"
         >
           {{ b.label }}
         </el-tag>
       </div>
 
-      <!-- 已选工具（v1029：子代理显示 #名，技能显示 @名） -->
+      <!-- 已选工具 -->
       <div v-if="chips.length" class="chips-row">
         <el-tag
           v-for="c in chips"
@@ -1000,14 +1194,10 @@ watch(
         </el-tag>
       </div>
 
-      <!-- 队列提示 -->
-      <div v-if="agent.queued.length" class="queue-hint">
-        <span class="muted text-sm">队列中 {{ agent.queued.length }} 条待发送</span>
-        <el-button text size="small" @click="agent.clearQueue()">清空</el-button>
-      </div>
+      <!-- 排队消息改在会话流内展示（点击气泡回聊天框编辑/再发送），输入区不再列表展示 -->
 
       <div class="input-box" :class="{ focused: false }">
-        <!-- v1029：随输入自适应上拉，最多到页面高度的 1/3 -->
+        <!-- 随输入自适应上拉，最多到页面高度的 1/3 -->
         <el-input
           v-model="input"
           type="textarea"
@@ -1020,7 +1210,7 @@ watch(
 
         <!-- 输入框内工具条：+ / 工具 / Model / 上下文使用情况 / 发送箭头 -->
         <div class="input-bar">
-          <!-- ＋：v1029 添加文件页（搜索框 + 小说项目大纲或文章 + 本地文件 + 最近打开的章节） -->
+          <!-- ＋：添加文件页（搜索框 + 小说项目大纲或文章 + 本地文件 + 最近打开的章节） -->
           <el-popover
             v-model:visible="addPopover"
             placement="top-start"
@@ -1039,7 +1229,7 @@ watch(
             />
           </el-popover>
 
-          <!-- 工具：v1029 只展示 [写作子代理] / [写作技能] 两个入口，没有内容时不显示 -->
+          <!-- 工具：只展示 [写作子代理] / [写作技能] 两个入口，没有内容时不显示 -->
           <el-popover
             v-model:visible="toolPopover"
             placement="top-start"
@@ -1059,7 +1249,7 @@ watch(
             />
           </el-popover>
 
-          <!-- Model（v1029）：左侧无 icon、Model Off 不用斜体；
+          <!-- Model：左侧无 icon、Model Off 不用斜体；
                弹窗内**不显示** Model Off 选项；无模型时在弹窗里提示「尚未配置大模型」；
                点击某模型名 → 收起弹窗，按钮文案变为该模型名称 -->
           <el-dropdown trigger="click" placement="top-start" @command="(v: string) => onModelPicked(v)">
@@ -1077,15 +1267,15 @@ watch(
                   :command="m.model_ref"
                   :class="{ 'is-selected': m.model_ref === modelRef }"
                 >
-                  <!-- ★v1031 续：去掉模型名后的「· 33K」上下文窗口小字（用户不需要） -->
+                  <!-- 去掉模型名后的「· 33K」上下文窗口小字（用户不需要） -->
                   {{ m.display_name }}{{ m.is_default ? ' ★' : '' }}
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
 
-          <!-- v1029（1.4）：Model Off 右侧显示「剩余上下文百分比」= 1 − 已占用 ÷ 窗口。
-               每次模型回复刷新；新会话回到 100%；<20% 时高亮警示。
+          <!-- （1.4）：Model Off 右侧显示「剩余上下文百分比」= 1 − 已注入 ÷ 配置窗口。
+          每次模型回复刷新；新会话回到 100%；剩余 <10% 时高亮警示（压缩已介入）。
                未选模型 / 窗口未知时不展示。详细用量放进 title。 -->
           <span
             v-if="contextRemainingPct !== null"
@@ -1098,7 +1288,7 @@ watch(
 
           <div class="bar-spacer" />
 
-          <!-- ★v1031：底部这颗按键统一承载「发送 / 停止 / 追加消息」三种形态（模仿主流大模型与 Agent）：
+          <!-- 底部这颗按键统一承载「发送 / 停止 / 追加消息」三种形态（模仿主流大模型与 Agent）：
                · 未在运行                → 发送箭头（可发送时点亮）
                · 运行中 + 输入框为空      → 停止形态（方块），点击立即停止本轮回答
                · 运行中 + 已输入追加内容  → 追加形态，弹出「停止后发送 / 添加到队列 / 添加为引导」 -->
@@ -1194,7 +1384,7 @@ watch(
   flex: 1;
 }
 
-/* v1030续(1)：运行状态条移入会话内部（原 .status-bar 顶部整行已删除） */
+/* 运行状态条移入会话内部（原 .status-bar 顶部整行已删除） */
 .status-inline {
   display: flex;
   align-items: center;
@@ -1209,7 +1399,7 @@ watch(
   color: var(--el-text-color-secondary);
 }
 
-/* ★v1031：[停止] 已移到底部发送按键，状态条里的 .status-stop 随之删除 */
+/* [停止] 已移到底部发送按键，状态条里的 .status-stop 随之删除 */
 
 .dot-pulse {
   width: 8px;
@@ -1224,7 +1414,7 @@ watch(
   50% { opacity: 1; }
 }
 
-/* v1030续(4)：报错卡片——中文提示 + 处置建议，整块灰色（异常不可用） */
+/* 报错卡片——中文提示 + 处置建议，整块灰色（异常不可用） */
 .msg-error .error-content {
   background: var(--bg-hover);
   border: 1px solid var(--border);
@@ -1306,7 +1496,7 @@ watch(
   margin-top: 2px;
 }
 
-/* ★v1101：会话条目右侧「AI思考执行中……」灰色小字 */
+/* 会话条目右侧「AI思考执行中……」灰色小字 */
 .session-running {
   flex-shrink: 0;
   font-size: 11px;
@@ -1414,6 +1604,193 @@ watch(
   50% { opacity: 0; }
 }
 
+/* 用户消息上方的添加文件标签行（灰色、不可删除） */
+.msg-attachments {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.attachment-tag {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--el-fill-color);
+  cursor: default;
+}
+
+/* 排队消息气泡（位于「AI 正在思考…」下方；点击回聊天框编辑，× 右上角删除） */
+.queue-bubble {
+  position: relative;
+  align-self: flex-end;
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.queue-bubble .msg-content {
+  cursor: pointer;
+  background: var(--el-color-primary-light-9);
+  border: 1px dashed var(--el-color-primary-light-5);
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-width: 100%;
+}
+
+.queue-bubble .msg-content:hover {
+  border-color: var(--el-color-primary);
+}
+
+/* 引导消息：不可交互，warning 虚线边 + 小标签 */
+.steer-content {
+  cursor: default;
+  border-color: var(--el-color-warning-light-5);
+  background: var(--el-color-warning-light-9);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.steer-content:hover {
+  border-color: var(--el-color-warning-light-5);
+}
+
+.steer-tag {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.queue-del {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--el-fill-color-darker, var(--el-fill-color));
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queue-del:hover {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
+/* AI 回复的 markdown 排版（复用全局 .novel-prose，压缩外边距） */
+.msg-prose {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.msg-prose :deep(h1),
+.msg-prose :deep(h2),
+.msg-prose :deep(h3) {
+  margin: 8px 0 4px;
+  font-size: 14px;
+}
+
+.msg-prose :deep(p) {
+  margin: 4px 0;
+}
+
+.msg-prose :deep(pre) {
+  background: var(--el-fill-color);
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+.msg-prose :deep(table) {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.msg-prose :deep(th),
+.msg-prose :deep(td) {
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+}
+
+.msg-prose :deep(ul),
+.msg-prose :deep(ol) {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+
+/* 模型思考与工具调用过程折叠区（无边框，仅留分隔感） */
+.process-block {
+  margin: 6px 0 2px;
+}
+
+.process-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  user-select: none;
+  /* 重置原生 button 外观（去掉灰底与边框） */
+  border: none;
+  background: transparent;
+  text-align: left;
+}
+
+.process-head .chev {
+  transition: transform 0.15s;
+}
+
+.process-head .chev.collapsed {
+  transform: rotate(-90deg);
+}
+
+.process-body {
+  max-height: 220px;
+  padding: 4px 2px 8px;
+  overflow-y: auto;
+}
+
+.process-item {
+  margin-bottom: 6px;
+}
+
+.process-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+
+.process-title code {
+  font-family: var(--el-font-family-mono, monospace);
+  color: var(--el-color-primary);
+}
+
+.process-text {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--el-text-color-regular);
+}
+
 .tool-card {
   background: var(--el-fill-color);
   border: 1px solid var(--border);
@@ -1446,12 +1823,6 @@ watch(
   flex-wrap: wrap;
 }
 
-.queue-hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .input-box {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1470,7 +1841,7 @@ watch(
   background: transparent;
   padding: 8px 10px 4px;
   font-size: 13px;
-  /* v1029：行高固定，配合 autosize 的最大行数换算「最多到页面高度的 1/3」 */
+  /* 行高固定，配合 autosize 的最大行数换算「最多到页面高度的 1/3」 */
   line-height: 22px;
 }
 
@@ -1513,7 +1884,7 @@ watch(
   text-overflow: ellipsis;
 }
 
-/* v1029：Model Off 不用斜体，仅以弱化色区分「未选择模型」 */
+/* Model Off 不用斜体，仅以弱化色区分「未选择模型」 */
 .model-btn.off {
   color: var(--text-muted);
 }
@@ -1525,7 +1896,7 @@ watch(
   font-variant-numeric: tabular-nums;
 }
 
-/* v1029（1.4）：剩余上下文 <20% → 警示色，提示压缩机制即将/已经介入 */
+/* （1.4）：剩余上下文 <20% → 警示色，提示压缩机制即将/已经介入 */
 .bar-ctx.is-low {
   color: var(--el-color-danger, #f56c6c);
   font-weight: 600;
@@ -1535,7 +1906,7 @@ watch(
   flex: 1;
 }
 
-/* ★v1031：[重新生成]已删除，.regen-btn 样式一并移除；★v1101：[生成本章]删除，.gen-btn 一并移除 */
+/* [重新生成]已删除，.regen-btn 样式一并移除；[生成本章]删除，.gen-btn 一并移除 */
 
 .send-btn {
   display: inline-flex;
@@ -1561,7 +1932,7 @@ watch(
   background: var(--el-color-warning);
 }
 
-/* ★v1031：停止形态（运行中且输入框为空）——红色方块，点击立即停止本轮回答 */
+/* 停止形态（运行中且输入框为空）——红色方块，点击立即停止本轮回答 */
 .send-btn.stop {
   background: var(--el-color-danger);
 }
@@ -1571,7 +1942,7 @@ watch(
   flex-direction: column;
 }
 
-/* v1030续(2)：每种发送模式 = 名称 + 一句说明（模仿主流大模型 / Agent） */
+/* 每种发送模式 = 名称 + 一句说明（模仿主流大模型 / Agent） */
 .send-menu-item {
   display: flex;
   flex-direction: column;
@@ -1623,7 +1994,7 @@ watch(
   font-weight: 600;
 }
 
-/* ★v1101：头部 Token 悬浮明细（popper teleport 到 body，需全局样式） */
+/* 头部 Token 悬浮明细（popper teleport 到 body，需全局样式） */
 .usage-tip {
   font-size: 12px;
   line-height: 1.6;

@@ -1,6 +1,6 @@
 /**
  * 各模块 API 接口封装，与后端路由树（手册「六」）一一对应。
- * ★卷章无 reorder / move 接口：v1029 起位置编辑走「插入」（create 带 ordinal，其后各项顺延）。
+ * 卷章无 reorder / move 接口：起位置编辑走「插入」（create 带 ordinal，其后各项顺延）。
  */
 import { del, get, http, patch, post, put } from './http'
 import type {
@@ -80,7 +80,7 @@ export const progressApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 卷（★v1029：无拖拽重排，但支持按 ordinal 插入到指定位置）
+// 卷
 // ---------------------------------------------------------------------------
 
 export const volumesApi = {
@@ -88,7 +88,7 @@ export const volumesApi = {
 
   /**
    * ordinal 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
-   * v1030续：`firstChapterTitle` = 随卷一并创建的第一章名（★不支持空卷）。
+   * `firstChapterTitle` = 随卷一并创建的第一章名（不支持空卷）。
    */
   create: (
     novelId: string,
@@ -112,7 +112,7 @@ export const volumesApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 章（★v1029：无跨卷移动，支持按 ordinal 插入；删空卷 → 卷一并删除）
+// 章
 // ---------------------------------------------------------------------------
 
 export const chaptersApi = {
@@ -122,7 +122,7 @@ export const chaptersApi = {
   create: (volId: string, title: string, content = '', ordinal?: number) =>
     post<Chapter>(`/volumes/${volId}/chapters`, { title, content, ordinal }),
 
-  /** v1029：重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改） */
+  /** 重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改） */
   update: (
     chapterId: string,
     payload: { title?: string; volume_title?: string },
@@ -143,7 +143,7 @@ export const contentApi = {
   read: (chapterId: string) => get<ChapterContent>(`/chapters/${chapterId}/content`),
 
   /**
-   * ★v1101：当前被 AI 编辑锁定的章节列表（启动 / SSE 重连后对账用）。
+   * 当前被 AI 编辑锁定的章节列表（启动 / SSE 重连后对账用）。
    */
   locks: () => get<{ chapter_id: string; run_id: string; session_id: string; project_id: string }[]>(`/chapters/locks`),
 
@@ -151,7 +151,7 @@ export const contentApi = {
    * 写正文。
    * @param baseVersion 读取时拿到的 version；不符返回 409/40901
    * @param autosave true 时不产生修订快照（防版本爆炸）
-   * ★v1101：章节被 AI 编辑锁定时返回 409/40903（手动与自动保存同拒）
+   * 章节被 AI 编辑锁定时返回 409/40903（手动与自动保存同拒）
    */
   write: (chapterId: string, content: string, baseVersion: number, autosave = false) =>
     put<ContentWriteResult>(`/chapters/${chapterId}/content`, {
@@ -169,7 +169,7 @@ export const contentApi = {
 }
 
 // ---------------------------------------------------------------------------
-// 大纲（★v1029：参考资料，保存只返回只读差异报告，不再回填卷章 sort_order）
+// 大纲
 // ---------------------------------------------------------------------------
 
 export const outlineApi = {
@@ -204,7 +204,7 @@ export const settingsApi = {
 
   save: (payload: Partial<UserSettings>) => put<UserSettings>('/settings', payload),
 
-  /** v1028：恢复默认设置 */
+  /** 恢复默认设置 */
   reset: () => post<UserSettings>('/settings/reset'),
 }
 
@@ -266,7 +266,6 @@ export const llmApi = {
     default_params?: Record<string, unknown>
     is_default?: boolean
     enabled?: boolean
-    fallback_chain?: string[]
   }) => post<LlmModelDto>('/llm/models', payload),
 
   updateModel: (
@@ -279,7 +278,6 @@ export const llmApi = {
       default_params?: Record<string, unknown>
       is_default?: boolean
       enabled?: boolean
-      fallback_chain?: string[]
     },
   ) => patch<LlmModelDto>(`/llm/models/${id}`, payload),
 
@@ -321,7 +319,7 @@ export interface SkillDto {
   kind?: 'tool' | 'writing'
   /** 内置工具对应的真实工具名（read_file/edit_file/ls/grep/glob/web_search/write_file）；自建技能为 null */
   tool_name?: string | null
-  /** v1102：会话级内置写作技能（web_search）——只进「工具添加」浮层，不进 AI 设置页 */
+  /** 会话级内置写作技能（web_search）——只进「工具添加」浮层，不进 AI 设置页 */
   session_builtin?: boolean
   created_at?: string | null
   updated_at?: string | null
@@ -349,7 +347,7 @@ export const configApi = {
   resetSubagent: (id: string) => post<SubagentDto>(`/subagents/${id}/reset`),
 
   /** 技能 = 用户自建；接口返回自建技能 + 内置工具（kind=tool 为 Agent 基础工具，只读展示）。
-   *  `picker=true`（v1102 会话级工具添加浮层）：内置项只列 web_search 会话级写作技能。 */
+   * `picker=true`：内置项只列 web_search 会话级写作技能。 */
   listSkills: (picker = false) => get<SkillDto[]>(`/skills${picker ? '?picker=true' : ''}`),
 
   createSkill: (payload: {
@@ -375,13 +373,13 @@ export const configApi = {
 
 // ---------------------------------------------------------------------------
 // 动态组件（M6）
-// ★v1028：前端已删除「MCP 服务」管理页（mcpApi 随之移除）；
+// 前端已删除「MCP 服务」管理页（mcpApi 随之移除）；
 //   后端 /mcp-servers API 与内置天气 MCP 保留，天气 MCP 仍由 Agent 自动装配。
 // ---------------------------------------------------------------------------
 
 export interface WeatherDto {
   city: string
-  /** v1029：具体地址（反向地理编码得到，可为空）——第一排城市右侧小字 */
+  /** 具体地址（反向地理编码得到，可为空）——第一排城市右侧小字 */
   address?: string | null
   latitude: number
   longitude: number
@@ -389,16 +387,16 @@ export interface WeatherDto {
   apparent_temperature: number | null
   humidity: number | null
   wind_speed: number | null
-  /** v1029：蒲福风力等级（0–12），组件以「级」为单位展示风速 */
+  /** 蒲福风力等级（0–12），组件以「级」为单位展示风速 */
   wind_level?: number | null
   weather_code: number | null
   description: string
   icon: string
   observed_at?: string | null
-  /** v1028：空气质量指数（★v1101 起为中国 AQI 口径，与 Open-Meteo european_aqi 一致）与等级 */
+  /** 空气质量指数与等级 */
   aqi?: number | null
   aqi_level?: string | null
-  /** ★v1101：坐标来源 located=浏览器定位 / city=按城市名 / fallback_city=定位失败回落设置城市 */
+  /** 坐标来源 located=浏览器定位 / city=按城市名 / fallback_city=定位失败回落设置城市 */
   source?: string
 }
 
@@ -431,14 +429,14 @@ export const agentApi = {
   listSessions: (novelId?: string) =>
     get<AgentSessionDto[]>('/agent/sessions', { params: novelId ? { novel_id: novelId } : undefined }),
 
-  /** v1028：项目用量（会话数量 + 累计 token） */
+  /** 项目用量（会话数量 + 累计 token） */
   usage: (novelId: string) =>
     get<{ project_id: string; session_count: number; tokens_in: number; tokens_out: number; tokens_total: number }>(
       '/agent/usage',
       { params: { novel_id: novelId } },
     ),
 
-  /** v1029：会话上下文占用（最近一次 run 的输入 token） */
+  /** 会话上下文占用（最近一次 run 的输入 token） */
   sessionUsage: (sessionId: string) =>
     get<{ session_id: string; tokens_in: number; tokens_out: number }>(
       `/agent/sessions/${sessionId}/usage`,
@@ -464,7 +462,7 @@ export const agentApi = {
   getMessages: (id: string) => get<MessageTree>(`/agent/sessions/${id}/messages`),
 
   /** 发消息 → 202 + {run_id}；事件走 streamUrl(run_id)
-   * ★v1101：active_chapter_id = 用户当前编辑/阅读的章（流程意图检测的目标章回落）；
+   * active_chapter_id = 用户当前编辑/阅读的章（流程意图检测的目标章回落）；
    * hidden_context = 隐藏上下文（润色提示词），随本轮送给模型但不入消息树不展示 */
   postMessage: (
     id: string,
@@ -490,14 +488,21 @@ export const agentApi = {
 
   cancelRun: (runId: string) => post<{ run_id: string; cancelled: boolean }>(`/agent/runs/${runId}/cancel`),
 
-  /** v1028：运行中「通过消息引导发送」（把引导文本注入正在跑的 run） */
+  /** 运行中「通过消息引导发送」（把引导文本注入正在跑的 run） */
   steerRun: (runId: string, content: string) =>
     post<{ run_id: string; steered: boolean }>(`/agent/runs/${runId}/steer`, { content }),
 
   resolveInterrupt: (
     interruptId: string,
     payload: {
-      decision: 'approve' | 'edit' | 'reject' | 'respond' | 'option' | 'text'
+      decision:
+        | 'approve'
+        | 'approve_session'
+        | 'edit'
+        | 'reject'
+        | 'respond'
+        | 'option'
+        | 'text'
       edited_args?: Record<string, unknown>
       message?: string
       choice?: string
@@ -524,25 +529,16 @@ export const exportApi = {
   status: (novelId: string, taskId: string) =>
     get<ExportTask>(`/novels/${novelId}/export-tasks/${taskId}`),
 
+  /** 停止导出（执行体在下一个进度检查点中止） */
+  cancel: (novelId: string, taskId: string) =>
+    post<{ task_id: string; cancel_requested: boolean }>(`/novels/${novelId}/export-tasks/${taskId}/cancel`),
+
   downloadUrl: (novelId: string, taskId: string) =>
     `/api/v1/novels/${novelId}/export-tasks/${taskId}/download`,
-
-  /** 轮询直到任务结束（done / failed） */
-  async waitForDone(novelId: string, taskId: string, timeoutMs = 120_000): Promise<ExportTask> {
-    const started = Date.now()
-    for (;;) {
-      const task = await exportApi.status(novelId, taskId)
-      if (task.status === 'done' || task.status === 'failed') return task
-      if (Date.now() - started > timeoutMs) {
-        return { ...task, status: 'failed', error: '导出超时' }
-      }
-      await new Promise((r) => setTimeout(r, 300))
-    }
-  },
 }
 
 // ---------------------------------------------------------------------------
-// v1031：回收站（被删章节的归档 / 回收 / 彻底删除，最多 20 本小说）
+// 回收站（被删章节的归档 / 回收 / 彻底删除，最多 20 本小说）
 // ---------------------------------------------------------------------------
 
 export const recycleApi = {

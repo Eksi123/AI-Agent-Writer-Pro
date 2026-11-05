@@ -44,12 +44,16 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
-/** v1030：参数拆成三项分别渲染（用 flex gap 隔开，不再靠空格拼接） */
+/** 参数拆成多项分别渲染（用 flex gap 隔开，不再靠空格拼接）
+ * 追加 Context Length（伴随模型的 max_context，token → K） */
 function paramParts(p: LlmProviderDto): string[] {
+  const win = p.models?.[0]?.max_context
+  const ctxK = win && win > 0 ? Math.round(win / 1024) : null
   return [
     `${t('aiTools.timeoutSec')}=${p.timeout_sec ?? 30}`,
     `${t('aiTools.temperature')}=${(p.temperature ?? 1).toString()}`,
-    `${t('aiTools.maxTokens')}=${p.max_tokens ?? 2048}`,
+    `${t('aiTools.maxTokens')}=${Math.round((p.max_tokens ?? 32768) / 1024)}K`,
+    ...(ctxK ? [`${t('aiTools.contextLength')}=${ctxK}K`] : []),
   ]
 }
 
@@ -69,7 +73,10 @@ const form = reactive({
   api_key_value: '',
   timeout_sec: 30,
   temperature: 1.0,
-  max_tokens: 2048,
+  /** Max Token 以 K 为单位（1K = 1024 token），默认 32K，最多 128K */
+  max_tokens_k: 32,
+  /** Context Length（单位 K，1K = 1024 token），默认 256K，取值 100 ~ 1024K */
+  context_length_k: 256,
 })
 
 const tempMax = computed(
@@ -88,7 +95,7 @@ const tempError = computed(() => {
   return ''
 })
 
-/** 全部配置必填（v1029：模型 ID 即名称，不再单独填写；v1030：[密钥环境变量名]→[密钥名]、[API密钥]→[密钥API]） */
+/** 全部配置必填 */
 const formError = computed(() => {
   if (!form.name.trim()) return '名称为必填'
   if (!form.api_key_env.trim()) return '密钥名为必填'
@@ -97,13 +104,18 @@ const formError = computed(() => {
     return '超时时长须在 10 ~ 60 秒之间'
   }
   if (tempError.value) return tempError.value
-  if (form.max_tokens == null || form.max_tokens < 1) return 'Max Token 须为正整数'
+  if (form.max_tokens_k == null || form.max_tokens_k < 1 || form.max_tokens_k > 128) {
+    return 'Max Token 须在 1 ~ 128 K 之间'
+  }
+  if (form.context_length_k == null || form.context_length_k < 100 || form.context_length_k > 1024) {
+    return 'Context Length 须在 100 ~ 1024 K 之间'
+  }
   return ''
 })
 
 function openDialog(p?: LlmProviderDto): void {
   editing.value = p ?? null
-  // v1029：编辑时名称回填（旧数据的名称与模型 ID 本就一致；若不一致以名称为准）
+  // 编辑时名称回填（旧数据的名称与模型 ID 本就一致；若不一致以名称为准）
   form.name = p?.name ?? ''
   form.type = normalizeProtocol(p?.type ?? 'openai_compatible')
   form.base_url = p?.base_url ?? ''
@@ -111,7 +123,11 @@ function openDialog(p?: LlmProviderDto): void {
   form.api_key_value = ''
   form.timeout_sec = p?.timeout_sec ?? 30
   form.temperature = p?.temperature ?? 1.0
-  form.max_tokens = p?.max_tokens ?? 2048
+  // Max Token 回填（token → K；旧数据缺省 32K）
+  form.max_tokens_k = p?.max_tokens ? Math.min(128, Math.max(1, Math.round(p.max_tokens / 1024))) : 32
+  // Context Length 回填（token → K；旧数据缺省 256K）
+  const win = p?.models?.[0]?.max_context
+  form.context_length_k = win && win > 0 ? Math.min(1024, Math.max(100, Math.round(win / 1024))) : 256
   dialogVisible.value = true
 }
 
@@ -130,7 +146,7 @@ async function save(): Promise<void> {
   }
   saving.value = true
   try {
-    // v1029：名称就等于模型 ID（不再有独立的「模型 ID」字段）
+    // 名称就等于模型 ID（不再有独立的「模型 ID」字段）
     const name = form.name.trim()
     const mid = name
     const payload = {
@@ -141,7 +157,7 @@ async function save(): Promise<void> {
       api_key_value: form.api_key_value || undefined,
       timeout_sec: form.timeout_sec,
       temperature: Number(form.temperature),
-      max_tokens: form.max_tokens,
+      max_tokens: form.max_tokens_k * 1024,
     }
 
     let provider: LlmProviderDto
@@ -162,6 +178,8 @@ async function save(): Promise<void> {
         model_id: mid,
         display_name: name,
         is_default: keep.is_default,
+        // Context Length（K → token）随模型一起保存
+        max_context: form.context_length_k * 1024,
       })
     } else {
       await llmApi.createModel({
@@ -169,6 +187,7 @@ async function save(): Promise<void> {
         model_id: mid,
         display_name: name,
         is_default: existing.length === 0,
+        max_context: form.context_length_k * 1024,
       })
     }
 
@@ -227,7 +246,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
     <el-empty v-if="!providers.length" :description="t('aiTools.noProviders')" :image-size="80" />
 
-    <!-- v1029：一条 = 一个大模型；上方模型名称，下方小字参数行 -->
+    <!-- 一条 = 一个大模型；上方模型名称，下方小字参数行 -->
     <div v-for="p in providers" :key="p.id" class="model-row">
       <div class="row-left">
         <div class="model-text">
@@ -253,11 +272,32 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
       </div>
     </div>
 
-    <!-- 配置弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <!-- 配置弹窗：无顶部标题；弹窗与字体/输入框等比例放大 -->
     <el-dialog v-model="dialogVisible" width="600px" :show-close="true" class="provider-dialog">
       <el-form :model="form" label-width="128px" label-position="left">
-        <el-form-item :label="t('aiTools.providerName')" required>
-          <!-- v1029：名称即模型 ID（不再有单独的「模型 ID」输入框） -->
+        <el-form-item required>
+        <!-- 名称左边加提示 icon，点击弹出说明（名称必须与模型真实 ID 相同） -->
+          <template #label>
+            <span class="name-label">
+              <el-popover trigger="click" :width="240" placement="right" :teleported="false">
+                <template #reference>
+                  <svg
+                    class="hint-icon"
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 15.5a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4zm1.5-4.6c-.6.5-1 .9-1 1.6h-1.6c0-1.2.7-1.9 1.4-2.5.6-.5 1.2-1 1.2-1.8 0-.9-.7-1.5-1.6-1.5-.9 0-1.6.6-1.7 1.5H8.6c.1-1.8 1.5-3 3.3-3 1.8 0 3.2 1.2 3.2 2.9 0 1.3-.8 2-1.6 2.8z" />
+                  </svg>
+                </template>
+                <span class="hint-pop-text">{{ t('aiTools.nameHint') }}</span>
+              </el-popover>
+              <span>{{ t('aiTools.providerName') }}</span>
+            </span>
+          </template>
+          <!-- 名称即模型 ID（不再有单独的「模型 ID」输入框） -->
           <el-input v-model="form.name" class="field" maxlength="100" />
         </el-form-item>
 
@@ -285,19 +325,47 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
           />
         </el-form-item>
 
-        <el-form-item :label="t('aiTools.timeoutSec')" required>
+        <el-form-item required>
+          <template #label>
+            <el-tooltip :content="t('aiTools.timeoutSecHint')" placement="top">
+              <span class="label-tip">{{ t('aiTools.timeoutSec') }}</span>
+            </el-tooltip>
+          </template>
           <!-- 左右带增减按钮的数字框：默认 30s，最少 10s，最多 60s -->
           <el-input-number v-model="form.timeout_sec" :min="10" :max="60" :step="1" class="num" />
           <span class="unit muted">s</span>
         </el-form-item>
 
-        <el-form-item :label="t('aiTools.temperature')" required>
+        <el-form-item required>
+          <template #label>
+            <el-tooltip :content="t('aiTools.temperatureHint')" placement="top">
+              <span class="label-tip">{{ t('aiTools.temperature') }}</span>
+            </el-tooltip>
+          </template>
           <el-input v-model.number="form.temperature" class="num" type="number" step="0.1" />
           <span class="hint muted">{{ tempRangeHint }}</span>
         </el-form-item>
 
-        <el-form-item :label="t('aiTools.maxTokens')" required>
-          <el-input v-model.number="form.max_tokens" class="num" type="number" :min="1" />
+        <el-form-item required>
+          <template #label>
+            <el-tooltip :content="t('aiTools.maxTokensHint')" placement="top">
+              <span class="label-tip">{{ t('aiTools.maxTokens') }}</span>
+            </el-tooltip>
+          </template>
+          <!-- Max Token 以 K 为单位（默认 32K，最多 128K） -->
+          <el-input v-model.number="form.max_tokens_k" class="num" type="number" :min="1" :max="128" />
+          <span class="unit muted">K</span>
+        </el-form-item>
+
+        <!-- Context Length 必填（单位 K，默认 1024K）；悬浮展示简短解释 -->
+        <el-form-item required>
+          <template #label>
+            <el-tooltip :content="t('aiTools.contextLengthHint')" placement="top">
+              <span class="label-tip">{{ t('aiTools.contextLength') }}</span>
+            </el-tooltip>
+          </template>
+          <el-input v-model.number="form.context_length_k" class="num" type="number" :min="100" :max="1024" />
+          <span class="unit muted">K</span>
         </el-form-item>
       </el-form>
 
@@ -328,7 +396,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  /* v1030：条目加高，名称与参数行不再显得局促 */
+  /* 条目加高，名称与参数行不再显得局促 */
   padding: 18px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -343,7 +411,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   flex: 1;
 }
 
-/* v1030：模型名称在上，参数小字在下；两行之间拉开间距 */
+/* 模型名称在上，参数小字在下；两行之间拉开间距 */
 .model-text {
   display: flex;
   flex-direction: column;
@@ -360,7 +428,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   min-width: 0;
 }
 
-/* v1030：名称下方小字号显示 Time Out / Temperature / Max Token；三项用 gap 隔开更透气 */
+/* 名称下方小字号显示 Time Out / Temperature / Max Token；三项用 gap 隔开更透气 */
 .model-params {
   display: flex;
   align-items: center;
@@ -381,7 +449,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
   flex-shrink: 0;
 }
 
-/* v1030：弹窗整体等比例放大（宽度 + 字体 + 输入框） */
+/* 弹窗整体等比例放大（宽度 + 字体 + 输入框） */
 .field {
   width: 100%;
   max-width: 380px;
@@ -411,17 +479,47 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
 
 .provider-dialog .el-dialog__body {
   padding-top: 10px;
-  /* v1030：输入框不要长到右上角 × 的位置 */
+  /* 输入框不要长到右上角 × 的位置 */
   padding-right: 52px;
 }
 
-/* v1030：设置名字号放大（一行展示），控件与设置名间距适中 */
+/* 设置名字号放大（一行展示），控件与设置名间距适中
+字号调小 + 不换行，保证「Context Length」等长标签一行展示 */
 .provider-dialog .el-form-item__label {
-  font-size: 15px;
+  font-size: 13px;
   padding-right: 18px;
+  white-space: nowrap;
 }
 
 .provider-dialog .el-form-item {
   margin-bottom: 20px;
+}
+
+/* 参数名悬浮解释（虚线下划线提示可悬浮） */
+.label-tip {
+  cursor: help;
+  border-bottom: 1px dashed var(--el-border-color);
+}
+
+/* 名称左边的提示 icon（点击弹出说明） */
+.name-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hint-icon {
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.hint-icon:hover {
+  color: var(--el-color-primary);
+}
+
+.hint-pop-text {
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 沙箱：CompositeBackend 路由 + 8 条有序 permissions（手册「二、(5)」）。
 
-    ★v1102：自 `agent/sandbox/` 迁入 harness（安全措施归类）；新增 `virtual_path.py`
+    自 `agent/sandbox/` 迁入 harness（安全措施归类）；新增 `virtual_path.py`
     （虚拟路径分类公共件，loop 的 FileChangeNotify 与 harness/lock 的 ContentLock 共用）。
 """
 

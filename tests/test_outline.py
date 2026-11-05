@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 大纲解析 + 卷章顺序派生（手册「四」/「十一 · 大纲解析 / 卷章顺序派生」域）。
 
-    ★核心断言：
+    核心断言：
     - 严格层级判定：`## 第三章 卷土重来` 不得判为卷节（旧正则的实际 bug）；
     - 附录 H2 不参与章匹配；归一化比较（全角空格/序数词/标点差异视为同名）；
     - `sync_order_from_outline`：调换大纲 H1/H2 先后 → sort_order 回填、**ID/文件名不变**；
@@ -43,7 +43,7 @@ def test_strict_heading_levels():
 
 
 def test_chapter_with_juan_char_not_misjudged_as_volume():
-    """★陷阱用例：`## 第三章 卷土重来` 含「卷」字，但它是 H2 章节，不得判为卷节。"""
+    """陷阱用例：`## 第三章 卷土重来` 含「卷」字，但它是 H2 章节，不得判为卷节。"""
     text = "# 第一卷 序\n## 第三章 卷土重来\n- 简介：内容。\n"
     result = parse_outline(text)
     assert len(result.volumes) == 1, "只应有一个卷节"
@@ -130,7 +130,7 @@ def test_normalize_title_distinguishes_different_names():
 
 
 # ---------------------------------------------------------------------------
-# outline_order_diff（★v1029：大纲降级为参考资料，只读差异报告，不再回填 sort_order）
+# outline_order_diff
 # ---------------------------------------------------------------------------
 
 
@@ -169,7 +169,7 @@ async def _build_three_chapters(client, novel_id, volume_id):
 
 @pytest.mark.asyncio
 async def test_outline_save_reports_diff_without_reordering(client, novel_id, volume_id):
-    """★v1029：调换大纲顺序 → 只产出差异报告，卷章 sort_order **不**被改写。"""
+    """调换大纲顺序 → 只产出差异报告，卷章 sort_order **不**被改写。"""
     vol2_id, chs = await _build_three_chapters(client, novel_id, volume_id)
 
     await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": OUTLINE_V1})
@@ -186,9 +186,9 @@ async def test_outline_save_reports_diff_without_reordering(client, novel_id, vo
     assert sync["volumes_updated"] == 2, "两卷顺序与大纲不同 → 报告 2 处差异"
 
     vols = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
-    # ★卷层面顺序保持原样（大纲不再回填）
+    # 卷层面顺序保持原样（大纲不再回填）
     assert {v["title"]: v["sort_order"] for v in vols} == {"荒原初醒": 1, "星港夜航": 2}
-    # ★卷1 内章顺序也保持原样
+    # 卷1 内章顺序也保持原样
     v1 = next(v for v in vols if v["id"] == volume_id)
     order = {c["title"]: c["sort_order"] for c in v1["chapters"]}
     assert order == {"拾荒少年的清晨": 1, "废铁镇的钟声": 2}
@@ -196,7 +196,7 @@ async def test_outline_save_reports_diff_without_reordering(client, novel_id, vo
 
 @pytest.mark.asyncio
 async def test_sync_order_does_not_change_ids_or_filenames(client, novel_id, volume_id):
-    """★顺序回填只改 sort_order：ID 与文件名不变。"""
+    """顺序回填只改 sort_order：ID 与文件名不变。"""
 
     vol2_id, chs = await _build_three_chapters(client, novel_id, volume_id)
     ws = workspace_of(novel_id)
@@ -218,7 +218,7 @@ async def test_sync_order_does_not_change_ids_or_filenames(client, novel_id, vol
 
 @pytest.mark.asyncio
 async def test_sync_order_no_snapshot_no_version_bump(client, novel_id, volume_id):
-    """★顺序回填不产生修订快照、不递增 version（顺序是元数据非正文）。"""
+    """顺序回填不产生修订快照、不递增 version（顺序是元数据非正文）。"""
     vol2_id, chs = await _build_three_chapters(client, novel_id, volume_id)
     ch1 = chs["拾荒少年的清晨"]
 
@@ -312,7 +312,7 @@ async def test_outline_read_write_roundtrip(client, novel_id):
     resp = await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": new_content})
     assert resp.status_code == 200
     data = resp.json()["data"]
-    # ★v1029：大纲是参考资料，保存不再回填卷章顺序，只给只读差异报告
+    # 大纲是参考资料，保存不再回填卷章顺序，只给只读差异报告
     assert data["order_synced"] is False
     assert data["order_sync"]["read_only"] is True
 

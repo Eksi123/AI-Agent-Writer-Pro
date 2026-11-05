@@ -4,7 +4,7 @@
 文件名: test_recycle.py
 作者: xionggaoqing
 时间: 2026-10-31
-说明: v1031 回收站契约测试。
+说明: 回收站契约测试。
 
     覆盖：
     - 删除章节 → 进回收站（按小说归档，可浏览「卷 → 被删章节」）；
@@ -154,7 +154,7 @@ async def test_delete_whole_novel_then_restore_via_recycle(client):
 
 @pytest.mark.asyncio
 async def test_purge_last_chapter_of_deleted_novel_removes_novel(client):
-    """★v1031 续：整本被删的小说，在回收站里把卷章删干净 → 该本小说也从回收站彻底删除
+    """整本被删的小说，在回收站里把卷章删干净 → 该本小说也从回收站彻底删除
     （trash 里的工作区一并清除）。"""
 
     novel_id = await _make_novel(client, title="清空测试")
@@ -181,7 +181,7 @@ async def test_purge_last_chapter_of_deleted_novel_removes_novel(client):
 
 @pytest.mark.asyncio
 async def test_novel_with_empty_trash_is_pruned_from_recycle(client):
-    """★v1031 续：整本被删但 trash 工作区已无章节（如被手工清理）→ 列表时自动清掉条目。"""
+    """整本被删但 trash 工作区已无章节（如被手工清理）→ 列表时自动清掉条目。"""
 
     novel_id = await _make_novel(client, title="脏条目")
     _vol_id, ch_id = await _add_volume_chapter(client, novel_id, "风起", "拾荒少年")
@@ -218,7 +218,7 @@ async def test_recycle_keeps_only_recent_20_novels(client):
 
 @pytest.mark.asyncio
 async def test_recycle_rejects_path_traversal_ids(client):
-    """★路径安全：URL 里的 novel_id / chapter_id 未经校验就拼路径可穿越出 `data/recycle/`
+    """路径安全：URL 里的 novel_id / chapter_id 未经校验就拼路径可穿越出 `data/recycle/`
     （回收站不经 WorkspaceGuard）→ 一律按「不存在」拒绝，且不触碰回收站之外的文件。
     """
 

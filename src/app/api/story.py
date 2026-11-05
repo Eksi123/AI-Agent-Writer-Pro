@@ -4,7 +4,7 @@
 文件名: story.py
 作者: xionggaoqing
 时间: 2026-10-27
-说明: 检索与摘要重建（手册「六 → 路由树 · 检索 / 摘要」）+ ★v1102 固定流程入口
+说明: 检索与摘要重建（手册「六 → 路由树 · 检索 / 摘要」）+ 固定流程入口
     （全书一致性审查 / 导出成书预检，实现均在 `agent/workflows/`）。
 
     检索源：大纲单文件 + `summaries/`，**限本项目**（`project_id` 过滤）。
@@ -32,7 +32,7 @@ async def search(
     scope: str = Query(default="all", pattern="^(all|outline|summary)$"),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    """检索设置/大纲/摘要（★`project_id` 必须过滤，否则跨项目串数据）。"""
+    """检索设置/大纲/摘要（`project_id` 必须过滤，否则跨项目串数据）。"""
     return ok(await search_service.search_settings(session, novel_id, q, scope=scope, limit=limit))
 
 
@@ -48,7 +48,7 @@ async def rebuild_summaries(novel_id: str, session: AsyncSession = Depends(get_s
 
 
 # ---------------------------------------------------------------------------
-# ★v1102：固定流程（agent/workflows/）
+# 固定流程（agent/workflows/）
 # ---------------------------------------------------------------------------
 
 
@@ -78,12 +78,12 @@ async def run_consistency_audit(novel_id: str, session: AsyncSession = Depends(g
 async def export_preflight(
     novel_id: str,
     session: AsyncSession = Depends(get_session),
-    format: str = Query(default="markdown", pattern="^(markdown|epub|mobi|txt)$"),
+    format: str = Query(default="markdown", pattern="^(markdown|epub|pdf|txt)$"),
 ) -> dict:
     """导出成书预检（workflows/export_package，E1→E4）。
 
     纯规则 checklist（结构完整性/内容完备性/格式可用性），`passed=false` 仅表示存在
-    阻断项（如无章节、mobi 缺 calibre）；警告项由用户自行决定是否继续导出。
+    阻断项（如无章节、pdf 缺 reportlab）；警告项由用户自行决定是否继续导出。
     """
     from app.agent.workflows.novel_export.preflight import run_export_preflight
 

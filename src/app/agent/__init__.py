@@ -4,7 +4,7 @@
 文件名: __init__.py
 作者: xionggaoqing
 时间: 2026-10-27
-说明: AI Agent 全部代码逻辑（手册「三、(1) 目录边界」，架构优化 v1102）。
+说明: AI Agent 全部代码逻辑（手册「三、(1) 目录边界」，架构优化 ）。
 
     子包（顶层只有 7 个目录）：
     - `loop/`：Agent 运行核心——装配（builder）、运行（runner）、事件流（streaming）、
@@ -26,6 +26,6 @@
     Agent 逻辑不外溢到 api/services；非 Agent 业务代码不进入本包。
     应用设置类（技能/子代理的 DB 配置 CRUD）在 services/，本包只保留运行期装载。
 
-    ★v1102：目录重组后旧 import 路径（app.agent.memory 等）已全部
+    目录重组后旧 import 路径（app.agent.memory 等）已全部
     迁移为新路径（含外部 api/services/core/tests），无兼容别名层。
 """

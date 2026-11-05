@@ -9,7 +9,7 @@
     实测结论（SQLite 3.53.4 / Python 3.12.14）：FTS5 可用，`unicode61`/`trigram`/`porter`
     均可建表，`bm25()` 可用；`trigram` 对 2 字词零命中，故中文主方案是**手工二元切分 + unicode61**。
 
-    ★查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
+    查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
 """
 
 from __future__ import annotations

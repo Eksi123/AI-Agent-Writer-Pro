@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * 通用设置页（v1028 重构 / v1029 调整）：
+ * 通用设置页：
  *   外观：主题（深色 / 浅色 / 护眼）、正文字号、字体
  *   编辑：自动保存间隔（10~60 秒）
  * 已删除：主题色、阅读页宽、动态组件设置、AI 工具入口、运行状态。
- * v1029：去掉「外观」「编辑」两条分界线；功能设置名与设置控件之间拉开间距。
+ * 去掉「外观」「编辑」两条分界线；功能设置名与设置控件之间拉开间距。
  * 左上角仅返回箭头；「保存」与「恢复默认设置」位于所有设置项下方。
  */
 import { onMounted, reactive, ref } from 'vue'
@@ -19,12 +19,13 @@ const router = useRouter()
 const store = useSettingsStore()
 const saving = ref(false)
 const resetting = ref(false)
-const form = reactive<Pick<UserSettings, 'theme' | 'font_size' | 'font_family' | 'autosave_enabled' | 'autosave_interval_sec'>>({
+const form = reactive<Pick<UserSettings, 'theme' | 'font_size' | 'font_family' | 'autosave_enabled' | 'autosave_interval_sec' | 'export_dir'>>({
   theme: 'light',
   font_size: 18,
   font_family: 'serif',
   autosave_enabled: true,
   autosave_interval_sec: 30,
+  export_dir: '',
 })
 
 /** 字体候选：只用开源免费字体 */
@@ -43,6 +44,7 @@ function syncForm(): void {
   form.font_family = store.settings.font_family
   form.autosave_enabled = store.settings.autosave_enabled
   form.autosave_interval_sec = store.settings.autosave_interval_sec
+  form.export_dir = store.settings.export_dir ?? ''
 }
 
 onMounted(async () => {
@@ -70,6 +72,7 @@ async function save(): Promise<void> {
       font_family: form.font_family,
       autosave_enabled: form.autosave_enabled,
       autosave_interval_sec: form.autosave_interval_sec,
+      export_dir: form.export_dir?.trim() || null,
     })
     syncForm()
     ElMessage.success(t('settings.saved'))
@@ -112,7 +115,7 @@ function back(): void {
 
 <template>
   <div class="settings-view">
-    <!-- v1028：左上角只要返回箭头 -->
+    <!-- 左上角只要返回箭头 -->
     <div class="settings-head">
       <el-button text class="back-btn" :title="t('settings.back')" @click="back">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
@@ -122,7 +125,7 @@ function back(): void {
     </div>
 
     <div class="settings-body scroll-y">
-      <!-- v1029：去掉「外观」「编辑」两条分界线；设置名与设置项之间拉开间距 -->
+      <!-- 去掉「外观」「编辑」两条分界线；设置名与设置项之间拉开间距 -->
       <el-form :model="form" label-width="150px" class="form">
         <el-form-item :label="t('settings.theme')">
           <el-radio-group v-model="form.theme" @change="preview">
@@ -133,7 +136,7 @@ function back(): void {
         </el-form-item>
 
         <el-form-item :label="t('settings.fontSize')">
-          <!-- v1028：合理范围（14~28），不会太小也不会太大 -->
+          <!-- 合理范围（14~28），不会太小也不会太大 -->
           <el-slider
             v-model="form.font_size"
             :min="14"
@@ -169,13 +172,13 @@ function back(): void {
           </div>
         </el-form-item>
 
-        <!-- v1030：新增[自动保存]开关，与[自动保存间隔]联动（关闭后间隔置灰） -->
+        <!-- 新增[自动保存]开关，与[自动保存间隔]联动（关闭后间隔置灰） -->
         <el-form-item :label="t('settings.autosaveEnabled')">
           <el-switch v-model="form.autosave_enabled" @change="preview" />
         </el-form-item>
 
         <el-form-item :label="t('settings.autosaveInterval')">
-          <!-- v1028：最少 10s，最多 60s；v1030：关闭自动保存后置灰 -->
+          <!-- 最少 10s，最多 60s；关闭自动保存后置灰 -->
           <el-slider
             v-model="form.autosave_interval_sec"
             :min="10"
@@ -189,9 +192,15 @@ function back(): void {
           />
           <div class="muted text-sm">{{ t('settings.autosaveHint') }}</div>
         </el-form-item>
+
+        <!-- 小说导出地址：留空 = 桌面；浏览器无法读取文件夹绝对路径，故用路径输入 -->
+        <el-form-item :label="t('settings.exportDir')">
+          <el-input v-model="form.export_dir" class="export-dir-input" :placeholder="t('settings.exportDirPlaceholder')" />
+          <div class="muted text-sm">{{ t('settings.exportDirHint') }}</div>
+        </el-form-item>
       </el-form>
 
-      <!-- v1028：保存移到所有设置下面，旁边加恢复默认设置 -->
+      <!-- 保存移到所有设置下面，旁边加恢复默认设置 -->
       <div class="settings-actions">
         <el-button :loading="resetting" @click="resetDefaults">
           {{ t('settings.resetDefault') }}
@@ -231,7 +240,11 @@ function back(): void {
   max-width: 720px;
 }
 
-/* v1029：功能设置名与功能设置控件之间拉开距离（默认 12px 太挤） */
+/* 功能设置名与功能设置控件之间拉开距离（默认 12px 太挤） */
+.export-dir-input {
+  max-width: 420px;
+}
+
 .form :deep(.el-form-item__label) {
   padding-right: 32px;
 }

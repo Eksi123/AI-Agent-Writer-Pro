@@ -1,11 +1,12 @@
 /**
- * 项目 store：小说列表、当前项目、卷章树（★只读顺序）。
+ * 项目 store：小说列表、当前项目、卷章树（只读顺序）。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { novelsApi, volumesApi } from '@/api'
 import { ApiError, errorMessage } from '@/api/http'
 import { t } from '@/i18n'
+import { useReaderStore } from '@/stores/reader'
 import type { Chapter, Novel, Volume } from '@/types'
 
 export const useProjectStore = defineStore('project', () => {
@@ -17,7 +18,7 @@ export const useProjectStore = defineStore('project', () => {
 
   const currentNovel = computed(() => novels.value.find((n) => n.id === currentNovelId.value) ?? null)
 
-  /** 当前项目的卷章树，按 sort_order 只读排序（★不可拖拽重排） */
+  /** 当前项目的卷章树，按 sort_order 只读排序（不可拖拽重排） */
   const volumeTree = computed(() =>
     [...volumes.value].sort((a, b) => a.sort_order - b.sort_order),
   )
@@ -43,6 +44,9 @@ export const useProjectStore = defineStore('project', () => {
     volumes.value = []
     if (!id) return
     await loadVolumes()
+    // 切换小说后默认展示大纲页，避免残留旧章节 id 导致「章节不存在」
+    const reader = useReaderStore()
+    reader.openOutline()
   }
 
   async function loadVolumes(): Promise<void> {
@@ -68,7 +72,7 @@ export const useProjectStore = defineStore('project', () => {
     await loadNovels()
   }
 
-  /** v1030：[编辑] 弹窗提交——可同时修改书名 / 题材 / 简介 */
+  /** [编辑] 弹窗提交——可同时修改书名 / 题材 / 简介 */
   async function updateNovel(
     id: string,
     payload: { title?: string; genre?: string; synopsis?: string },
@@ -94,9 +98,9 @@ export const useProjectStore = defineStore('project', () => {
 
   /**
    * 新建卷。
-   * v1029：`ordinal` 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
-   * v1030续：`firstChapterTitle` = 随卷一并创建的第一章名（★不允许产生空卷）。
-   * ★v1031：**任何入口新建卷都必须带上第一章**——调用方漏传时回落到 `第一章`，
+   * `ordinal` 缺省 = 追加末尾；传值 = 插入到该位置（其后各卷顺延 +1）。
+   * `firstChapterTitle` = 随卷一并创建的第一章名（不允许产生空卷）。
+   * **任何入口新建卷都必须带上第一章**——调用方漏传时回落到 `第一章`，
    * 保证「新建卷的同时也初始化创建该卷下的第一章」，目录里不会出现找不到章节的空卷。
    */
   async function createVolume(

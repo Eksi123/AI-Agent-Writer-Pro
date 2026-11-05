@@ -17,9 +17,9 @@ export const ErrorCode = {
   NOT_FOUND: 40401,
   VERSION_CONFLICT: 40901,
   RUN_STATE_CONFLICT: 40902,
-  /** v1101：章节正被 AI 编辑（内容锁），保存被拒 */
+  /** 章节正被 AI 编辑（内容锁），保存被拒 */
   CONTENT_LOCKED: 40903,
-  /** v1101：同时「AI 思考执行中」的会话数已达上限（5） */
+  /** 同时「AI 思考执行中」的会话数已达上限（5） */
   RUN_CONCURRENCY_LIMIT: 40904,
   STREAM_BUFFER_LOST: 41001,
   NAMING_INVALID: 42201,
@@ -29,7 +29,7 @@ export const ErrorCode = {
   DEPENDENCY_UNAVAILABLE: 50301,
 } as const
 
-export type ExportFormat = 'markdown' | 'epub' | 'mobi' | 'txt'
+export type ExportFormat = 'markdown' | 'epub' | 'pdf' | 'txt'
 
 export interface Novel {
   id: string
@@ -49,7 +49,7 @@ export interface Chapter {
   id: string
   volume_id: string
   title: string
-  /** ★派生值：由大纲小节先后回填，前端只读渲染，不可拖拽重排 */
+  /** 派生值：由大纲小节先后回填，前端只读渲染，不可拖拽重排 */
   sort_order: number
   word_count: number
   status: 'draft' | 'finalized'
@@ -140,7 +140,7 @@ export interface OutlineValidate {
   unregistered: Record<string, unknown>[]
 }
 
-/** v1029：大纲保存返回的**只读**差异报告（大纲不再回填 sort_order） */
+/** 大纲保存返回的**只读**差异报告（大纲不再回填 sort_order） */
 export interface OutlineOrderSync {
   volumes_updated: number
   chapters_updated: number
@@ -161,18 +161,20 @@ export interface Outline {
 }
 
 export interface UserSettings {
-  /** v1028：light（浅色）| dark（深色）| eye（护眼）；system 仅为兼容旧数据 */
+  /** light（浅色）| dark（深色）| eye（护眼）；system 仅为兼容旧数据 */
   theme: 'light' | 'dark' | 'eye' | 'system'
   primary_color: string
   font_size: number
   font_family: string
   reading_width: number
-  /** v1030：自动保存开关（与自动保存间隔联动） */
+  /** 自动保存开关（与自动保存间隔联动） */
   autosave_enabled: boolean
   autosave_interval_sec: number
-  /** ★回落城市：浏览器定位失败/被拒时使用，不是定位结果 */
+  /** 回落城市：浏览器定位失败/被拒时使用，不是定位结果 */
   city: string
   pet_idle_minutes: number
+  /** 小说导出目录（空 = 默认桌面 Desktop） */
+  export_dir?: string | null
   updated_at?: string | null
 }
 
@@ -180,7 +182,7 @@ export interface ExportTask {
   task_id: string
   novel_id: string
   format: ExportFormat
-  status: 'pending' | 'running' | 'done' | 'failed'
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
   progress: number
   download_url?: string | null
   filename?: string | null
@@ -198,7 +200,7 @@ export interface SearchItem {
 }
 
 /**
- * v1029：聊天输入框上方标记的「已添加内容」块（大纲 / 章节 / 本地文件）。
+ * 聊天输入框上方标记的「已添加内容」块（大纲 / 章节 / 本地文件）。
  * 发送消息时由 AgentPanel 组装进 prompt，大模型需一并处理这些内容。
  */
 export interface ContextBlock {
@@ -207,13 +209,13 @@ export interface ContextBlock {
   text: string
   /** 本地文件字节数（用于「所有添加的文件不超过 20M」校验） */
   bytes?: number
-  /** v1030续(6)：选区润色块携带的章节 id（供大模型定位并写回） */
+  /** 选区润色块携带的章节 id（供大模型定位并写回） */
   chapterId?: string
-  /** v1030续(6)：选中文本在章节中的所在范围说明（如「第3-5段（全章共42段）」） */
+  /** 选中文本在章节中的所在范围说明（如「第3-5段（全章共42段）」） */
   rangeLabel?: string
-  /** v1030续(6)：选区前文（帮助模型衔接，≤600 字） */
+  /** 选区前文（帮助模型衔接，≤600 字） */
   before?: string
-  /** v1030续(6)：选区后文（帮助模型衔接，≤600 字） */
+  /** 选区后文（帮助模型衔接，≤600 字） */
   after?: string
 }
 
@@ -232,7 +234,7 @@ export interface Health {
   fts5_available: boolean
   fts5_reason: string
   sqlite_version: string
-  calibre_available: boolean
+  pdf_available: boolean
   langfuse_enabled: boolean
   data_root: string
 }
@@ -260,7 +262,6 @@ export interface LlmModelDto {
   default_params: Record<string, unknown>
   is_default: boolean
   enabled: boolean
-  fallback_chain: string[]
   created_at?: string | null
   updated_at?: string | null
 }
@@ -276,7 +277,7 @@ export interface LlmProviderDto {
   extra?: Record<string, unknown> | null
   enabled: boolean
   priority: number
-  /** v1028：大模型级常用参数 */
+  /** 大模型级常用参数 */
   timeout_sec: number
   temperature: number
   max_tokens: number
@@ -333,7 +334,7 @@ export interface AgentSessionDto {
   title: string
   model_ref?: string | null
   status: AgentSessionStatus
-  /** ★v1101：进程内有活 run（会话列表右侧灰色小字「AI思考执行中……」） */
+  /** 进程内有活 run（会话列表右侧灰色小字「AI思考执行中……」） */
   is_running?: boolean
   active_leaf_id?: string | null
   subagent_ids: string[]
@@ -368,7 +369,7 @@ export interface MessageTree {
   active_leaf_id?: string | null
   total: number
   items: AgentMessageDto[]
-  /** ★v1101：最近一次 run（含未决中断）——进入会话时恢复审批/咨询卡片与运行态 */
+  /** 最近一次 run（含未决中断）——进入会话时恢复审批/咨询卡片与运行态 */
   latest_run?: {
     run_id: string
     status: AgentRunStatus
@@ -422,7 +423,7 @@ export interface AgentRunDto {
 }
 
 // ---------------------------------------------------------------------------
-// v1031：回收站
+// 回收站
 // ---------------------------------------------------------------------------
 
 /** 回收站首页的一条（最近删除过章节的小说，最多 20 本） */

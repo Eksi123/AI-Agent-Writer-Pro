@@ -4,7 +4,7 @@
 文件名: recycle.py
 作者: xionggaoqing
 时间: 2026-10-31
-说明: 回收站（v1031）——被删除**章节**的归档 / 浏览 / 回收 / 彻底删除。
+说明: 回收站——被删除**章节**的归档 / 浏览 / 回收 / 彻底删除。
 
     需求要点：
     - 回收站只保留**最近 20 本**「删除过章节」的小说（含整本被删除的小说）；
@@ -240,7 +240,7 @@ def _novel_dto(index: dict[str, Any]) -> dict[str, Any]:
     chapters = index.get("chapters") or []
     count = len(chapters)
     if bool(index.get("novel_deleted")):
-        # ★v1031 续：整本被删的小说，可回收章节在 trash 工作区里；trash 被清干净后计数归 0
+        # 整本被删的小说，可回收章节在 trash 工作区里；trash 被清干净后计数归 0
         count = _trash_chapter_count(_trash_workspace(str(index.get("novel_id")), index.get("trash_dir")))
     return {
         "novel_id": str(index.get("novel_id")),
@@ -253,7 +253,7 @@ def _novel_dto(index: dict[str, Any]) -> dict[str, Any]:
 
 
 def _prune_empty_entries() -> None:
-    """★v1031 续：卷章已被删干净的条目直接清掉（含整本被删但 trash 已无章节的），
+    """卷章已被删干净的条目直接清掉（含整本被删但 trash 已无章节的），
     保证「回收站里卷章删干净 → 该本小说也删除」在所有路径下都成立。"""
     for index in _all_entries():
         nid = str(index.get("novel_id"))
@@ -577,7 +577,7 @@ async def purge_chapter(session: AsyncSession, novel_id: str, chapter_id: str) -
                         break
         if not removed:
             raise NotFoundError(f"回收站里没有这一章：{chapter_id}")
-        # ★v1031 续：卷章被删干净 → 这本小说也彻底删除（连同 trash 里的工作区/大纲）
+        # 卷章被删干净 → 这本小说也彻底删除（连同 trash 里的工作区/大纲）
         if _trash_chapter_count(ws) == 0:
             if ws is not None and ws.exists():
                 shutil.rmtree(ws)

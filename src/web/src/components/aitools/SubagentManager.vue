@@ -37,7 +37,7 @@ const form = reactive({
 })
 
 /**
- * v1029：删除[上下文模式]，**默认采用独立上下文**（isolated）。
+ * 删除[上下文模式]，**默认采用独立上下文**（isolated）。
  * 子代理用量仍与主 Agent 一起计入 Token（后端 `project_usage` 按 run 汇总）。
  */
 const SUBAGENT_MODE = 'isolated' as const
@@ -124,7 +124,7 @@ function openDialog(s?: SubagentDto): void {
   form.name = s?.name ?? ''
   form.description = s?.description ?? ''
   form.system_prompt = s?.system_prompt ?? ''
-  // v1029：不再有[上下文模式]选项，一律按独立上下文（isolated）保存
+  // 不再有[上下文模式]选项，一律按独立上下文（isolated）保存
   form.tools = []
   form.skills = []
   if (s) onSelectionChange(keysOf(s))
@@ -210,7 +210,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
     </div>
 
     <div v-for="s in subagents" :key="s.id" class="subagent-card">
-      <!-- v1029：左侧文案列（名称 + 描述，描述单行省略）｜右侧操作列（启用/编辑/删除）
+      <!-- 左侧文案列（名称 + 描述，描述单行省略）｜右侧操作列（启用/编辑/删除）
            描述不会越过[启用]所在的右侧操作列 -->
       <div class="card-text">
         <div class="row">
@@ -220,12 +220,12 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           </el-tag>
         </div>
 
-        <!-- v1028：只展示职责；v1029：过长用省略号截断（悬停看全文） -->
+        <!-- 只展示职责；过长用省略号截断（悬停看全文） -->
         <div class="desc" :title="s.description">{{ s.description }}</div>
       </div>
 
       <div class="card-actions">
-        <!-- v1028：启用/停用开关 + 文字；顶部提示语改为此处的悬浮说明 -->
+        <!-- 启用/停用开关 + 文字；顶部提示语改为此处的悬浮说明 -->
         <el-tooltip :content="t('subagents.enableHint')" placement="top" :show-after="200">
           <span class="switch-wrap">
             <el-switch
@@ -239,10 +239,10 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           </span>
         </el-tooltip>
 
-        <!-- v1028：编辑按钮加外框 -->
+        <!-- 编辑按钮加外框 -->
         <el-button size="small" plain @click="openDialog(s)">{{ t('skills.edit') }}</el-button>
 
-        <!-- v1028：恢复出厂 → 恢复默认（仅内置） -->
+        <!-- 恢复出厂 → 恢复默认（仅内置） -->
         <el-button v-if="s.is_builtin" size="small" text @click="resetDefault(s)">
           {{ t('subagents.resetDefault') }}
         </el-button>
@@ -252,7 +252,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
       </div>
     </div>
 
-    <!-- 弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <!-- 弹窗：无顶部标题；弹窗与字体/输入框等比例放大 -->
     <el-dialog v-model="dialogVisible" width="700px" class="subagent-dialog">
       <el-form :model="form" label-width="116px" label-position="left">
         <el-form-item :label="t('subagents.nameLabel')" required>
@@ -262,7 +262,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
             :placeholder="t('subagents.namePlaceholder')"
             maxlength="64"
           />
-          <!-- ★v1102（SubAgents(4)）：新建时小红字提示，避免与内置子代理功能重复 -->
+          <!-- （SubAgents(4)）：新建时小红字提示，避免与内置子代理功能重复 -->
           <div v-if="!editing" class="name-dup-hint">{{ t('subagents.nameDupHint') }}</div>
         </el-form-item>
 
@@ -274,9 +274,9 @@ async function resetDefault(s: SubagentDto): Promise<void> {
           <el-input v-model="form.system_prompt" type="textarea" :rows="6" />
         </el-form-item>
 
-        <!-- v1029：删除[上下文模式]——默认独立上下文（isolated），Token 与主 Agent 合并计算 -->
-        <!-- v1028：可用技能多选（支持全选），来源为写作技能（含内置工具） -->
-        <!-- v1029：选中的技能在输入框内展示，最多显示 6 个（超出折叠为 +N） -->
+        <!-- 删除[上下文模式]——默认独立上下文（isolated），Token 与主 Agent 合并计算 -->
+        <!-- 可用技能多选（支持全选），来源为写作技能（含内置工具） -->
+        <!-- 选中的技能在输入框内展示，最多显示 6 个（超出折叠为 +N） -->
         <el-form-item :label="t('subagents.skillsLabel')">
           <el-select
             :model-value="selectedKeys"
@@ -345,7 +345,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   gap: 14px;
 }
 
-/* v1029：左侧文案列（弹性收缩，描述超长省略） */
+/* 左侧文案列（弹性收缩，描述超长省略） */
 .card-text {
   display: flex;
   flex-direction: column;
@@ -354,7 +354,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   min-width: 0;
 }
 
-/* v1029：右侧操作列（启用开关 + 编辑 + 删除），不被描述挤压 */
+/* 右侧操作列（启用开关 + 编辑 + 删除），不被描述挤压 */
 .card-actions {
   display: flex;
   align-items: center;
@@ -384,7 +384,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   color: var(--text-muted);
 }
 
-/* v1029：描述单行省略，不越过[启用]（右侧操作列） */
+/* 描述单行省略，不越过[启用]（右侧操作列） */
 .desc {
   font-size: 13px;
   color: var(--el-text-color-regular);
@@ -398,7 +398,7 @@ async function resetDefault(s: SubagentDto): Promise<void> {
   width: 100%;
 }
 
-/* ★v1102：新建子代理弹窗，名称下方的小红字提示 */
+/* 新建子代理弹窗，名称下方的小红字提示 */
 .name-dup-hint {
   color: var(--el-color-danger);
   font-size: 12px;
@@ -436,11 +436,11 @@ async function resetDefault(s: SubagentDto): Promise<void> {
 
 .subagent-dialog .el-dialog__body {
   padding-top: 10px;
-  /* v1030：输入框不要长到右上角 × 的位置 */
+  /* 输入框不要长到右上角 × 的位置 */
   padding-right: 52px;
 }
 
-/* v1030：设置名字号放大，控件不挡住右上角 × */
+/* 设置名字号放大，控件不挡住右上角 × */
 .subagent-dialog .el-form-item__label {
   font-size: 15px;
   padding-right: 18px;

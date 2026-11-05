@@ -3,13 +3,13 @@
  * 大纲编辑器：markdown **源码编辑器**（等宽文本框）。
  *
  * 用源码编辑而非富文本，是为了保证 `# 卷 / ## 章` 层级格式不被破坏。
- * ★v1029：大纲降级为「参考资料」（AI 生成正文的重要依据），保存**不再回填卷章顺序**；
+ * 大纲降级为「参考资料」（AI 生成正文的重要依据），保存**不再回填卷章顺序**；
  *   卷章结构由编辑模式右上角的操作条维护（插入卷/章、重命名、删除）。
  *   保存后仍调用 validate 把「名称不一致 / 序数与顺序差异 / 未登记」以警告条提示（不阻断保存）。
- * ★v1030：删除正文上方的[编辑]/[预览]切换（编辑模式只有编辑状态）；
+ * 删除正文上方的[编辑]/[预览]切换（编辑模式只有编辑状态）；
  *   [保存] 移到工具栏（icon），这里只监听 editor store 的保存请求。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { outlineApi } from '@/api'
 import { errorMessage } from '@/api/http'
@@ -32,7 +32,58 @@ const error = ref<string | null>(null)
 
 const dirty = computed(() => content.value !== savedContent.value)
 
-/** v1031：脏状态同步到 editor store（工具栏保存 icon 据此置灰/恢复） */
+/** 大纲回退（与正文同机制）：连续输入停顿 800ms 后把「编辑前内容」压栈 */
+const OUTLINE_UNDO_DEBOUNCE_MS = 800
+let outlineUndoTimer: ReturnType<typeof setTimeout> | null = null
+let outlinePendingSnapshot: string | null = null
+
+function clearOutlineUndoTimer(): void {
+  if (outlineUndoTimer) {
+    clearTimeout(outlineUndoTimer)
+    outlineUndoTimer = null
+  }
+}
+
+function recordOutlineUndoPoint(previous: string): void {
+  if (outlinePendingSnapshot === null) outlinePendingSnapshot = previous
+  clearOutlineUndoTimer()
+  outlineUndoTimer = setTimeout(() => {
+    if (outlinePendingSnapshot !== null) {
+      editorStore.pushOutlineUndoSnapshot(outlinePendingSnapshot)
+      outlinePendingSnapshot = null
+    }
+    outlineUndoTimer = null
+  }, OUTLINE_UNDO_DEBOUNCE_MS)
+}
+
+/** 输入事件：记录回退点 + 置脏 */
+function onOutlineInput(): void {
+  recordOutlineUndoPoint(savedContent.value)
+}
+
+/** 工具栏[回退编辑]（大纲节点）→ 还原最近一份快照 */
+watch(
+  () => editorStore.outlineUndoTick,
+  () => {
+    clearOutlineUndoTimer()
+    const snapshot = editorStore.popOutlineUndoSnapshot()
+    if (snapshot === null) return
+    content.value = snapshot
+    // 还原视为一次编辑：置脏 + 触发自动保存链路与校验
+    editorStore.dirtyOutline = true
+    void validateOnly()
+  },
+)
+
+onBeforeUnmount(() => {
+  clearOutlineUndoTimer()
+  outlinePendingSnapshot = null
+})
+
+/** 大纲被 AI 编辑中（锁键 `outline:{projectId}`）→ 只读 + 禁保存 */
+const outlineLocked = computed(() => editorStore.isOutlineLocked(project.currentNovelId))
+
+/** 脏状态同步到 editor store（工具栏保存 icon 据此置灰/恢复） */
 watch(dirty, (v) => {
   editorStore.dirtyOutline = v
 }, { immediate: true })
@@ -44,6 +95,10 @@ async function load(): Promise<void> {
   if (!project.currentNovelId) return
   loading.value = true
   error.value = null
+  // 换项目/重载大纲 → 回退栈作废（回退只针对当前载入的大纲）
+  clearOutlineUndoTimer()
+  outlinePendingSnapshot = null
+  editorStore.clearOutlineUndo()
   try {
     const data = await outlineApi.read(project.currentNovelId)
     content.value = data.content
@@ -67,12 +122,14 @@ async function validateOnly(): Promise<void> {
 
 async function save(): Promise<void> {
   if (!project.currentNovelId) return
+  // AI 正在写大纲时拒绝用户保存（后端 PUT 同样 409 兜底）
+  if (outlineLocked.value) return
   saving.value = true
   error.value = null
   try {
     const data = await outlineApi.save(project.currentNovelId, content.value)
     savedContent.value = data.content
-    // v1029：大纲是参考资料，保存不再回填卷章顺序（只读差异提示由校验警告条承载）
+    // 大纲是参考资料，保存不再回填卷章顺序（只读差异提示由校验警告条承载）
     ElMessage.success(t('outline.saved'))
     await validateOnly()
     await project.loadVolumes()
@@ -92,7 +149,7 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-/** v1030：工具栏[保存] icon → editor store 保存请求 → 大纲保存 */
+/** 工具栏[保存] icon → editor store 保存请求 → 大纲保存 */
 watch(
   () => editorStore.saveRequestTick,
   () => {
@@ -106,7 +163,7 @@ watch(() => project.currentNovelId, load)
 
 <template>
   <div class="outline-editor-pane" @keydown="onKeydown">
-    <!-- v1031：删除「有未保存的修改」提示条（待保存状态改由工具栏保存 icon 置灰表达） -->
+    <!-- 删除「有未保存的修改」提示条（待保存状态改由工具栏保存 icon 置灰表达） -->
 
     <!-- 校验警告条（不阻断保存） -->
     <el-alert v-if="errors.length" type="error" :closable="false" class="mb8">
@@ -135,11 +192,14 @@ watch(() => project.currentNovelId, load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb8" />
 
-    <!-- v1030：编辑模式只有编辑状态（预览面板已删除） -->
+    <!-- 编辑模式只有编辑状态（预览面板已删除）
+    AI 写大纲期间只读，避免并发写坏 -->
     <textarea
       v-model="content"
       class="outline-editor flex-fill"
       spellcheck="false"
+      :readonly="outlineLocked"
+      @input="onOutlineInput"
     />
   </div>
 </template>

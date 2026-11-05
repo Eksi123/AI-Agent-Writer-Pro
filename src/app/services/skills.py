@@ -52,7 +52,7 @@ def validate_skill_name(name: str) -> str:
 
 
 def render_skill_md(name: str, description: str, body: str, *, allowed_tools: list[str] | None = None) -> str:
-    """组装 SKILL.md（frontmatter + 正文）。★frontmatter `name` 必须等于目录名。"""
+    """组装 SKILL.md（frontmatter + 正文）。frontmatter `name` 必须等于目录名。"""
     description = (description or "").strip()
     if not description:
         raise BadRequestError("description 不能为空（Agent 据此决定何时加载技能）")
@@ -104,7 +104,7 @@ def _dto(row: SkillConfig, *, materialized: bool | None = None) -> dict[str, Any
         "assets": assets,
         "enabled": row.enabled,
         "is_builtin": row.is_builtin,
-        #: v1030：用户自建技能即「写作技能」（与包内 `kind="writing"` 同列，前端据此归组）
+        #: 用户自建技能即「写作技能」（与包内 `kind="writing"` 同列，前端据此归组）
         "kind": "writing",
         "tool_name": None,
         "materialized": materialized,
@@ -141,9 +141,9 @@ async def list_skills(
 ) -> list[dict[str, Any]]:
     """用户自建技能（DB，可 CRUD/启停）+ 内置基础工具（只读呈现，启用置灰）。
 
-    ★技能 = 用户自建：包内不再随包携带写作技能目录，故列表只有两类。
+    技能 = 用户自建：包内不再随包携带写作技能目录，故列表只有两类。
     `picker=True`（会话级「工具添加」浮层）：内置项只列 `web_search`——
-    其余基础工具对主代理恒可用，不作为会话级选项（v1102 用户口径）。
+    其余基础工具对主代理恒可用，不作为会话级选项。
     """
     result: list[dict[str, Any]] = []
 
@@ -167,6 +167,8 @@ BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "ls", "label": "list"},
     {"tool": "grep", "label": "grep"},
     {"tool": "glob", "label": "glob"},
+    #: 大纲按需摘录（自研 registry 工具，与 web_search 同类）
+    {"tool": "outline_recall", "label": "outline_recall"},
     {"tool": "web_search", "label": "web_search"},
 ]
 
@@ -201,7 +203,7 @@ def _builtin_skill_dtos(*, only_web_search: bool = False) -> list[dict[str, Any]
                 "kind": "tool",
                 #: 真实工具名（前端多选勾选后回传，供子代理装配解析）
                 "tool_name": item["tool"],
-                #: v1102：web_search 兼作会话级内置写作技能（可进「工具添加」浮层 chips）
+                #: web_search 兼作会话级内置写作技能（可进「工具添加」浮层 chips）
                 "session_builtin": item["tool"] == WEB_SEARCH_SKILL_NAME,
                 "created_at": None,
                 "updated_at": None,
@@ -281,7 +283,7 @@ async def update_skill(session: AsyncSession, pk: str, **fields: Any) -> dict[st
     description = fields.get("description")
     body = fields.get("body")
     allowed_tools = fields.get("allowed_tools")
-    # ★改名后 frontmatter `name` 必须同步（deepagents 要求 name == 父目录名）
+    # 改名后 frontmatter `name` 必须同步（deepagents 要求 name == 父目录名）
     if description is not None or body is not None or allowed_tools is not None or renamed:
         new_description = (description if description is not None else row.description) or ""
         new_body = body if body is not None else _extract_body(row.content_md)
@@ -360,7 +362,7 @@ async def materialize_session_skills(
     手册「三、(3) 输入窗口」：用户可主动添加写作 Skill 作为会话上下文；
     deepagents `skills=` 只接受目录级虚拟路径，故按会话生成精选目录再挂载。
     技能均为用户自建（DB content_md / `data/skills/` 物化副本），返回实际物化数。
-    ★v1102：`web_search`（会话级内置写作技能）不落 SKILL.md，仅计入返回数。
+    `web_search`（会话级内置写作技能）不落 SKILL.md，仅计入返回数。
     """
 
     target_root = session_skills_dir(session_id)

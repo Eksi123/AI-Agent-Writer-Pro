@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * 顶部工具栏（v1028）：
+ * 顶部工具栏：
  *   左：【阅读模式】/【编辑模式】切换 + 项目名 + 后端提示（目录开关移到阅读区左上角浮层）
- *   右：★v1031 回收站入口（在 AI 写作助手左边）+ AI写作助手入口 —— 聊天框 icon + 文字；
+ * 右：回收站入口（在 AI 写作助手左边）+ AI写作助手入口 —— 聊天框 icon + 文字；
  *       悬浮提示功能介绍；会话框展开后只保留聊天框 icon，点击可收起。
  */
 import { computed } from 'vue'
@@ -17,7 +17,7 @@ defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'toggle-agent'): void
-  /** ★v1031：打开回收站抽屉 */
+  /** 打开回收站抽屉 */
   (e: 'open-recycle'): void
 }>()
 
@@ -53,10 +53,10 @@ const backendHint = computed(() => {
     </div>
 
     <div class="row">
-      <!-- v1030：卷章操作条 / 保存 / 自动保存标记已移到「目录」所在工具栏行；
+      <!-- 卷章操作条 / 保存 / 自动保存标记已移到「目录」所在工具栏行；
            页面最上方不再显示「已保存 自动保存已开启（30 秒）」标记 -->
 
-      <!-- ★v1031：回收站入口（放在 AI写作助手的左边）——找回被删除的章节，最多 20 本 -->
+      <!-- 回收站入口（放在 AI写作助手的左边）——找回被删除的章节，最多 20 本 -->
       <el-tooltip :content="t('recycle.tooltip')" placement="bottom-end" :show-after="200">
         <button class="recycle-btn" @click="emit('open-recycle')">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
@@ -66,7 +66,7 @@ const backendHint = computed(() => {
         </button>
       </el-tooltip>
 
-      <!-- v1028：AI写作助手（未展开）= 聊天框 icon + 文字，悬浮出功能提示 -->
+      <!-- AI写作助手（未展开）= 聊天框 icon + 文字，悬浮出功能提示 -->
       <el-tooltip
         v-if="!agentOpen"
         :content="t('agent.panelTooltip')"
@@ -81,7 +81,7 @@ const backendHint = computed(() => {
         </button>
       </el-tooltip>
 
-      <!-- v1028：展开后只出现聊天框 icon，点击收起 AI 会话框 -->
+      <!-- 展开后只出现聊天框 icon，点击收起 AI 会话框 -->
       <el-tooltip v-else :content="t('agent.collapse')" placement="bottom-end">
         <button class="ai-assistant-icon" @click="emit('toggle-agent')">
           <svg class="chat-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
@@ -103,7 +103,7 @@ const backendHint = computed(() => {
   gap: 8px;
 }
 
-/* ★v1031：回收站入口（AI写作助手左边，样式与 AI 助手入口同形制但用中性色） */
+/* 回收站入口（AI写作助手左边，样式与 AI 助手入口同形制但用中性色） */
 .recycle-btn {
   display: inline-flex;
   align-items: center;
@@ -126,7 +126,7 @@ const backendHint = computed(() => {
   background: color-mix(in srgb, var(--el-color-danger) 8%, var(--bg-panel));
 }
 
-/* v1028：AI写作助手入口（比原纯文字按钮更有存在感） */
+/* AI写作助手入口（比原纯文字按钮更有存在感） */
 .ai-assistant-btn {
   display: inline-flex;
   align-items: center;

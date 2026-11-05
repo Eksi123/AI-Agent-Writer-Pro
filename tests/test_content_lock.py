@@ -6,11 +6,11 @@
 时间: 2026-10-27
 说明: 正文读写乐观锁 + 修订快照（手册「六 · 正文写入乐观锁」/「十一 · 乐观锁/修订快照」域）。
 
-    ★必测：
+    必测：
     - 带过期 `base_version` → 409 / `40901` 且回传最新内容；带最新值 → 成功且 `version+1`；
     - 手动保存 / Agent 写入两种触发各产生快照；自动保存不产生；
     - 超过保留上限时清理最旧快照；restore 回滚后内容与 `version` 正确。
-    ★v1101：AI 编辑锁——锁定期内手动/自动保存均 409 / `40903`；释放后恢复；
+    AI 编辑锁——锁定期内手动/自动保存均 409 / `40903`；释放后恢复；
       `GET /chapters/locks` 返回当前锁列表。
 """
 
@@ -60,7 +60,7 @@ async def test_put_content_success_increments_version(client, chapter_id):
 
 @pytest.mark.asyncio
 async def test_stale_base_version_returns_409_40901(client, chapter_id):
-    """★核心：过期 base_version → 409 / 40901，且 data 回传最新内容与版本号。"""
+    """核心：过期 base_version → 409 / 40901，且 data 回传最新内容与版本号。"""
     # 先写一次，把 version 推到 2
     await client.put(
         f"/api/v1/chapters/{chapter_id}/content",
@@ -116,7 +116,7 @@ async def test_manual_save_creates_snapshot(client, chapter_id):
 
 @pytest.mark.asyncio
 async def test_autosave_does_not_snapshot(client, chapter_id):
-    """★自动保存不产生快照（防版本爆炸），但 version 仍自增。"""
+    """自动保存不产生快照（防版本爆炸），但 version 仍自增。"""
     for i in range(1, 6):
         resp = await client.put(
             f"/api/v1/chapters/{chapter_id}/content",
@@ -247,7 +247,7 @@ async def test_agent_write_source_recorded(client, chapter_id):
 
 
 # ---------------------------------------------------------------------------
-# ★v1101：AI 编辑锁（章节被 AI 修改期间用户保存被拒）
+# AI 编辑锁（章节被 AI 修改期间用户保存被拒）
 # ---------------------------------------------------------------------------
 
 

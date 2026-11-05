@@ -7,7 +7,7 @@
 说明: 章节摘要生成（手册「二、(3) 知识库服务函数」）。
 
     - `summarize_chapter`：手动保存 / Agent 运行结束后触发，**唯一可写 `summaries/`** 的入口；
-    - `summarize_all_chapters`：批量为全部章节补摘要（★v1101：定稿入口移除，不再按状态过滤）；
+    - `summarize_all_chapters`：批量为全部章节补摘要；
     - 服务层直连 ChatModel（同流程 S1/S3，不进 Agent 循环——单次转换无需工具与多轮）。
 """
 
@@ -47,7 +47,7 @@ async def summarize_chapter(
     model: Any = None,
     force: bool = False,
 ) -> dict[str, Any]:
-    """生成章节摘要并写入 `summaries/ch-{id}.md`（★仅此函数可写 summaries/）。
+    """生成章节摘要并写入 `summaries/ch-{id}.md`（仅此函数可写 summaries/）。
 
     `model` 为 None 时按当前默认模型构建；无可用模型则跳过（返回 skipped）。
     写入成功后同步派生索引。
@@ -180,7 +180,7 @@ def _parse_summary_json(raw: str) -> dict[str, Any]:
 async def summarize_all_chapters(
     session: AsyncSession, project_id: str, *, model: Any = None, force: bool = False
 ) -> dict[str, Any]:
-    """★v1101：批量为**全部**章节补摘要（定稿入口移除后不再按 status 过滤）。
+    """批量为**全部**章节补摘要（定稿入口移除后不再按 status 过滤）。
 
     正文过短 / 无模型等跳过原因由 `summarize_chapter` 自行返回 skipped。
     """

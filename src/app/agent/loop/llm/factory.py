@@ -103,26 +103,29 @@ def build_chat_model(
                 base_url = _KNOWN_BASE_URLS["openrouter"]
             if base_url:
                 kwargs["base_url"] = base_url
-            return ChatOpenAI(**kwargs)
+            return _with_profile(ChatOpenAI(**kwargs), model)
         if ptype == "azure_openai":
             from langchain_openai import AzureChatOpenAI
 
             extra = _extra_of(provider)
-            return AzureChatOpenAI(
+            azure_model = AzureChatOpenAI(
                 azure_deployment=model.model_id,
                 api_key=api_key or None,
                 azure_endpoint=extra.get("azure_endpoint") or provider.base_url,
                 api_version=extra.get("api_version", "2024-06-01"),
                 **params,
             )
+            return _with_profile(azure_model, model)
         if ptype == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(model=model.model_id, api_key=api_key or None, **params)
+            return _with_profile(ChatAnthropic(model=model.model_id, api_key=api_key or None, **params), model)
         if ptype == "google":
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            return ChatGoogleGenerativeAI(model=model.model_id, google_api_key=api_key or None, **params)
+            return _with_profile(
+                ChatGoogleGenerativeAI(model=model.model_id, google_api_key=api_key or None, **params), model
+            )
     except LlmProviderError:
         raise
     except Exception as exc:  # 依赖缺失 / 参数不兼容
@@ -130,6 +133,27 @@ def build_chat_model(
         raise LlmProviderError(f"构建 ChatModel 失败（{provider.name}/{model.model_id}）：{exc}") from exc
 
     raise LlmProviderError(f"不支持的 provider 类型：{ptype}")
+
+
+def _with_profile(chat_model: BaseChatModel, model: LlmModel) -> BaseChatModel:
+    """把模型行配置的上下文窗口（UI「Context Length」）写入 `profile.max_input_tokens`。
+
+    deepagents 的压缩中间件按 `profile.max_input_tokens` 自动选触发阈值；
+    `resolve.max_context_of` 与 Emitter 的预算报告也从这里读配置窗口，
+    保证「已注入上下文 / 配置窗口」全链路口径一致。
+    """
+    window = int(getattr(model, "max_context", 0) or 0)
+    if window <= 0:
+        return chat_model
+    profile = getattr(chat_model, "profile", None)
+    if not isinstance(profile, dict):
+        profile = {}
+    profile["max_input_tokens"] = window
+    try:
+        chat_model.profile = profile  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover - 个别 SDK 属性只读
+        logger.warning("chat_model_profile_stamp_failed", model=model.model_id, error=str(exc))
+    return chat_model
 
 
 def _extra_of(provider: LlmProvider) -> dict[str, Any]:
@@ -147,11 +171,11 @@ def _params_of(
     *,
     provider: LlmProvider | None = None,
 ) -> dict[str, Any]:
-    """Provider 参数（v1028：超时/温度/Max Token）+ default_params_json + 调用方覆盖合并。"""
+    """Provider 参数+ default_params_json + 调用方覆盖合并。"""
 
     provider_layer: dict[str, Any] = {}
     if provider is not None:
-        # v1028：大模型配置弹窗的超时时长 / Temperature / Max Token（除密钥外均入库）
+        # 大模型配置弹窗的超时时长 / Temperature / Max Token（除密钥外均入库）
         provider_layer = {
             "timeout": getattr(provider, "timeout_sec", None),
             "temperature": getattr(provider, "temperature", None),
@@ -267,19 +291,3 @@ async def get_default_chat_model(
     ref = f"{provider.id}:{model.model_id}"
     # 经 get_chat_model 以复用测试注入缝与缓存
     return ref, await get_chat_model(session, ref, extra_params=extra_params)
-
-
-async def get_fallback_chain(session: AsyncSession, model_ref: str) -> list[str]:
-    """降级链：`llm_models.fallback_chain_json`（有序 model_ref 列表）；空则只含自身。"""
-    _provider, model = await resolve_model_ref(session, model_ref)
-    chain = [model_ref]
-    if model.fallback_chain_json:
-        try:
-            parsed = json.loads(model.fallback_chain_json)
-        except ValueError:
-            parsed = []
-        if isinstance(parsed, list):
-            for item in parsed:
-                if isinstance(item, str) and item and item not in chain:
-                    chain.append(item)
-    return chain

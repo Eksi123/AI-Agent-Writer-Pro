@@ -4,7 +4,7 @@
 文件名: spec.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: Reviewer 子代理出厂定义（架构优化 v1102）。
+说明: Reviewer 子代理出厂定义。
 
     职责：大纲和小说内容的**检查者**（原 continuity-checker 扩展）：
     时间线/人物状态/设定冲突/未回收伏笔的连贯性审查，以及大纲结构、
@@ -19,7 +19,7 @@ from typing import Any
 SPEC: dict[str, Any] = {
     "name": "reviewer",
     "label": "Reviewer",
-    "description": "审查者：核查大纲结构与章简介完整性、时间线/人物状态/设定冲突/未回收伏笔，以及正文与大纲简介的匹配度。需要检查一致性或内容质量时委派给它。",
+    "description": "审查者：核查大纲结构、时间线/设定/伏笔一致性与正文匹配度。要检查质量时委派。",
     "skills": [],
     #: 默认内置工具（按职能）：只读审查——检索证据不需要写工具
     "tools": ["read_file", "ls", "grep", "glob"],

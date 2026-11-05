@@ -4,7 +4,7 @@
 文件名: hidden_context.py
 作者: xionggaoqing
 时间: 2026-11-01
-说明: ★v1101：`HiddenContextInjectionMiddleware`——把「隐藏上下文」（如选区润色提示词）
+说明: `HiddenContextInjectionMiddleware`——把「隐藏上下文」（如选区润色提示词）
     以**请求级** system 消息注入模型调用（`request.override(messages=...)`）。
 
     与 RecapInjection 同机制：只影响本次模型调用，不回写 graph state、不入消息树，

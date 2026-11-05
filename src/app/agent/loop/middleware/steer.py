@@ -4,7 +4,7 @@
 文件名: steer.py
 作者: xionggaoqing
 时间: 2026-10-29
-说明: `SteerInjectionMiddleware`：运行中「通过消息引导发送」（v1028，参考 copilot）。
+说明: `SteerInjectionMiddleware`：运行中「通过消息引导发送」。
 
     用户在大模型思考期间追加引导消息时，消息先入 `run_manager` 的 run 级队列，
     本中间件在**每次模型调用前**取出队列内容，作为 `HumanMessage` 追加到消息末尾，

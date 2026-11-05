@@ -1,4 +1,4 @@
-"""v1102: 架构优化——新增 builtin_skill_states 表（内置技能/工具的启用状态）。
+""" 架构优化——新增 builtin_skill_states 表（内置技能/工具的启用状态）。
 
 内置技能本体随包只读，不落 skill_configs；启用开关单独存这张表
 （name 唯一，缺行视为启用）。未启用的内置技能不可被主 Agent 调用、

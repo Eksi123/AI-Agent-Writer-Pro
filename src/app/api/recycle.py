@@ -4,7 +4,7 @@
 文件名: recycle.py
 作者: xionggaoqing
 时间: 2026-10-31
-说明: 回收站 API（v1031）。
+说明: 回收站 API。
 
     路由：
         GET    /recycle                                    → 最近删除过章节的小说（最多 20 本）

@@ -6,11 +6,11 @@
 时间: 2026-10-27
 说明: 正文读写（乐观锁）、修订快照与回滚（手册「六 → 路由树 · 卷章」）。
 
-    ★`PUT content` 必带 `base_version`：不符返回 409 / `40901` 并回传最新内容。
-    ★v1101：`PUT content` 另受「AI 编辑锁」约束——章节被 AI 编辑期间
+    `PUT content` 必带 `base_version`：不符返回 409 / `40901` 并回传最新内容。
+    `PUT content` 另受「AI 编辑锁」约束——章节被 AI 编辑期间
       （流程生成 / Agent 写正文）返回 409 / `40903`，手动与自动保存同拒；
       前端经 `GET /chapters/locks` 展示「AI编辑中，请稍后再试……」。
-    ★v1101：选区 AI 改写（/rewrite）已移除——润色改为「选中文本加入模型上下文」，
+    选区 AI 改写（/rewrite）已移除——润色改为「选中文本加入模型上下文」，
       具体怎么改由用户在对话里描述。
 """
 
@@ -37,7 +37,7 @@ async def get_content(chapter_id: str, session: AsyncSession = Depends(get_sessi
 
 @router.get("/locks")
 async def get_locks() -> dict:
-    """v1101：当前被 AI 编辑锁定的章节列表（前端轮询兜底 + 启动时同步）。"""
+    """当前被 AI 编辑锁定的章节列表（前端轮询兜底 + 启动时同步）。"""
     return ok(content_locks.snapshot())
 
 

@@ -10,6 +10,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useProjectStore } from '@/stores/project'
+import { useEditorStore } from '@/stores/editor'
 import { t } from '@/i18n'
 import { errorMessage } from '@/api/http'
 import { dropRecentByNovel } from '@/utils/recent'
@@ -24,22 +25,23 @@ const emit = defineEmits<{
 }>()
 
 const store = useProjectStore()
+const editorStore = useEditorStore()
 const dialogVisible = ref(false)
 const creating = ref(false)
-/** ★v1031：新建弹窗删除「作者」项，表单只剩书名 / 题材 / 简介 */
+/** 新建弹窗删除「作者」项，表单只剩书名 / 题材 / 简介 */
 const form = reactive({ title: '', synopsis: '' })
-/** v1029：题材改为勾选标签（最少 1 个、最多 3 个），存储为「、」连接的字符串 */
+/** 题材改为勾选标签（最少 1 个、最多 3 个），存储为「、」连接的字符串 */
 const genreTags = ref<string[]>([])
-/** 书名规则悬浮提示可见性（v1028：原 placeholder 收进悬浮弹窗） */
+/** 书名规则悬浮提示可见性 */
 const ruleHintVisible = ref(false)
-/** v1030：弹窗双模式——create 新建 / edit 编辑（复用同一表单） */
+/** 弹窗双模式——create 新建 / edit 编辑（复用同一表单） */
 const dialogMode = ref<'create' | 'edit'>('create')
 const editingNovel = ref<Novel | null>(null)
 
 const GENRE_MAX = 3
 /**
- * v1030续：题材 = 内置 28 个 + 本次弹窗内新增的自定义题材（末尾「+」），响应式。
- * ★自定义题材不跨弹窗保留，所以本书**之前保存过**的自定义题材不在 allGenres 里，
+ * 题材 = 内置 28 个 + 本次弹窗内新增的自定义题材（末尾「+」），响应式。
+ * 自定义题材不跨弹窗保留，所以本书**之前保存过**的自定义题材不在 allGenres 里，
  * 这里把已勾选但不在候选里的题材补回来，否则编辑弹窗里它会「隐形」却被计入 1..3 的数量约束。
  */
 const genreOptions = computed<string[]>(() => {
@@ -47,7 +49,7 @@ const genreOptions = computed<string[]>(() => {
   return [...allGenres.value, ...extra]
 })
 
-// ---- v1030续：自定义题材「+」小弹窗 ----
+// ---- 自定义题材「+」小弹窗 ----
 const genreDialogVisible = ref(false)
 const genreInput = ref('')
 
@@ -79,7 +81,7 @@ function submitGenre(): void {
 
 const sortedNovels = computed(() => store.novels)
 
-/** v1029：项目行书名右侧的小字题材标签 */
+/** 项目行书名右侧的小字题材标签 */
 function genreTagList(novel: Novel): string[] {
   const raw = (novel.genre || '').trim()
   if (!raw) return []
@@ -95,7 +97,7 @@ const LAST_NOVEL_KEY = 'aiwriter:lastNovelId'
 onMounted(async () => {
   try {
     await store.loadNovels()
-    // v1028：默认选中上次打开的项目（失效则回落第一个）
+    // 默认选中上次打开的项目（失效则回落第一个）
     const lastId = localStorage.getItem(LAST_NOVEL_KEY)
     const target = store.novels.find((n) => n.id === lastId) ?? store.novels[0]
     if (target) await store.selectNovel(target.id)
@@ -112,7 +114,7 @@ function rememberNovel(id: string): void {
   }
 }
 
-/** 书名校验（v1028 规则）：非空、非全阿拉伯数字、不含 #$% 等特殊字符 */
+/** 书名校验：非空、非全阿拉伯数字、不含 #$% 等特殊字符 */
 const SPECIAL_CHARS = /[#\$%&*+=<>@\^|~`\\]/
 
 function validateTitle(raw: string): string {
@@ -127,14 +129,14 @@ function validateTitle(raw: string): string {
 
 const titleError = computed(() => validateTitle(form.title))
 
-/** v1029：题材勾选数量校验（最少 1 个、最多 3 个） */
+/** 题材勾选数量校验（最少 1 个、最多 3 个） */
 const genreError = computed(() => {
   if (!genreTags.value.length) return t('novel.genreRequired')
   if (genreTags.value.length > GENRE_MAX) return t('novel.genreTooMany')
   return ''
 })
 
-/** v1029：勾选题材标签（已选则取消；未选且未达上限则加入，达上限给出提示） */
+/** 勾选题材标签（已选则取消；未选且未达上限则加入，达上限给出提示） */
 function toggleGenre(genre: string): void {
   const idx = genreTags.value.indexOf(genre)
   if (idx >= 0) {
@@ -153,19 +155,19 @@ async function submitCreate(): Promise<void> {
     ElMessage.warning(titleError.value)
     return
   }
-  // v1029：简介必填
+  // 简介必填
   if (!form.synopsis.trim()) {
     ElMessage.warning(t('common.required'))
     return
   }
-  // v1029：题材至少勾选一个、最多三个
+  // 题材至少勾选一个、最多三个
   if (genreError.value) {
     ElMessage.warning(genreError.value)
     return
   }
   creating.value = true
   try {
-    // v1030：编辑模式复用同一表单（名称 / 题材 / 简介）
+    // 编辑模式复用同一表单（名称 / 题材 / 简介）
     if (dialogMode.value === 'edit' && editingNovel.value) {
       await store.updateNovel(editingNovel.value.id, {
         title: form.title.trim(),
@@ -175,11 +177,11 @@ async function submitCreate(): Promise<void> {
       ElMessage.success(t('novel.edited'))
       dialogVisible.value = false
       editingNovel.value = null
-      // ★v1030续：自定义题材只在本次弹窗有效，提交成功后清空（下次弹窗只剩内置 28 个）
+      // 自定义题材只在本次弹窗有效，提交成功后清空（下次弹窗只剩内置 28 个）
       clearCustomGenres()
       return
     }
-    // ★v1031：新建弹窗不再有「作者」项，author_name 不提交（后端按空值处理）
+    // 新建弹窗不再有「作者」项，author_name 不提交（后端按空值处理）
     const novel = await store.createNovel({
       title: form.title.trim(),
       genre: genreTags.value.join('、'),
@@ -189,7 +191,7 @@ async function submitCreate(): Promise<void> {
     dialogVisible.value = false
     Object.assign(form, { title: '', synopsis: '' })
     genreTags.value = []
-    // ★v1030续：自定义题材只在本次弹窗有效，创建成功后清空（下次弹窗只剩内置 28 个）
+    // 自定义题材只在本次弹窗有效，创建成功后清空（下次弹窗只剩内置 28 个）
     clearCustomGenres()
     await store.selectNovel(novel.id)
     rememberNovel(novel.id)
@@ -206,12 +208,12 @@ function openCreate(): void {
   editingNovel.value = null
   Object.assign(form, { title: '', synopsis: '' })
   genreTags.value = []
-  // ★v1030续：自定义题材不跨弹窗保留（含上次取消弹窗的残留）
+  // 自定义题材不跨弹窗保留（含上次取消弹窗的残留）
   clearCustomGenres()
   dialogVisible.value = true
 }
 
-/** v1030：打开「编辑」弹窗（回填名称 / 题材 / 简介；★v1031 作者项已从弹窗移除） */
+/** 打开「编辑」弹窗（回填名称 / 题材 / 简介；作者项已从弹窗移除） */
 function openEdit(novel: Novel): void {
   dialogMode.value = 'edit'
   editingNovel.value = novel
@@ -220,7 +222,7 @@ function openEdit(novel: Novel): void {
     synopsis: novel.synopsis || '',
   })
   genreTags.value = genreTagList(novel)
-  // ★v1030续：自定义题材不跨弹窗保留；本书已存的自定义题材由 genreOptions 补进候选
+  // 自定义题材不跨弹窗保留；本书已存的自定义题材由 genreOptions 补进候选
   clearCustomGenres()
   dialogVisible.value = true
 }
@@ -231,6 +233,11 @@ async function select(novel: Novel): Promise<void> {
 }
 
 async function onDelete(novel: Novel): Promise<void> {
+  // AI 正在编辑该项目的章/大纲时禁止删除项目
+  if (editorStore.isProjectBusy(novel.id)) {
+    ElMessage.warning('AI写作中请稍候…')
+    return
+  }
   try {
     await ElMessageBox.confirm(t('novel.deleteConfirm', { title: novel.title }), t('novel.deleteConfirmTitle'), {
       type: 'warning',
@@ -240,7 +247,7 @@ async function onDelete(novel: Novel): Promise<void> {
     })
     await store.deleteNovel(novel.id)
     if (localStorage.getItem(LAST_NOVEL_KEY) === novel.id) localStorage.removeItem(LAST_NOVEL_KEY)
-    // v1029：项目删除后清理其「最近打开的章节」记录
+    // 项目删除后清理其「最近打开的章节」记录
     dropRecentByNovel(novel.id)
     ElMessage.success(t('novel.deleted'))
     // 删除当前项目后回落到列表首个
@@ -257,7 +264,7 @@ async function onDelete(novel: Novel): Promise<void> {
 
 <template>
   <div class="project-sidebar">
-    <!-- 左上角动态组件：生肖宠物 + 城市 + 天气/空气质量（v1028） -->
+    <!-- 左上角动态组件：生肖宠物 + 城市 + 天气/空气质量 -->
     <WeatherWidget />
 
     <div class="sidebar-head">
@@ -266,9 +273,9 @@ async function onDelete(novel: Novel): Promise<void> {
       </el-button>
     </div>
 
-    <!-- v1028：无项目时不展示任何提示 -->
+    <!-- 无项目时不展示任何提示 -->
     <div class="sidebar-body scroll-y">
-      <!-- v1029：悬浮只展示简介，且展示在项目**下面** -->
+      <!-- 悬浮只展示简介，且展示在项目**下面** -->
       <el-tooltip
         v-for="novel in sortedNovels"
         :key="novel.id"
@@ -289,7 +296,7 @@ async function onDelete(novel: Novel): Promise<void> {
           :class="{ active: novel.id === store.currentNovelId }"
           @click="select(novel)"
         >
-          <!-- v1028：书籍 icon + 书名 + ···（重命名/删除/导出） -->
+          <!-- 书籍 icon + 书名 + ···（重命名/删除/导出） -->
           <span class="novel-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
               <path d="M6 2h9a3 3 0 0 1 3 3v16a2 2 0 0 0-2-2H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm0 18h10v1a1 1 0 0 1-1 1H6a2 2 0 0 1 0-2zm3-15h5v2H9V5z" />
@@ -297,7 +304,7 @@ async function onDelete(novel: Novel): Promise<void> {
           </span>
           <span class="novel-meta">
             <span class="novel-title">{{ novel.title }}</span>
-            <!-- ★v1031 续：题材标签放在书名下面一行，让书名尽量完整显示 -->
+            <!-- 题材标签放在书名下面一行，让书名尽量完整显示 -->
             <span v-if="genreTagList(novel).length" class="novel-genres">
               <span v-for="g in genreTagList(novel)" :key="g" class="genre-tag">{{ g }}</span>
             </span>
@@ -326,8 +333,8 @@ async function onDelete(novel: Novel): Promise<void> {
       <el-button text @click="emit('open-ai-tools')">{{ t('sidebar.aiTools') }}</el-button>
     </div>
 
-    <!-- 新建 / 编辑小说弹窗（v1029：书名左上角 *，输入框无提示词，题材改勾选标签；
-         v1030：[重命名] 升级为 [编辑]，复用同一弹窗修改名称 / 题材 / 简介） -->
+    <!-- 新建 / 编辑小说弹窗（书名左上角 *，输入框无提示词，题材改勾选标签；
+         [重命名] 升级为 [编辑]，复用同一弹窗修改名称 / 题材 / 简介） -->
     <el-dialog
       v-model="dialogVisible"
       :title="dialogMode === 'edit' ? t('novel.editTitle') : t('novel.createTitle')"
@@ -355,16 +362,16 @@ async function onDelete(novel: Novel): Promise<void> {
               {{ t('novel.titleLabel') }}
             </span>
           </template>
-          <!-- v1029：输入框不要任何内容（无 placeholder、无字数计数） -->
+          <!-- 输入框不要任何内容（无 placeholder、无字数计数） -->
           <el-input v-model="form.title" maxlength="200" />
           <div v-if="form.title && titleError" class="field-error">{{ titleError }}</div>
         </el-form-item>
 
-        <!-- ★v1031：新建弹窗删除「作者」这一项（作者名由后端按默认值处理） -->
+        <!-- 新建弹窗删除「作者」这一项（作者名由后端按默认值处理） -->
 
-        <!-- v1029：题材 = 勾选标签（最少 1 个，最多 3 个）；v1031：必填 * 标记，
+        <!-- 题材 = 勾选标签（最少 1 个，最多 3 个）；必填 * 标记，
              「最少 1 最多 3」的提示不再展示（逻辑保留为隐藏校验）
-             v1030续：内置 28 个主流题材 + 末尾「+」新增自定义题材（新建 / 编辑弹窗通用） -->
+             内置 28 个主流题材 + 末尾「+」新增自定义题材（新建 / 编辑弹窗通用） -->
         <el-form-item required>
           <template #label>
             <span class="label-main">{{ t('novel.genreLabel') }}</span>
@@ -379,7 +386,7 @@ async function onDelete(novel: Novel): Promise<void> {
               {{ g }}
             </el-check-tag>
 
-            <!-- v1030续：「+」→ 小弹窗填写自定义题材名，保存后新增标签（「+」仍保留） -->
+            <!-- 「+」→ 小弹窗填写自定义题材名，保存后新增标签（「+」仍保留） -->
             <button type="button" class="genre-add" :title="t('novel.genreAddTitle')" @click="openGenreDialog">
               +
             </button>
@@ -403,7 +410,7 @@ async function onDelete(novel: Novel): Promise<void> {
       </template>
     </el-dialog>
 
-    <!-- v1030续：自定义题材小弹窗（输入题材名 → 保存后新增一个题材，「+」仍保留） -->
+    <!-- 自定义题材小弹窗（输入题材名 → 保存后新增一个题材，「+」仍保留） -->
     <el-dialog
       v-model="genreDialogVisible"
       :title="t('novel.genreAddTitle')"
@@ -412,14 +419,14 @@ async function onDelete(novel: Novel): Promise<void> {
     >
       <el-form label-width="60px" @submit.prevent>
         <el-form-item :label="t('novel.genreAddLabel')" required>
-          <!-- v1030续：输入框内不带提示词，规则违规时下方给中文提示 -->
+          <!-- 输入框内不带提示词，规则违规时下方给中文提示 -->
           <el-input
             v-model="genreInput"
             :maxlength="CUSTOM_GENRE_MAX_LEN"
             show-word-limit
             @keyup.enter="submitGenre"
           />
-          <!-- ★v1031：去掉输入框下方的提示语，只在违规时给中文错误提示 -->
+          <!-- 去掉输入框下方的提示语，只在违规时给中文错误提示 -->
           <div v-if="genreInputError" class="field-error">{{ genreInputError }}</div>
         </el-form-item>
       </el-form>
@@ -455,7 +462,7 @@ async function onDelete(novel: Novel): Promise<void> {
   padding: 6px;
 }
 
-/* v1028：一行一个项目 = icon + 书名 + ··· */
+/* 一行一个项目 = icon + 书名 + ··· */
 .novel-item {
   display: flex;
   align-items: center;
@@ -480,7 +487,7 @@ async function onDelete(novel: Novel): Promise<void> {
   color: var(--el-color-primary);
 }
 
-/* ★v1031 续：书名独占一行（尽量完整显示），题材标签在书名下面一行 */
+/* 书名独占一行（尽量完整显示），题材标签在书名下面一行 */
 .novel-meta {
   flex: 1;
   min-width: 0;
@@ -576,7 +583,7 @@ async function onDelete(novel: Novel): Promise<void> {
   color: var(--el-color-danger);
 }
 
-/* v1029：题材勾选标签组 */
+/* 题材勾选标签组 */
 .genre-group {
   display: flex;
   flex-wrap: wrap;
@@ -584,7 +591,7 @@ async function onDelete(novel: Novel): Promise<void> {
   width: 100%;
 }
 
-/* v1030续：题材末尾的「+」（新增自定义题材） */
+/* 题材末尾的「+」（新增自定义题材） */
 .genre-add {
   display: inline-flex;
   align-items: center;

@@ -41,7 +41,7 @@ function openRespond(): void {
 }
 
 async function decide(
-  decision: 'approve' | 'edit' | 'reject' | 'respond',
+  decision: 'approve' | 'approve_session' | 'edit' | 'reject' | 'respond',
   payload?: { edited_args?: Record<string, unknown>; message?: string },
 ): Promise<void> {
   submitting.value = true
@@ -132,6 +132,16 @@ async function submitReject(): Promise<void> {
           @click="decide('approve')"
         >
           {{ t('agent.approve') }}
+        </el-button>
+        <el-button
+          v-if="decisions.has('approve_session')"
+          type="primary"
+          plain
+          size="small"
+          :loading="submitting"
+          @click="decide('approve_session')"
+        >
+          {{ t('agent.approveSession') }}
         </el-button>
         <el-button v-if="decisions.has('edit')" size="small" @click="openEdit">
           {{ t('agent.editThenApprove') }}

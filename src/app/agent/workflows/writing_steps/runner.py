@@ -90,6 +90,7 @@ async def execute_chapter_workflow(
 
         chat_model, resolved_ref, fallback_models = await resolve_models(run_id, model_ref)
         emitter = Emitter(run_id=run_id, session_id=session_id, max_context=max_context_of(chat_model))
+        context_window = emitter.max_context
         context = AgentContext(
             project_id=project_id,
             session_id=session_id,
@@ -116,6 +117,7 @@ async def execute_chapter_workflow(
                 session_id=session_id,
                 subagent_names=sub_names or None,
                 skill_names=sk_names or None,
+                max_context=context_window,
             )
             graph = agent["graph"]
         config = graph_config(project_id, session_id, agent.get("recursion_limit", 60))

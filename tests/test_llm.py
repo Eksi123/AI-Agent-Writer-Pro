@@ -91,7 +91,7 @@ class TestLlmProviderApi:
         assert resp.json()["code"] == 40001
 
     async def test_api_key_env_allows_arbitrary_name(self, client):
-        """★v1029：密钥环境变量名可**任意命名**（不再要求 _API_KEY/_KEY/_TOKEN 后缀）。"""
+        """密钥环境变量名可**任意命名**（不再要求 _API_KEY/_KEY/_TOKEN 后缀）。"""
         resp = await client.post(
             "/api/v1/llm/providers",
             json={
@@ -109,7 +109,7 @@ class TestLlmProviderApi:
         ["APP_PORT", "data_root", "1BAD", "BAD-NAME", "HAS SPACE", "含中文"],
     )
     async def test_api_key_env_rejects_invalid_names(self, client, bad_name):
-        """v1029：任意命名仍要挡住①非法字符 ②与应用配置键重名（否则写坏 .env）。"""
+        """任意命名仍要挡住①非法字符 ②与应用配置键重名（否则写坏 .env）。"""
         resp = await client.post(
             "/api/v1/llm/providers",
             json={

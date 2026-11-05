@@ -53,7 +53,7 @@ class ScriptedFakeChatModel(BaseChatModel):
                 name = (t.get("function") or {}).get("name") or t.get("name")
             if name:
                 names.append(str(name))
-        # ★返回 self 而非副本：langchain 在**每次**模型调用前都会 bind_tools，
+        # 返回 self 而非副本：langchain 在**每次**模型调用前都会 bind_tools，
         # 若返回 model_copy() 则 cursor 每次归零、永远重放 responses[0]。
         # 脚本模型本就忽略 tools（直接回放预设消息），记录工具名仅供断言。
         self.bound_tools = names

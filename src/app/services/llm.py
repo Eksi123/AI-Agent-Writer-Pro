@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: LLM Provider / Model 管理服务（手册「三、(1) services」+「二、(1) 密钥安全」）。
 
-    - 密钥存在**系统级环境变量**（v1029：`core.system_env.system_env_set`，用户作用域，无需管理员/root），
+    - 密钥存在**系统级环境变量**，
       DB 只存 `api_key_env`；读取时回落 `.env` 以兼容历史密钥；
     - 对外返回一律掩码（`sk-****abcd`），绝不回显明文；
     - 连接测试用极小请求（1 token），失败给可读错误；
@@ -25,7 +25,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.loop.llm.factory import (
     build_chat_model,
-    get_fallback_chain,
     invalidate_model_cache,
     provider_key_status,
 )
@@ -52,7 +51,7 @@ PROVIDER_TYPES = (
     "openrouter",
 )
 
-#: 常用环境变量名建议（★v1029：名称可任意取，这里只是常见厂商的命名参考）
+#: 常用环境变量名建议
 SUGGESTED_KEY_ENVS = (
     "OPENAI_API_KEY",
     "DASHSCOPE_API_KEY",
@@ -93,7 +92,7 @@ def provider_to_dto(row: LlmProvider, *, models: list[LlmModel] | None = None) -
         "priority": row.priority,
         "timeout_sec": getattr(row, "timeout_sec", 30),
         "temperature": getattr(row, "temperature", 1.0),
-        "max_tokens": getattr(row, "max_tokens", 2048),
+        "max_tokens": getattr(row, "max_tokens", 32768),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -109,13 +108,6 @@ def model_to_dto(row: LlmModel) -> dict[str, Any]:
             default_params = json.loads(row.default_params_json)
         except ValueError:
             default_params = {}
-    fallback_chain: list[str] = []
-    if row.fallback_chain_json:
-        try:
-            parsed = json.loads(row.fallback_chain_json)
-            fallback_chain = [x for x in parsed if isinstance(x, str)] if isinstance(parsed, list) else []
-        except ValueError:
-            fallback_chain = []
     return {
         "id": row.id,
         "provider_id": row.provider_id,
@@ -127,7 +119,6 @@ def model_to_dto(row: LlmModel) -> dict[str, Any]:
         "default_params": default_params,
         "is_default": row.is_default,
         "enabled": row.enabled,
-        "fallback_chain": fallback_chain,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -139,7 +130,7 @@ def model_to_dto(row: LlmModel) -> dict[str, Any]:
 
 
 def _check_params(type_: str, *, temperature: float, timeout_sec: int, max_tokens: int) -> None:
-    """v1028：大模型必填参数校验（协议类型决定 temperature 取值范围）。"""
+    """大模型必填参数校验（协议类型决定 temperature 取值范围）。"""
 
     try:
         validate_provider_params(type_, temperature, timeout_sec, max_tokens)
@@ -181,7 +172,7 @@ async def create_provider(
     priority: int = 0,
     timeout_sec: int = 30,
     temperature: float = 1.0,
-    max_tokens: int = 2048,
+    max_tokens: int = 32768,
 ) -> dict[str, Any]:
     name = (name or "").strip()
     if not name:
@@ -274,12 +265,12 @@ async def update_provider(
         if type not in PROVIDER_TYPES:
             raise BadRequestError(f"不支持的 provider 类型：{type}")
         if type != row.type:
-            # 协议类型变更后，既有 temperature 必须仍在新协议取值范围内（v1028）
+            # 协议类型变更后，既有 temperature 必须仍在新协议取值范围内
             _check_params(
                 type,
                 temperature=float(temperature) if temperature is not None else float(getattr(row, "temperature", 1.0)),
                 timeout_sec=int(timeout_sec) if timeout_sec is not None else int(getattr(row, "timeout_sec", 30)),
-                max_tokens=int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 2048)),
+                max_tokens=int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 32768)),
             )
             changes["type"] = {"from": row.type, "to": type}
             row.type = type
@@ -292,7 +283,7 @@ async def update_provider(
 
     if clear_api_key and row.api_key_env:
         changes["api_key_env"] = {"from": row.api_key_env, "to": None}
-        # ★v1029：密钥存在系统级环境变量，清除时一并删除（仅当没有别的 Provider 共用该变量名）
+        # 密钥存在系统级环境变量，清除时一并删除（仅当没有别的 Provider 共用该变量名）
         await _forget_secret(session, row.api_key_env, except_provider_id=row.id)
         row.api_key_env = None
     elif api_key_value:
@@ -304,7 +295,7 @@ async def update_provider(
         changes["api_key_env"] = {"from": old_env, "to": env_name}
         changes["api_key"] = {"masked": mask(api_key_value)}
         row.api_key_env = env_name
-        # ★v1029：换了新变量名并写入新密钥后，旧变量名成为孤儿，清理掉（仍受共用保护）
+        # 换了新变量名并写入新密钥后，旧变量名成为孤儿，清理掉（仍受共用保护）
         if old_env and old_env != env_name:
             await _forget_secret(session, old_env, except_provider_id=row.id)
     elif api_key_env is not None:
@@ -329,12 +320,12 @@ async def update_provider(
         changes["priority"] = {"from": row.priority, "to": priority}
         row.priority = priority
 
-    # v1028：超时 / Temperature / Max Token（校验以最终生效的 type 为准）
+    # 超时 / Temperature / Max Token（校验以最终生效的 type 为准）
     if timeout_sec is not None or temperature is not None or max_tokens is not None:
         eff_type = type or row.type
         eff_temp = float(temperature) if temperature is not None else float(getattr(row, "temperature", 1.0))
         eff_timeout = int(timeout_sec) if timeout_sec is not None else int(getattr(row, "timeout_sec", 30))
-        eff_max = int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 2048))
+        eff_max = int(max_tokens) if max_tokens is not None else int(getattr(row, "max_tokens", 32768))
         _check_params(eff_type, temperature=eff_temp, timeout_sec=eff_timeout, max_tokens=eff_max)
         if timeout_sec is not None and timeout_sec != row.timeout_sec:
             changes["timeout_sec"] = {"from": row.timeout_sec, "to": timeout_sec}
@@ -371,7 +362,7 @@ async def delete_provider(session: AsyncSession, provider_id: str) -> dict[str, 
     if row is None:
         raise NotFoundError(f"Provider 不存在：{provider_id}")
 
-    # ★v1029：删除 Provider 时清理其系统级密钥变量（仅当没有别的 Provider 共用该变量名），
+    # 删除 Provider 时清理其系统级密钥变量（仅当没有别的 Provider 共用该变量名），
     # 避免密钥残留在系统环境里。必须在 session.delete(row) 之前取到变量名。
     orphan_env = (row.api_key_env or "").strip() or None
 
@@ -416,12 +407,11 @@ async def create_model(
     provider_id: str,
     model_id: str,
     display_name: str | None = None,
-    max_context: int = 32768,
+    max_context: int = 262_144,
     supports_tools: bool = True,
     default_params: dict[str, Any] | None = None,
     is_default: bool = False,
     enabled: bool = True,
-    fallback_chain: list[str] | None = None,
 ) -> dict[str, Any]:
     provider = await session.get(LlmProvider, provider_id)
     if provider is None:
@@ -447,12 +437,11 @@ async def create_model(
         provider_id=provider_id,
         model_id=model_id,
         display_name=(display_name or "").strip() or None,
-        max_context=int(max_context or 32768),
+        max_context=int(max_context or 262_144),
         supports_tools=supports_tools,
         default_params_json=json.dumps(default_params, ensure_ascii=False) if default_params else None,
         is_default=is_default,
         enabled=enabled,
-        fallback_chain_json=_dump_chain(fallback_chain, provider_id, model_id),
     )
     session.add(row)
     await session.flush()
@@ -479,7 +468,6 @@ async def update_model(
     default_params: dict[str, Any] | None = None,
     is_default: bool | None = None,
     enabled: bool | None = None,
-    fallback_chain: list[str] | None = None,
 ) -> dict[str, Any]:
     row = await session.get(LlmModel, model_pk)
     if row is None:
@@ -535,12 +523,6 @@ async def update_model(
     if enabled is not None and enabled != row.enabled:
         changes["enabled"] = {"from": row.enabled, "to": enabled}
         row.enabled = enabled
-
-    if fallback_chain is not None:
-        new_json = _dump_chain(fallback_chain, row.provider_id, row.model_id)
-        if new_json != row.fallback_chain_json:
-            changes["fallback_chain"] = {"from": row.fallback_chain_json, "to": fallback_chain}
-            row.fallback_chain_json = new_json
 
     if changes:
         row.updated_at = utcnow()
@@ -701,7 +683,7 @@ def _provider_key_overview() -> dict[str, bool]:
 def _derive_env_name(name: str) -> str:
     """由 Provider 名派生环境变量名（大写 + 下划线 + `_API_KEY` 后缀）。
 
-    v1029：密钥变量名可任意命名，这里只是「用户没填时」的默认值；
+    密钥变量名可任意命名，这里只是「用户没填时」的默认值；
     派生结果若与应用配置键冲突则回落到 `CUSTOM_API_KEY`。
     """
 
@@ -713,7 +695,7 @@ def _derive_env_name(name: str) -> str:
 
 
 def _env_name_error(env_name: str) -> str:
-    """v1029：密钥环境变量名非法时的可读提示（名称本身可任意取，只挡非法字符与应用配置键）。"""
+    """密钥环境变量名非法时的可读提示（名称本身可任意取，只挡非法字符与应用配置键）。"""
     if not (env_name or "").strip():
         return "密钥环境变量名为必填"
     return (
@@ -723,7 +705,7 @@ def _env_name_error(env_name: str) -> str:
 
 
 def _write_secret(session: AsyncSession, env_name: str, value: str) -> None:
-    """密钥写入**系统级环境变量**（v1029；用户作用域，无需管理员/root）。
+    """密钥写入**系统级环境变量**。
 
     - Windows：`HKCU\\Environment`（`setx`，重启后仍生效）；
     - macOS/Linux：`~/.ai-writer-pro/env.json`（0600）+ 派生 shell 文件供 profile `source`；
@@ -745,9 +727,9 @@ def _write_secret(session: AsyncSession, env_name: str, value: str) -> None:
 async def _forget_secret(
     session: AsyncSession, env_name: str | None, *, except_provider_id: str | None = None
 ) -> None:
-    """v1029：删除系统级密钥变量（清除密钥 / 改环境变量名 / 删 Provider 时调用）。
+    """删除系统级密钥变量（清除密钥 / 改环境变量名 / 删 Provider 时调用）。
 
-    ★多个 Provider 可能共用同一个变量名（如两家都用 `OPENAI_API_KEY`），
+    多个 Provider 可能共用同一个变量名（如两家都用 `OPENAI_API_KEY`），
     因此**仅当没有其它 Provider 仍引用该变量名时**才真正删除，避免误删他人密钥。
     失败不阻断主流程（记警告即可）——密钥残留不影响功能，只是清理不彻底。
     """
@@ -780,22 +762,6 @@ async def _clear_other_defaults(session: AsyncSession, keep_pk: str | None) -> N
             row.is_default = False
             row.updated_at = utcnow()
     await session.flush()
-
-
-def _dump_chain(chain: list[str] | None, provider_id: str, model_id: str) -> str | None:
-    """规范化降级链：去重、排除自身，空链存 NULL。"""
-    if not chain:
-        return None
-    self_ref = f"{provider_id}:{model_id}"
-    seen: list[str] = []
-    for item in chain:
-        if not isinstance(item, str):
-            continue
-        ref = item.strip()
-        if not ref or ref == self_ref or ref in seen:
-            continue
-        seen.append(ref)
-    return json.dumps(seen, ensure_ascii=False) if seen else None
 
 
 async def default_model_ref(session: AsyncSession) -> str | None:
@@ -835,11 +801,6 @@ async def all_model_refs(session: AsyncSession) -> list[dict[str, Any]]:
         }
         for m, p in rows
     ]
-
-
-async def chain_of(session: AsyncSession, model_ref: str) -> list[str]:
-    """对外暴露降级链（供 UI 展示）。"""
-    return await get_fallback_chain(session, model_ref)
 
 
 def settings_snapshot() -> dict[str, Any]:

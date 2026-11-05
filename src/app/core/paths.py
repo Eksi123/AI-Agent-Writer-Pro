@@ -12,7 +12,7 @@
         ├── skills/{name}/SKILL.md
         ├── exports/
         ├── trash/{project_id}-{ts}/
-        ├── recycle/{project_id}/{index.yaml,chapters/}   ← v1031 回收站（最多 20 本）
+        ├── recycle/{project_id}/{index.yaml,chapters/} ← 回收站（最多 20 本）
         └── logs/
 """
 
@@ -30,6 +30,7 @@ _ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 CHAPTERS_DIR = "chapters"
 OUTLINE_DIR = "outline"
 SUMMARIES_DIR = "summaries"
+ATTACHMENTS_DIR = "attachments"
 NOVEL_META_FILE = "novel.yaml"
 VOLUMES_FILE = "volumes.yaml"
 
@@ -71,6 +72,11 @@ def outline_dir(project_id: str) -> Path:
 
 def summaries_dir(project_id: str) -> Path:
     return workspace_dir(project_id) / SUMMARIES_DIR
+
+
+def attachments_dir(project_id: str) -> Path:
+    """`attachments/`：添加文件的落盘目录（AI 经虚拟路径按需 read_file）。"""
+    return workspace_dir(project_id) / ATTACHMENTS_DIR
 
 
 def summary_file(project_id: str, chapter_id: str) -> Path:
@@ -118,14 +124,14 @@ def trash_root() -> Path:
     return p
 
 
-#: v1031：回收站根目录（被删除的**章节**按小说归档在这里）
+#: 回收站根目录（被删除的**章节**按小说归档在这里）
 RECYCLE_DIR = "recycle"
 
 
 def recycle_root() -> Path:
     """回收站根：`data/recycle/`。
 
-    布局（v1031）：
+    布局：
         data/recycle/{project_id}/index.yaml        ← 该小说被删章节清单（含书名/卷名快照）
         data/recycle/{project_id}/chapters/c{id}.md ← 被删章节原文件（frontmatter + 正文）
     """
@@ -177,7 +183,13 @@ def outline_relpath(title: str) -> str:
 def init_workspace(project_id: str) -> Path:
     """初始化工作区目录结构（创建项目时调用）。"""
     ws = workspace_dir(project_id)
-    for d in (ws, chapters_dir(project_id), outline_dir(project_id), summaries_dir(project_id)):
+    for d in (
+        ws,
+        chapters_dir(project_id),
+        outline_dir(project_id),
+        summaries_dir(project_id),
+        attachments_dir(project_id),
+    ):
         d.mkdir(parents=True, exist_ok=True)
     return ws
 

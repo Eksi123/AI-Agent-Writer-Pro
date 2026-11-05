@@ -97,7 +97,7 @@ async def create_server(
             raise BadRequestError("stdio MCP 必须提供 command（JSON：{command, args}）")
         cmd, args = validate_stdio_command(str(command.get("command")), list(command.get("args") or []))
         command_json = json.dumps({"command": cmd, "args": args}, ensure_ascii=False)
-        # ★命令全文落审计（安全边界要求）
+        # 命令全文落审计（安全边界要求）
         detail["command_full"] = f"{cmd} {' '.join(args)}".strip()
         detail["whitelist"] = list(STDIO_COMMAND_WHITELIST)
     else:

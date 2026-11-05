@@ -1,16 +1,14 @@
 <script setup lang="ts">
-/** 字数统计条：实时统计当前章正文字数（去除 HTML 标签与空白）。 */
+/** 字数统计条：实时统计当前章正文字数。 */
 import { computed } from 'vue'
 import { useEditorStore } from '@/stores/editor'
+import { countWords } from '@/utils/words'
 import { t } from '@/i18n'
 
 const editorStore = useEditorStore()
 
-/** 从 HTML 草稿中统计实际字数（去标签、去空白） */
-const liveCount = computed(() => {
-  const text = editorStore.draft.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ')
-  return text.replace(/\s+/g, '').length
-})
+/** draft 为 Markdown 正文，输入即更新 → 字数实时刷新 */
+const liveCount = computed(() => countWords(editorStore.draft))
 </script>
 
 <template>

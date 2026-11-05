@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: Jinja2 环境与模板渲染（手册「二、(5) 提示词模块」，独立版本化）。
 
-    ★v1102（架构优化）：模板按归属分散在多处，渲染器用**多目录 FileSystemLoader**
+    （架构优化）：模板按归属分散在多处，渲染器用**多目录 FileSystemLoader**
     统一查找（调用方仍只传文件名，无需知道模板在哪）：
     - `loop/prompts/`：主代理系统提示（`main_agent.md.j2`）、章节摘要（`summarize_chapter.md.j2`）；
     - `workflows/writing_steps/prompts/`：流程预检 / 生成 / 后检 / 大纲代写模板；

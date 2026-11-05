@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: LLM Provider / Model DTO（手册「二、(1)」+「六 → 路由树 · 模型」）。
 
-    ★密钥不入 DB：只存 `api_key_env`（环境变量名），响应回 `api_key_masked`。
+    密钥不入 DB：只存 `api_key_env`（环境变量名），响应回 `api_key_masked`。
 
     响应统一由 `core.response.ok()` 包成 `{code,message,data}`，此处只定义 `data` 部分。
 """
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 _PROVIDER_TYPES = ("openai", "openai_compatible", "anthropic", "google", "azure_openai", "openrouter")
 
-#: 协议类型 → temperature 合法范围（v1028 大模型配置弹窗；两端均为闭区间，0 不允许）
+#: 协议类型 → temperature 合法范围
 _TEMPERATURE_RANGES: dict[str, tuple[float, float]] = {
     "openai": (0.0, 2.0),
     "openai_compatible": (0.0, 2.0),
@@ -35,7 +35,7 @@ _TEMPERATURE_RANGES: dict[str, tuple[float, float]] = {
 
 
 def validate_provider_params(type_: str, temperature: float, timeout_sec: int, max_tokens: int) -> None:
-    """校验大模型必填参数（v1028）。不合法抛 `ValueError`（API 层转 40001）。"""
+    """校验大模型必填参数。不合法抛 `ValueError`（API 层转 40001）。"""
     if not (10 <= timeout_sec <= 60):
         raise ValueError(f"超时时长须在 10~60 秒之间，收到：{timeout_sec}")
     lo, hi = _TEMPERATURE_RANGES.get(type_, (0.0, 2.0))
@@ -56,12 +56,12 @@ class LlmProviderCreate(BaseModel):
     extra: dict[str, Any] | None = None
     enabled: bool = True
     priority: int = 0
-    #: v1028 必填参数：超时（秒，10~60，默认 30）
+    #: 必填参数：超时（秒，10~60，默认 30）
     timeout_sec: int = Field(default=30, ge=10, le=60)
-    #: v1028 必填参数：温度（按协议类型校验范围，默认 1.0）
+    #: 必填参数：温度（按协议类型校验范围，默认 1.0）
     temperature: float = Field(default=1.0, gt=0, le=2)
-    #: v1028 必填参数：最大输出 token（默认 2048，不设上限）
-    max_tokens: int = Field(default=2048, ge=1)
+    #: 必填参数：最大输出 token（默认 32K，不设上限）
+    max_tokens: int = Field(default=32768, ge=1)
 
 
 class LlmProviderUpdate(BaseModel):
@@ -83,24 +83,21 @@ class LlmModelCreate(BaseModel):
     provider_id: str
     model_id: str = Field(max_length=120)
     display_name: str | None = Field(default=None, max_length=120)
-    max_context: int = Field(default=32768, ge=1024, le=2_000_000)
+    max_context: int = Field(default=262_144, ge=102_400, le=1_048_576)
     supports_tools: bool = True
     default_params: dict[str, Any] | None = None
     is_default: bool = False
     enabled: bool = True
-    #: 有序 model_ref 列表（"{provider_id}:{model_id}"）
-    fallback_chain: list[str] = Field(default_factory=list)
 
 
 class LlmModelUpdate(BaseModel):
     model_id: str | None = Field(default=None, max_length=120)
     display_name: str | None = Field(default=None, max_length=120)
-    max_context: int | None = Field(default=None, ge=1024, le=2_000_000)
+    max_context: int | None = Field(default=None, ge=102_400, le=1_048_576)
     supports_tools: bool | None = None
     default_params: dict[str, Any] | None = None
     is_default: bool | None = None
     enabled: bool | None = None
-    fallback_chain: list[str] | None = None
 
 
 class LlmProviderTestIn(BaseModel):

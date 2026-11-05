@@ -4,9 +4,9 @@
 文件名: system_env.py
 作者: xionggaoqing
 时间: 2026-10-29
-说明: 系统级环境变量读写（v1029 需求「密钥保存在系统级环境变量」），适配 Windows / Linux / macOS。
+说明: 系统级环境变量读写，适配 Windows / Linux / macOS。
 
-    ★一律使用**用户级**作用域（不需要管理员/root），避免污染整机环境：
+    一律使用**用户级**作用域（不需要管理员/root），避免污染整机环境：
     - Windows：注册表 `HKCU\\Environment`（标准库 `winreg` 写 + 广播 WM_SETTINGCHANGE），
       持久、重启后仍生效；不用 `setx`——它会静默截断 >1024 字符的值，且让密钥暴露在命令行；
     - macOS / Linux：密钥事实源 `~/.ai-writer-pro/env.json`（0600），并派生同目录 shell 文件
@@ -16,7 +16,7 @@
     读取走 `system_env_get()`：优先当前进程环境，再查持久化存储——因为 Windows 的
     `winreg` 写注册表 / macOS 的 `launchctl setenv` **不会**影响已在运行的本进程。
 
-    ★测试隔离：`DATA_ROOT` 被显式覆盖（非默认值）时，全部读写重定向到
+    测试隔离：`DATA_ROOT` 被显式覆盖（非默认值）时，全部读写重定向到
     `{DATA_ROOT}/system-env.json`，**绝不触碰真实系统环境**（与 `.env` 的隔离策略一致）。
 """
 
@@ -126,7 +126,7 @@ def _win_broadcast_change() -> None:
 def _win_set(name: str, value: str) -> bool:
     """写 `HKCU\\Environment`（用户级，无需管理员）。失败返回 False。
 
-    ★用标准库 `winreg` 而非 `setx`：
+    用标准库 `winreg` 而非 `setx`：
     - `setx` 会把**超过 1024 字符的值静默截断**（长密钥会被写坏且无报错）；
     - `setx` 让密钥出现在**命令行**上，任何本机进程都能在进程列表里看到明文。
     `winreg` 两者皆无，且写的是同一处注册表键（重启后仍生效）。
@@ -316,7 +316,7 @@ def _unix_launchctl_unset(name: str) -> None:
 def system_env_set(name: str, value: str) -> bool:
     """把密钥写入**系统级（用户作用域）环境变量**并持久化。返回是否成功。
 
-    ★Windows 的注册表写入 / macOS 的 launchctl **不会影响本进程**，因此同时写回
+    Windows 的注册表写入 / macOS 的 launchctl **不会影响本进程**，因此同时写回
     `os.environ`，让应用无需重启即可用新密钥调用大模型。
     """
     with _lock:

@@ -47,33 +47,32 @@ class TestClassifyRisk:
         kind, _ = classify_risk("delete", {"file_path": "/conversation_history/x.md"})
         assert kind is None
 
-    def test_large_edit_is_high_risk(self):
+    def test_large_edit_allowed(self):
+        """大范围 edit 不再审批（写小说常规操作）。"""
         args = {
             "file_path": "/projects/abc/chapters/v1/c1.md",
             "old_string": "x" * (DEFAULT_EDIT_THRESHOLD + 1),
             "new_string": "y",
         }
-        kind, reason = classify_risk("edit_file", args)
-        assert kind == "large_edit"
-        assert "大范围改写" in reason
+        kind, _reason = classify_risk("edit_file", args)
+        assert kind is None
 
     def test_small_edit_allowed(self):
         args = {"file_path": "/projects/abc/chapters/v1/c1.md", "old_string": "旧句", "new_string": "新句"}
         kind, _ = classify_risk("edit_file", args)
         assert kind is None
 
-    def test_overwrite_existing_chapter_is_high_risk(self, tmp_path, monkeypatch):
-        """write_file 覆盖已存在的非空章节 → overwrite。"""
+    def test_overwrite_existing_chapter_allowed(self, tmp_path, monkeypatch):
+        """整章覆盖不再审批（生成/改写正文是常规操作）。"""
         pid = "testpid"
         ch = workspace_dir(pid) / "chapters" / "v1" / "c1.md"
         ch.parent.mkdir(parents=True, exist_ok=True)
         ch.write_text("---\ntitle: 第一章\n---\n" + "旧" * (DEFAULT_OVERWRITE_THRESHOLD + 10), encoding="utf-8")
 
-        kind, reason = classify_risk(
+        kind, _reason = classify_risk(
             "write_file", {"file_path": f"/projects/{pid}/chapters/v1/c1.md", "content": "全新内容"}
         )
-        assert kind == "overwrite"
-        assert "整章覆盖" in reason
+        assert kind is None
 
     def test_write_new_file_allowed(self):
         kind, _ = classify_risk(
@@ -224,12 +223,12 @@ class TestBuilderAssembly:
     """Builder 装配（中间件顺序 + permissions + skills 路径）"""
 
     def test_middleware_order(self):
-        """中间件顺序必须符合手册（Retry → Fallback → CallLimit → Todo → Recap → Guard → Notify → Approval）。"""
+        """中间件顺序必须符合手册（Retry → SwitchOnFailure → CallLimit → Todo → Recap → Guard → Notify → Approval）。"""
 
         class _DummyModel:
             model_name = "dummy"
 
-        stack = build_middleware_stack(primary_model=_DummyModel(), fallback_models=[], recap_provider=None)
+        stack = build_middleware_stack(primary_model=_DummyModel(), alternate_models=[], recap_provider=None)
         names = [getattr(m, "name", type(m).__name__) for m in stack]
 
         def idx(key: str) -> int:
@@ -238,7 +237,7 @@ class TestBuilderAssembly:
         assert idx("ModelRetry") < idx("ModelCallLimit") < idx("TodoList")
         assert idx("TodoList") < idx("RecapInjection") < idx("WorkspaceGuard")
         assert idx("WorkspaceGuard") < idx("FileChangeNotify")
-        # ★v1101：WriteApproval 必须**最外层**（index 0）
+        # WriteApproval 必须**最外层**（index 0）
         assert names[0] == "WriteApproval"
 
     def test_permission_rules_constant(self):
@@ -282,15 +281,16 @@ class TestBuiltinToolsAndSkills:
         assert not (builtin_dir / "skills").exists()
 
     def test_builtin_tool_dtos(self):
-        """内置工具清单：read/write/edit/list/grep/glob/web_search，展示名与真实名对应。"""
+        """内置工具清单：read/write/edit/list/grep/glob/outline_recall/web_search，展示名与真实名对应。"""
         from app.services.skills import BUILTIN_TOOL_DTOS, BUILTIN_TOOL_NAMES
 
         labels = {d["label"] for d in BUILTIN_TOOL_DTOS}
-        assert {"read", "edit", "list", "grep", "glob", "web_search", "write"} <= labels
+        assert {"read", "edit", "list", "grep", "glob", "outline_recall", "web_search", "write"} <= labels
         assert "write_file" in BUILTIN_TOOL_NAMES
-        # 展示顺序（写作技能页/子代理多选）：write 紧随 read
+        assert "outline_recall" in BUILTIN_TOOL_NAMES
+        # 展示顺序（写作技能页/子代理多选）：write 紧随 read，outline_recall 在 web_search 前
         assert [d["label"] for d in BUILTIN_TOOL_DTOS] == [
-            "read", "write", "edit", "list", "grep", "glob", "web_search",
+            "read", "write", "edit", "list", "grep", "glob", "outline_recall", "web_search",
         ]
 
     def test_subagent_tools_are_known_builtin_tools(self):

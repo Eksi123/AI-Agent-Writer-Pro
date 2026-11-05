@@ -34,7 +34,7 @@ export class ApiError extends Error {
     return this.code === ErrorCode.NAMING_INVALID
   }
 
-  /** 是否为依赖不可用（503 / 50301，如无 calibre） */
+  /** 是否为依赖不可用（503 / 50301，如缺 reportlab） */
   get isDependencyUnavailable(): boolean {
     return this.code === ErrorCode.DEPENDENCY_UNAVAILABLE
   }
@@ -47,7 +47,7 @@ interface BackendEnvelope<T> {
 }
 
 /**
- * ★v1031：HTTP 状态码 → 简短中文文案。
+ * HTTP 状态码 → 简短中文文案。
  * axios 的 `error.message` 是英文（如 `Request failed with status code 500`），
  * 直接展示会把英文抛给用户，故统一在这里换成中文。
  */
@@ -82,7 +82,7 @@ export const http: AxiosInstance = axios.create({
 http.interceptors.response.use(
   (response) => {
     const body = response.data as BackendEnvelope<unknown>
-    // ★v1031 续：后端**缺少该路由**时（如后端进程是旧版本），单体部署的 SPA 回落会把
+    // 后端**缺少该路由**时（如后端进程是旧版本），单体部署的 SPA 回落会把
     // index.html 页面以 200 返回，body 是 HTML 字符串。若不拦，调用方拿到字符串后
     // 取属性（如回收站的 `res.items`）直接崩成白屏报错。这里统一转成中文 ApiError。
     if (typeof body === 'string') {
@@ -113,7 +113,7 @@ http.interceptors.response.use(
     if (!error.response) {
       return Promise.reject(new ApiError(ErrorCode.INTERNAL_ERROR, t('health.backendOffline'), null, 0))
     }
-    // ★v1031：axios 的 error.message 是英文（如 "Request failed with status code 500"），
+    // axios 的 error.message 是英文（如 "Request failed with status code 500"），
     // 统一换成简短中文，避免把英文错误抛给用户。
     return Promise.reject(new ApiError(ErrorCode.INTERNAL_ERROR, httpErrorText(status), null, status))
   },
@@ -153,12 +153,12 @@ export async function del<T>(url: string, config?: AxiosRequestConfig): Promise<
  * 把 ApiError 转成适合 ElMessage 展示的中文文案。
  * 命名类错误（42201）单独提示，其余回落到后端 message。
  *
- * ★v1031：非后端错误（原生 JS Error，message 多为英文）一律换成简短中文，
+ * 非后端错误（原生 JS Error，message 多为英文）一律换成简短中文，
  * 避免把 `Cannot read properties of undefined` 这类英文抛给用户。
  */
 export function errorMessage(err: unknown, fallback?: string): string {
   if (err instanceof ApiError) {
-    // v1028：命名类错误优先展示后端具体原因（如「不允许全部为阿拉伯数字」）
+    // 命名类错误优先展示后端具体原因（如「不允许全部为阿拉伯数字」）
     if (err.isNamingInvalid) return err.message || t('novel.namingRejected')
     if (err.isDependencyUnavailable) return err.message
     if (err.isVersionConflict) return t('conflict.message')

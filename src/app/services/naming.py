@@ -47,7 +47,7 @@ _DEFAULT_NAMES = {
 #: 纯序号名：仅由数字、中文数字、序数词、标点空白构成
 _PURE_ORDINAL_RE = re.compile(rf"^[{_CN_NUM}\d\s第卷章回节篇部集话話\.\-·_]+$")
 
-#: 书籍名称禁用的特殊字符（v1028：不允许出现 #$% 等特殊字符，标点符号可以出现）
+#: 书籍名称禁用的特殊字符
 _SPECIAL_CHARS = set("#$%&*+=<>@^|~`\\")
 
 
@@ -65,7 +65,7 @@ def collapse_whitespace(name: str) -> str:
 
 
 def validate_novel_title(title: str | None) -> str:
-    """校验小说名（v1028 规则）。返回归一化后的标题；不合法抛 `NamingInvalidError`（42201）。
+    """校验小说名。返回归一化后的标题；不合法抛 `NamingInvalidError`（42201）。
 
     规则：不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；
     可以出现标点符号。
@@ -95,17 +95,17 @@ def validate_novel_title(title: str | None) -> str:
 
 
 def validate_volume_title(title: str | None) -> str:
-    """校验卷名（v1029：与书名同一套规则）。"""
+    """校验卷名。"""
     return _validate_structural_title(title, kind="卷名")
 
 
 def validate_chapter_title(title: str | None) -> str:
-    """校验章名（v1029：与书名同一套规则）。"""
+    """校验章名。"""
     return _validate_structural_title(title, kind="章名")
 
 
 def _validate_structural_title(title: str | None, *, kind: str) -> str:
-    """卷名 / 章名校验（v1029）。
+    """卷名 / 章名校验。
 
     需求「卷名或章节名的命名规则和书名的命名规则一样」：
     不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；可以出现标点符号。

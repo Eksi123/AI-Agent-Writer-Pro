@@ -73,7 +73,7 @@ async def init_database() -> None:
     两条路径互相幂等：
     - **全新库**：`create_all` 建表 → 无 `alembic_version` 行 → 打版本戳到 head；
     - **既有库落后于 head**：`create_all` 只补新表、**不会给已存在的表加列**，
-      因此这里再跑一次 `alembic upgrade head` 应用增量（如 v1028 给 llm_providers
+      因此这里再跑一次 `alembic upgrade head` 应用增量（如 给 llm_providers
       加 timeout_sec / temperature / max_tokens），避免「模型加了列但旧库没列」导致 500。
     """
     engine = get_engine()

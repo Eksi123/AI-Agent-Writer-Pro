@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * 写作技能管理（★v1102 架构优化 Tools(3)）：内置基础工具（只读置灰）+ 用户自建（CRUD）。
+ * 写作技能管理：内置基础工具（只读置灰）+ 用户自建（CRUD）。
  *
- * v1102 变更：
+ * 变更：
  * - 技能 = 用户自建：包内不再随包携带写作技能目录，列表只有「内置工具 + 自建技能」两类；
  * - 所有技能都有「启用」设置（自建可切换、内置工具置灰恒启用）；
  * - 去掉「查看」按钮；用户自建技能有「删除」；三个设置顺序 = 启用、编辑、删除；
  * - 未启用的自建技能不可被主 Agent 调用、不可被子代理绑定（后端装配过滤）。
  *
- * v1028 保留：新建弹窗无顶部标题；技能正文必填；自建技能只包含提示词。
+ * 保留：新建弹窗无顶部标题；技能正文必填；自建技能只包含提示词。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -128,7 +128,7 @@ async function remove(s: SkillDto): Promise<void> {
 
 <template>
   <div v-loading="loading" class="skill-manager">
-    <!-- v1028：删除顶部提示语，只保留「新建技能」入口 -->
+    <!-- 删除顶部提示语，只保留「新建技能」入口 -->
     <div class="toolbar">
       <div />
       <el-button type="primary" @click="openDialog()">＋ {{ t('skills.add') }}</el-button>
@@ -177,7 +177,7 @@ async function remove(s: SkillDto): Promise<void> {
       <div v-if="s.description" class="desc">{{ s.description }}</div>
     </div>
 
-    <!-- 新建/编辑弹窗：无顶部标题；v1030 弹窗与字体/输入框等比例放大 -->
+    <!-- 新建/编辑弹窗：无顶部标题；弹窗与字体/输入框等比例放大 -->
     <el-dialog v-model="dialogVisible" width="700px" class="skill-dialog">
       <el-form :model="form" label-width="104px" label-position="left">
         <el-form-item :label="t('skills.nameLabel')" required>
@@ -240,7 +240,7 @@ async function remove(s: SkillDto): Promise<void> {
   gap: 8px;
 }
 
-/* ★v1102：启用开关（与子代理页同款） */
+/* 启用开关（与子代理页同款） */
 .switch-wrap {
   display: inline-flex;
   align-items: center;
@@ -281,11 +281,11 @@ async function remove(s: SkillDto): Promise<void> {
 
 .skill-dialog .el-dialog__body {
   padding-top: 10px;
-  /* v1030：输入框不要长到右上角 × 的位置 */
+  /* 输入框不要长到右上角 × 的位置 */
   padding-right: 52px;
 }
 
-/* v1030：设置名字号放大 */
+/* 设置名字号放大 */
 .skill-dialog .el-form-item__label {
   font-size: 15px;
   padding-right: 18px;

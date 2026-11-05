@@ -37,7 +37,7 @@ def _client() -> httpx.AsyncClient:
 
     httpx 默认**不**跟随重定向，而 BigDataCloud 反向地理编码已改为
     `api.bigdatacloud.net` → 307 → `api-bdc.io`；不跟随就会拿到 3xx，
-    `raise_for_status()` 抛错，导致「具体地址」永远为空（v1029 需求 1.2 失效）。
+    `raise_for_status()` 抛错，导致「具体地址」永远为空。
     """
     return httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True)
 
@@ -138,7 +138,7 @@ async def geocode(city: str) -> dict[str, Any]:
 def _build_address(payload: dict[str, Any], city: str) -> str:
     """由反向地理编码结果拼「具体地址」（省 + 市 + 区县/街道）。
 
-    v1029：组件第一排「城市（大字号）+ 具体地址（小字号）」中的地址来源。
+    组件第一排「城市（大字号）+ 具体地址（小字号）」中的地址来源。
     只取 `adminLevel >= 4` 的行政区（跳过国家），并与 `locality` 去重后拼接。
     """
     parts: list[str] = []
@@ -213,7 +213,7 @@ async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any] |
     return out
 
 
-#: 风力等级（蒲福风级）：(风速上限 km/h, 级别) —— v1029 组件第三排「风速（级别为单位）」
+#: 风力等级（蒲福风级）：(风速上限 km/h, 级别) —— 组件第三排「风速（级别为单位）」
 _WIND_LEVELS = (
     (1, 0),
     (6, 1),
@@ -247,7 +247,7 @@ def wind_level(speed_kmh: float | None) -> int | None:
 async def current_weather(city: str, *, force_refresh: bool = False, source: str = "city") -> dict[str, Any]:
     """按城市名取当前天气（geocode → forecast）。
 
-    v1029：组件第一排要展示「具体地址」。城市名路径先 geocode 拿到坐标，再
+    组件第一排要展示「具体地址」。城市名路径先 geocode 拿到坐标，再
     **反向地理编码**得到与坐标路径一致的精确地址（区/街道）；反向地理编码失败
     （离线、限流等）时回落 geocode 的 `admin1`（省/州），仍失败则留空——
     **地址缺失绝不影响天气主数据**。
@@ -290,7 +290,7 @@ async def current_weather_by_coords(
     """按坐标取当前天气（含空气质量 AQI；AQI 失败不影响天气主数据）。
 
     `force_refresh=True` 时跳过缓存，保证「刷新页面即取实时数据」。
-    ★v1101：`source` 标明坐标来源（located=浏览器定位 / fallback_city=定位失败回落
+    `source` 标明坐标来源（located=浏览器定位 / fallback_city=定位失败回落
     设置城市 / city=按城市名查询），随数据返回供组件提示「当前为回落城市」。
     """
     # 缓存键含地址标签与来源：同一坐标可能被「坐标路径（精确地址）」和「城市名路径
@@ -327,7 +327,7 @@ async def current_weather_by_coords(
         "address": address_label,
         "latitude": latitude,
         "longitude": longitude,
-        #: ★v1101：坐标来源（located / fallback_city / city），组件据此提示回落城市
+        #: 坐标来源（located / fallback_city / city），组件据此提示回落城市
         "source": source,
         "temperature": current.get("temperature_2m"),
         "apparent_temperature": current.get("apparent_temperature"),
@@ -368,7 +368,7 @@ def aqi_level(aqi: int | None) -> str:
 async def air_quality(latitude: float, longitude: float, *, force_refresh: bool = False) -> dict[str, Any]:
     """按坐标取当前空气质量（Open-Meteo Air Quality）。
 
-    ★v1101：取 **european_aqi**——其数值口径与中国 AQI（HJ 633-2012）一致，
+    取 **european_aqi**——其数值口径与中国 AQI（HJ 633-2012）一致，
     与国内天气 App 可对上；此前取 us_aqi 再套中国六级阈值，数值系统性偏高。
     失败返回空 dict（空气质量是增强信息，不阻断天气主流程）。
     """

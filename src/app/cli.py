@@ -31,7 +31,7 @@ from app.db.models import Novel
 from app.db.session import get_sessionmaker, reset_engine
 from app.services import novels as novels_service
 from app.services import search as search_service
-from app.services.exporters import find_calibre
+from app.services.exporters import pdf_available
 
 
 def _cmd_dev(args: argparse.Namespace) -> int:
@@ -98,12 +98,12 @@ def _cmd_rebuild_index(_args: argparse.Namespace) -> int:
 
 
 def _cmd_doctor(_args: argparse.Namespace) -> int:
-    """环境自检：FTS5 / calibre / 数据目录 / 关键依赖版本。"""
+    """环境自检：FTS5 / PDF 依赖 / 数据目录 / 关键依赖版本。"""
 
     settings = get_settings()
     fts = probe_fts5()
     sample = bigram_tokenize("少年走出山村")
-    calibre = find_calibre()
+    pdf_ok = pdf_available()
 
     print("AI Writer Pro · doctor")
     print(f"  python          : {sys.version.split()[0]}")
@@ -112,7 +112,7 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"  sqlite          : {fts.sqlite_version}")
     print(f"  fts5 available  : {fts.available}  ({fts.reason})")
     print(f"  bigram sample   : 少年走出山村 -> {sample}")
-    print(f"  calibre         : {calibre or '未安装（mobi 导出置灰）'}")
+    print(f"  pdf (reportlab) : {'可用' if pdf_ok else '未安装（uv pip install reportlab）'}")
     print(f"  langfuse        : {'已配置' if settings.langfuse_enabled else '未配置（追踪降级为本地日志）'}")
 
     try:
@@ -146,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_re = sub.add_parser("rebuild-index", help="全量重建 story_fts / project_index")
     p_re.set_defaults(func=_cmd_rebuild_index)
 
-    p_doc = sub.add_parser("doctor", help="环境自检（FTS5 / calibre / 依赖版本）")
+    p_doc = sub.add_parser("doctor", help="环境自检（FTS5 / PDF 依赖 / 依赖版本）")
     p_doc.set_defaults(func=_cmd_doctor)
 
     return parser

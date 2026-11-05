@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: LLM 域 ORM：llm_providers / llm_models（手册「五、数据模型」M3）。
 
-    ★密钥**不入 DB**：只存 `api_key_env`（环境变量名），读取经 `core.security`。
+    密钥**不入 DB**：只存 `api_key_env`（环境变量名），读取经 `core.security`。
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ class LlmProvider(Base, TimestampMixin):
     extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    #: v1028：大模型级常用参数（超时秒 / 温度 / 最大输出 token）
+    #: 大模型级常用参数（超时秒 / 温度 / 最大输出 token）
     timeout_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=32768)
 
 
 class LlmModel(Base, TimestampMixin):
@@ -44,10 +44,10 @@ class LlmModel(Base, TimestampMixin):
     provider_id: Mapped[str] = mapped_column(String(36), nullable=False)
     model_id: Mapped[str] = mapped_column(String(120), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    max_context: Mapped[int] = mapped_column(Integer, nullable=False, default=32768)
+    max_context: Mapped[int] = mapped_column(Integer, nullable=False, default=262_144)
     supports_tools: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     default_params_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    #: 有序 model_ref 列表，供 ModelFallbackMiddleware 使用（M3）
+    #: 已废弃：降级链移除（改为连续失败自动切换备用模型）；列保留兼容旧库
     fallback_chain_json: Mapped[str | None] = mapped_column(Text, nullable=True)

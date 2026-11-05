@@ -35,7 +35,7 @@ class TestSkillsApi:
         assert not [s for s in data if s.get("kind") == "writing" and s["is_builtin"]]
 
     async def test_picker_lists_only_web_search_builtin(self, client):
-        """v1102：`?picker=true` 内置项只列 web_search（会话级写作技能），其余基础工具不出现。"""
+        """`?picker=true` 内置项只列 web_search（会话级写作技能），其余基础工具不出现。"""
         data = (await client.get("/api/v1/skills", params={"picker": True})).json()["data"]
         builtin = [s for s in data if s["is_builtin"]]
         assert [s["name"] for s in builtin] == ["web_search"]

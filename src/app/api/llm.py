@@ -8,10 +8,10 @@
 
         GET|POST       /llm/providers
         PATCH|DELETE   /llm/providers/{id}
-        POST           /llm/providers/{id}/test     ★连接测试（极小请求）
-        GET|POST|PATCH /llm/models                  （含 fallback_chain 配置）
+        POST /llm/providers/{id}/test 连接测试（极小请求）
+        GET|POST|PATCH /llm/models
         DELETE         /llm/models/{id}
-        POST           /config/reload               ★重读 .env + 使 Agent 工厂缓存失效
+        POST /config/reload 重读 .env + 使 Agent 工厂缓存失效
 
     密钥只写 `.env`（DB 仅存 `api_key_env`），响应一律掩码。
 """
@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_session
 from app.core.errors import NotFoundError
 from app.core.response import ok
-from app.db.models import LlmModel
 from app.schemas import (
     LlmModelCreate,
     LlmModelUpdate,
@@ -150,7 +149,6 @@ async def create_model(body: LlmModelCreate, session: AsyncSession = Depends(get
         default_params=body.default_params,
         is_default=body.is_default,
         enabled=body.enabled,
-        fallback_chain=body.fallback_chain,
     )
     await session.commit()
     return ok(dto)
@@ -170,7 +168,6 @@ async def update_model(
         default_params=body.default_params,
         is_default=body.is_default,
         enabled=body.enabled,
-        fallback_chain=body.fallback_chain,
     )
     await session.commit()
     return ok(dto)
@@ -181,19 +178,6 @@ async def delete_model(model_pk: str, session: AsyncSession = Depends(get_sessio
     dto = await llm_service.delete_model(session, model_pk)
     await session.commit()
     return ok(dto)
-
-
-@router.get("/llm/models/{model_pk}/fallback-chain")
-async def fallback_chain(model_pk: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """降级链（有序 model_ref）。"""
-
-    row: Any = await session.get(LlmModel, model_pk)
-    if row is None:
-        from app.core.errors import NotFoundError
-
-        raise NotFoundError(f"模型不存在：{model_pk}")
-    chain = await llm_service.chain_of(session, f"{row.provider_id}:{row.model_id}")
-    return ok({"model_pk": model_pk, "chain": chain})
 
 
 @router.post("/config/reload")

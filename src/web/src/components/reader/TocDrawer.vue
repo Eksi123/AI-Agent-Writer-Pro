@@ -17,7 +17,7 @@ const reader = useReaderStore()
 
 const volumes = computed(() => project.volumeTree)
 
-/** v1029：大纲节点标题「小说名称_大纲」 */
+/** 大纲节点标题「小说名称_大纲」 */
 const outlineTitle = computed(() => formatOutlineNode(project.currentNovel?.title || ''))
 
 /** 卷的展开状态（默认展开当前章所在卷与首卷） */
@@ -62,7 +62,7 @@ function chLabel(title: string, sortOrder: number, index: number): string {
     <transition name="toc-fade">
       <div v-if="reader.tocOpen" class="toc-panel">
         <div class="scroll-y toc-scroll">
-          <!-- ★大纲节点固定在第一卷之前（v1029：小说名称_大纲 + 书本 icon） -->
+          <!-- 大纲节点固定在第一卷之前 -->
           <div
             class="toc-node outline-node"
             :class="{ active: reader.activeOutline }"
@@ -80,7 +80,7 @@ function chLabel(title: string, sortOrder: number, index: number): string {
 
           <div v-for="(vol, vi) in volumes" :key="vol.id" class="vol-block">
             <!-- 一级：卷（可展开/收起）
-                 v1030续(1)：★点击卷只做展开/收起，**不跳转内容**——正文/大纲的切换
+                 点击卷只做展开/收起，**不跳转内容**——正文/大纲的切换
                  只由「大纲节点」和「具体章节」触发，点卷时右侧仍显示原来的大纲或章节内容。 -->
             <div class="toc-node vol-node" @click="toggleVolume(vol.id, vi)">
               <svg
@@ -119,7 +119,7 @@ function chLabel(title: string, sortOrder: number, index: number): string {
 
 <style scoped>
 .toc-wrap {
-  /* v1030：目录按钮改由父级浮动工具栏（.float-toolbar）排布，这里只做展开面板的定位上下文 */
+  /* 目录按钮改由父级浮动工具栏（.float-toolbar）排布，这里只做展开面板的定位上下文 */
   position: relative;
 }
 
@@ -158,7 +158,7 @@ function chLabel(title: string, sortOrder: number, index: number): string {
 }
 
 .toc-panel {
-  /* v1030：悬浮展开，不撑高工具栏行 */
+  /* 悬浮展开，不撑高工具栏行 */
   position: absolute;
   top: calc(100% + 6px);
   left: 0;

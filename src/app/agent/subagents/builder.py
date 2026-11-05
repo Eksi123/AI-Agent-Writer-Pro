@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 内置子代理 → deepagents `SubAgent` 装配（手册「二、(3) Sub-agents」）。
 
-    ★v1102（架构优化）：
+    （架构优化）：
     - 内置定义改为 `builtin/{name}/spec.py + prompt.md`（提示词独立文件），
       由 `builtin/__init__.py` 聚合为 `BUILTIN_SUBAGENTS`；
     - spec 新增 `label`（UI 展示名）与 `workflows`（固定流程绑定，见 agent/workflows）；

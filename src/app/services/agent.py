@@ -39,7 +39,8 @@ logger = get_logger(__name__)
 _TERMINAL_RUN_STATUS = ("completed", "failed", "cancelled")
 
 #: approval 决策 → langchain HITL batched resume 形状
-_APPROVAL_DECISIONS = ("approve", "edit", "reject", "respond")
+#: `approve_session` = 读取授权守卫专用（本次会话内放行同类读取，见 read_scope）
+_APPROVAL_DECISIONS = ("approve", "approve_session", "edit", "reject", "respond")
 #: consult 决策
 _CONSULT_DECISIONS = ("option", "text")
 
@@ -50,7 +51,7 @@ _CONSULT_DECISIONS = ("option", "text")
 
 
 def summarize_session_title(content: str, *, max_len: int = 30) -> str:
-    """首条用户消息 → 会话标题（v1028：会话记录名称 = 当前会话下第一个问答的问题总结）。
+    """首条用户消息 → 会话标题。
 
     本地规则总结（不额外调 LLM）：取首个问句/首行，压缩空白，截断加省略号。
     """
@@ -71,9 +72,9 @@ def summarize_session_title(content: str, *, max_len: int = 30) -> str:
 
 
 async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
-    """项目级用量（v1028：AI 会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。
+    """项目级用量。
 
-    ★v1029：token 以 `agent_runs` 为准而非 `messages`——子代理默认走**独立上下文**，
+    token 以 `agent_runs` 为准而非 `messages`——子代理默认走**独立上下文**，
     其消息不进主消息树，但运行级 `tokens_in/out` 已把子代理用量累计进去
     （见 `agent/loop/streaming.py` 对带 namespace 的 chunk 同样累加 usage），
     因此按 run 汇总才满足「和主 Agent 一起算 Token 消耗」。
@@ -105,7 +106,7 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
 
 
 async def session_usage(db: AsyncSession, session_id: str) -> dict[str, Any]:
-    """会话级上下文占用（v1029：大模型选择弹窗右侧「剩余上下文百分比」）。
+    """会话级上下文占用。
 
     取**最近一次** run 的 `tokens_in` 作为当前上下文占用——它正是该次模型调用的输入
     token（system prompt + 历史消息 + 工具结果），是最贴近「窗口已用多少」的度量。
@@ -266,7 +267,7 @@ async def load_message_tree(session: AsyncSession, session_id: str) -> dict[str,
     树结构由 `agent/memory` 读写（消息树是 Agent 的记忆载体），本函数只负责
     把会话标题/状态/项目一并拼进响应，使 API 层不必直连 agent 内部。
 
-    ★v1101：附带 `latest_run`（最近一次 run 的 id/status 与**未决中断**）——
+    附带 `latest_run`（最近一次 run 的 id/status 与**未决中断**）——
     审批/咨询卡片原先只靠 SSE 事件推送，页面刷新/重进会话即丢失，run 永久挂起；
     前端进入会话时据此恢复卡片并重连事件流。
     """
@@ -546,13 +547,14 @@ def _approval_resume(
 
     实测（deepagents 0.7.23 / langchain 1.4.7）：
     - approve → `{"type":"approve"}`
+    - approve_session → `{"type":"approve_session"}`（读取守卫：本次会话内放行同类读取）
     - edit    → `{"type":"edit","edited_action":{"name":..,"args":{..}}}`
                 `name` 必须是 agent 已注册的工具名（`_apply_edit` 会校验，传错抛 ValueError）
     - reject  → `{"type":"reject","message":...}`
     - respond → `{"type":"respond","message":...}`
     """
-    if decision == "approve":
-        return {"decisions": [{"type": "approve"}]}
+    if decision in ("approve", "approve_session"):
+        return {"decisions": [{"type": decision}]}
     if decision == "edit":
         return {
             "decisions": [

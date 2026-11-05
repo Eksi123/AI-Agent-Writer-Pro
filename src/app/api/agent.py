@@ -8,14 +8,14 @@
 
         GET|POST   /agent/sessions?novel_id=          会话列表/新建（按项目隔离）
         PATCH|DELETE /agent/sessions/{sid}
-        GET        /agent/sessions/{sid}/messages     ★消息树（含分支）
-        POST       /agent/sessions/{sid}/messages     ★发消息 → 202 + {run_id}
-        POST       /agent/sessions/{sid}/branch       ★切换 active_leaf_id（分支/重新生成）
+        GET /agent/sessions/{sid}/messages 消息树（含分支）
+        POST /agent/sessions/{sid}/messages 发消息 → 202 + {run_id}
+        POST /agent/sessions/{sid}/branch 切换 active_leaf_id（分支/重新生成）
         PATCH      /agent/sessions/{sid}/context      会话级上下文
         GET        /agent/runs/{run_id}               运行详情（状态/用量/流程）
-        GET        /agent/runs/{run_id}/stream        ★SSE（run 级）
-        POST       /agent/runs/{run_id}/cancel        ★取消（协作式）
-        POST       /agent/interrupts/{id}/resolve     ★审批与咨询统一入口
+        GET /agent/runs/{run_id}/stream SSE（run 级）
+        POST /agent/runs/{run_id}/cancel 取消（协作式）
+        POST /agent/interrupts/{id}/resolve 审批与咨询统一入口
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.agent.loop.runner import run_manager
 
-# ★agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
+# agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
 # 这两个是「运行 Agent」的驱动面，不是取数——数据访问（会话列表/消息树/工具日志/分支切换）
 # 已全部下沉到 `services.agent`，故本模块不再直连 agent 的取数函数，
 # 与其它 13 个 api 模块的取数路径保持一致（都经 services）。
@@ -57,7 +57,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-#: ★v1101：同时处于「AI 思考执行中」的会话上限（超出再发消息 → 409/40902）
+#: 同时处于「AI 思考执行中」的会话上限（超出再发消息 → 409/40902）
 MAX_CONCURRENT_RUNS = 5
 
 
@@ -77,7 +77,7 @@ async def get_sessions(
 ) -> dict:
     """会话列表（按项目隔离：带 novel_id 只返回该项目会话）。
 
-    ★v1101：每条会话附 `is_running`（进程内有活 run）——会话列表右侧据此
+    每条会话附 `is_running`（进程内有活 run）——会话列表右侧据此
     灰色小字提示「AI思考执行中……」。
     """
     dtos = await agent_service.list_sessions(session, novel_id)
@@ -91,13 +91,13 @@ async def get_sessions(
 async def get_usage(
     novel_id: str = Query(...), session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """项目用量（v1028：会话框头部展示当前会话数量 + 当前小说项目 token 使用量）。"""
+    """项目用量。"""
     return ok(await agent_service.project_usage(session, novel_id))
 
 
 @router.get("/sessions/{session_id}/usage")
 async def get_session_usage(session_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """会话上下文占用（v1029：大模型选择弹窗右侧「剩余上下文百分比」）。
+    """会话上下文占用。
 
     返回最近一次 run 的输入 token——重新进入历史会话时用它还原占用，
     否则旧会话会被错误显示为 100% 剩余。
@@ -177,7 +177,7 @@ async def post_message(
             },
         )
 
-    # ★v1101：同时「AI 思考执行中」的会话上限 5 个（本会话已在跑的不重复计数）
+    # 同时「AI 思考执行中」的会话上限 5 个（本会话已在跑的不重复计数）
     live = _live_run_ids()
     live_sessions = {run_manager.session_of(rid) for rid in live}
     if len(live) >= MAX_CONCURRENT_RUNS and session_id not in live_sessions:
@@ -190,7 +190,7 @@ async def post_message(
             },
         )
 
-    # ★v1101：流程（四阶段工作流）改为意图驱动——无「生成本章」按钮；
+    # 流程（四阶段工作流）改为意图驱动——无「生成本章」按钮；
     # 用户消息表达「按大纲某章简介生成/修改正文」时才把 run 标记为固定流程运行。
     target_chapter_id = body.target_chapter_id or ""
     if not target_chapter_id:
@@ -203,7 +203,7 @@ async def post_message(
         model_ref=body.model_ref or row.model_ref,
         parent_id=body.parent_id,
         target_chapter_id=target_chapter_id,
-        hidden_context=body.hidden_context or "",
+        hidden_context=_pointerize_attachments(row.project_id, body.hidden_context or ""),
     )
     await session.commit()
     return JSONResponse(
@@ -219,6 +219,27 @@ async def post_message(
             },
         },
     )
+
+
+def _pointerize_attachments(project_id: str, hidden_context: str) -> str:
+    """添加文件全文落盘，hidden_context 只留指针（选区润色块保持内联）。"""
+    if not (hidden_context or "").strip():
+        return hidden_context or ""
+    from app.db.base import new_id
+    from app.services.attachments import prune_attachments, rewrite_hidden_context
+
+    #: 批次标记（uuid，无下划线 → prune 按 `{tag}_{n}` 稳定分组）
+    tag = new_id()
+    try:
+        rewritten = rewrite_hidden_context(project_id, tag, hidden_context)
+    except Exception as exc:  # noqa: BLE001 - 指针化失败不阻断发送（退回全文内联）
+        logger.warning("attachments_pointerize_failed", project_id=project_id, error=str(exc))
+        return hidden_context
+    try:
+        prune_attachments(project_id)
+    except Exception as exc:  # noqa: BLE001 - 清理失败不影响本次发送
+        logger.warning("attachments_prune_failed", project_id=project_id, error=str(exc))
+    return rewritten
 
 
 async def _detect_workflow_target(project_id: str, body: AgentMessageIn) -> str:
@@ -347,7 +368,7 @@ async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)) 
 async def steer_run(
     run_id: str, body: AgentSteerIn, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """v1028：运行中「通过消息引导发送」。
+    """运行中「通过消息引导发送」。
 
     引导文本入 run 级队列，由 `SteerInjectionMiddleware` 在**下次模型调用前**注入，
     不中断当前 run、不新建 run。run 已结束 → 409/40902（前端回落为普通发送）。

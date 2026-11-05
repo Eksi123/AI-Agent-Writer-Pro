@@ -146,7 +146,7 @@ function doSearch(): void {
   const q = keyword.value.trim()
   cancelPendingSearch()
   if (!q) {
-    // v1030：清空关键字 → 回到原来的状态（不留在搜索结果列表）
+    // 清空关键字 → 回到原来的状态（不留在搜索结果列表）
     searchHits.value = []
     searching.value = false
     return
@@ -197,7 +197,7 @@ async function enterNovel(novel: Novel): Promise<void> {
   try {
     const volumes = await volumesApi.list(novel.id)
     activeNovel.value = novel
-    // v1030：有卷代表至少有一章节内容——空卷不展示，避免进入后无内容可选
+    // 有卷代表至少有一章节内容——空卷不展示，避免进入后无内容可选
     activeVolumes.value = [...volumes]
       .sort((a, b) => a.sort_order - b.sort_order)
       .filter((v) => v.chapters.length > 0)
@@ -214,7 +214,7 @@ function enterVolume(vol: Volume): void {
   level.value = 'volume'
 }
 
-/** 章节按 sort_order 只读排序（★顺序不可拖拽重排） */
+/** 章节按 sort_order 只读排序（顺序不可拖拽重排） */
 function sortedChapters(vol: Volume): Volume['chapters'] {
   return [...vol.chapters].sort((a, b) => a.sort_order - b.sort_order)
 }
@@ -304,7 +304,7 @@ onMounted(() => {
 })
 onBeforeUnmount(cancelPendingSearch)
 
-/** v1030：关闭后重新打开 → 回到初始界面（可继续添加其它文件） */
+/** 关闭后重新打开 → 回到初始界面（可继续添加其它文件） */
 function resetToRoot(): void {
   level.value = 'root'
   clearSearch()
@@ -380,7 +380,7 @@ watch(
         </button>
       </template>
 
-      <!-- 小说项目（v1030：不显示「选择小说项目」提示，也不显示「X章」） -->
+      <!-- 小说项目 -->
       <template v-else-if="level === 'novels'">
         <button
           v-for="n in project.novels"

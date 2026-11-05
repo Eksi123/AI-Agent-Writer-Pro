@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: FTS5 二元切分与降级（手册「十一 · FTS5」域）。
 
-    ★必测：二元切分往返（索引侧与查询侧同一函数）；2 字词命中（trigram 做不到的场景）；
+    必测：二元切分往返（索引侧与查询侧同一函数）；2 字词命中（trigram 做不到的场景）；
     `bm25` 排序；FTS5 不可用时 `LIKE` 降级且 `data.degraded=true`；`project_id` 过滤（跨项目不串数据）。
 """
 
@@ -58,7 +58,7 @@ def test_bigram_empty():
 
 
 def test_bigram_roundtrip_query_side():
-    """★索引侧与查询侧同一函数：查询「少年」能命中索引文本。"""
+    """索引侧与查询侧同一函数：查询「少年」能命中索引文本。"""
     indexed = bigram_tokenize("少年走出山村，见到星海")
     query = bigram_tokenize("少年")
     assert query in indexed.split()
@@ -123,7 +123,7 @@ async def test_search_two_char_word(client, novel_id):
 
 @pytest.mark.asyncio
 async def test_search_project_isolation(client):
-    """★project_id 过滤：跨项目不串数据。"""
+    """project_id 过滤：跨项目不串数据。"""
     a = (await client.post("/api/v1/novels", json={"title": "项目甲"})).json()["data"]["id"]
     b = (await client.post("/api/v1/novels", json={"title": "项目乙"})).json()["data"]["id"]
 
@@ -166,7 +166,7 @@ async def test_search_scope_filter(client, novel_id):
 
 @pytest.mark.asyncio
 async def test_search_like_degradation(client, novel_id, monkeypatch):
-    """★FTS5 不可用时降级 LIKE，返回结构不变且 `data.degraded=true`。"""
+    """FTS5 不可用时降级 LIKE，返回结构不变且 `data.degraded=true`。"""
 
     await client.put(f"/api/v1/novels/{novel_id}/outline", json={"content": OUTLINE})
 

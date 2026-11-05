@@ -1,4 +1,4 @@
-"""v1102: 架构优化——清退旧 5 个内置子代理（editor/continuity-checker/researcher 删除，
+""" 架构优化——清退旧 5 个内置子代理（editor/continuity-checker/researcher 删除，
 planner/writer 重置），下次启动由 seed_builtins 重新播种新 4 个
 （planner/writer/reviewer/web-searcher，提示词来自 agent/subagents/builtin/*/prompt.md）。
 

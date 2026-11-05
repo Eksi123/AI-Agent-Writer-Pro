@@ -39,7 +39,7 @@ function zodiacIndexOf(hour: number): number {
   return Math.floor(((hour + 1) % 24) / 2)
 }
 
-/** ★只在组件创建（= 页面刷新）时取一次，之后不再变化 */
+/** 只在组件创建（= 页面刷新）时取一次，之后不再变化 */
 const current = ref<Zodiac>(ZODIAC_BY_INDEX[zodiacIndexOf(new Date().getHours())])
 const now = ref(new Date())
 
@@ -58,15 +58,15 @@ onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
 })
 
-/** v1029：头像下方第一行 —— 年月日 */
+/** 头像下方第一行 —— 年月日 */
 const dateLabel = computed(
   () => `${now.value.getFullYear()}年${now.value.getMonth() + 1}月${now.value.getDate()}日`,
 )
 
-/** v1029：头像下方第二行 —— 星期几 */
+/** 头像下方第二行 —— 星期几 */
 const weekdayLabel = computed(() => WEEKDAYS[now.value.getDay()])
 
-/** 生肖与时辰信息收进 title（v1029：界面上不再展示「狗」「戌时」文字） */
+/** 生肖与时辰信息收进 title */
 const tooltip = computed(() => `${current.value.hour} · ${current.value.name}（${current.value.range}）`)
 </script>
 
@@ -79,7 +79,7 @@ const tooltip = computed(() => `${current.value.hour} · ${current.value.name}�
 </template>
 
 <style scoped>
-/* v1029：头像上移（居中），下方两行日期文字 */
+/* 头像上移（居中），下方两行日期文字 */
 .zodiac-pet {
   display: flex;
   flex-direction: column;

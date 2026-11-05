@@ -22,7 +22,7 @@ from typing import Any
 #: 允许的模型参数键（其余键忽略，避免把 model_ref 等误传进 ChatModel）
 DEFAULT_PARAMS: dict[str, Any] = {
     "temperature": 0.8,
-    "max_tokens": 4096,
+    "max_tokens": 32768,
     "top_p": 1.0,
     "timeout": 120,
     "max_retries": 2,

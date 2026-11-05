@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_session
-from app.core.errors import DependencyUnavailableError, NotFoundError
+from app.core.errors import NotFoundError
 from app.core.paths import exports_root
 from app.core.response import ok
 from app.db.base import utcnow
@@ -29,7 +29,7 @@ from app.schemas import (
     ReadingProgressIn,
 )
 from app.services import audit, novels
-from app.services.exporters import ExportTask, calibre_available, create_task, run_export
+from app.services.exporters import ExportTask, create_task, resolve_export_dir, run_export
 
 router = APIRouter(prefix="/novels", tags=["novels"])
 
@@ -81,7 +81,15 @@ async def update_novel(
 
 @router.delete("/{novel_id}")
 async def delete_novel(novel_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """软删除：移入 `data/trash/` + `status=deleted`。"""
+    """软删除：移入 `data/trash/` + `status=deleted`。
+
+    该项目有卷/章/大纲被 AI 编辑中 → 409 / 40903，禁止删除项目。
+    """
+    from app.core.errors import ContentLockedError
+    from app.services.content_lock import content_locks
+
+    if content_locks.is_project_busy(novel_id):
+        raise ContentLockedError(data={"project_id": novel_id})
     result = await novels.delete_novel(session, novel_id)
     await session.commit()
     return ok(result)
@@ -157,19 +165,19 @@ async def export_novel(
     novel_id: str,
     background: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
-    format: str = Query(default="markdown", pattern="^(markdown|epub|mobi|txt)$"),
+    format: str = Query(default="markdown", pattern="^(markdown|epub|pdf|txt)$"),
 ) -> dict:
     """异步导出 zip：正文按 format + `{小说名称}-大纲.md` 原件。
 
-    calibre 未安装时 `mobi` **在受理阶段即**返回 503 / `50301`（前端据此置灰该选项），
-    不推迟到后台任务失败。
+    产物落盘目录取通用设置「小说导出地址」（缺省桌面）；
+    PDF 依赖 reportlab（缺失时后台任务 failed + 50301 提示安装）。
     """
     dto = await novels.get_novel_dto(session, novel_id)
 
-    if format == "mobi" and not calibre_available():
-        raise DependencyUnavailableError(
-            "未检测到 calibre，无法转换 mobi。请安装 calibre 后重试，或选择 epub/txt/markdown。"
-        )
+    from app.db.models import UserSettings
+
+    row = await session.get(UserSettings, "default")
+    dest_dir = resolve_export_dir(getattr(row, "export_dir", None) if row else None)
 
     task = create_task(_tasks, novel_id=novel_id, title=dto["title"], fmt=format)
     await audit.record(
@@ -177,11 +185,25 @@ async def export_novel(
         "novel.export",
         entity_type="novel",
         entity_id=novel_id,
-        detail={"format": format, "task_id": task.task_id},
+        detail={"format": format, "task_id": task.task_id, "dest_dir": str(dest_dir)},
         commit=True,
     )
-    background.add_task(run_export, _tasks, task.task_id, novel_id, format)
+    background.add_task(run_export, _tasks, task.task_id, novel_id, format, dest_dir=dest_dir)
     return ok(task.to_dto())
+
+
+@router.post("/{novel_id}/export-tasks/{task_id}/cancel")
+async def cancel_export_task(novel_id: str, task_id: str) -> dict:
+    """停止导出：置取消标志，执行体在下一个进度检查点中止（任务置 cancelled）。"""
+    task = _tasks.get(task_id)
+    if task is None or task.novel_id != novel_id:
+        raise NotFoundError(f"导出任务不存在：{task_id}")
+    if task.status not in ("pending", "running"):
+        from app.core.errors import BadRequestError
+
+        raise BadRequestError(f"任务已结束，无法停止（status={task.status}）")
+    task.cancel_requested = True
+    return ok({"task_id": task_id, "cancel_requested": True})
 
 
 @router.get("/{novel_id}/export-tasks/{task_id}")

@@ -37,7 +37,7 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
 
     必须在 `app.core.config` 首次导入前生效，故同时重置 lru_cache 与 FTS 探测缓存。
     Agent 侧全局单例（checkpointer / SSE 总线 / 模型缓存）也一并重置。
-    ★同时快照并还原 `os.environ`：`set_env_key` 会直接写进程环境（密钥类测试会污染）。
+    同时快照并还原 `os.environ`：`set_env_key` 会直接写进程环境（密钥类测试会污染）。
     """
 
     env_snapshot = copy.deepcopy(os.environ)

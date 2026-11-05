@@ -1,4 +1,4 @@
-"""v1030: user_settings 增加 autosave_enabled 开关
+""" user_settings 增加 autosave_enabled 开关
 
 Revision ID: a1v1030asv
 Revises: a1v1028prm

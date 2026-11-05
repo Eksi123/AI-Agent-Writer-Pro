@@ -35,7 +35,7 @@ const skills = ref<SkillDto[]>([])
 
 /**
  * 只列启用项；子代理供主代理委派。
- * [写作技能] = 用户自建技能 + 会话级内置写作技能（v1102：web_search，session_builtin 标记）；
+ * [写作技能] = 用户自建技能 + 会话级内置写作技能；
  * 其余 Agent 基础工具 read/edit/list/… 对主代理恒可用，不作为会话级选项。
  */
 const subagentList = computed(() => subagents.value.filter((s) => s.enabled))
@@ -71,7 +71,7 @@ function onPick(kind: 'subagent' | 'skill', id: string, name: string): void {
   emit('close')
 }
 
-/** v1030：关闭后重新打开 → 回到初始界面（可继续添加其它工具） */
+/** 关闭后重新打开 → 回到初始界面（可继续添加其它工具） */
 watch(
   () => props.open,
   (open) => {
@@ -108,7 +108,7 @@ watch(
         <span class="tp-count">{{ skillList.length }}</span>
       </button>
 
-      <!-- v1029：两类都没有时不显示任何提示（浮层留空即可） -->
+      <!-- 两类都没有时不显示任何提示（浮层留空即可） -->
       <div v-if="loading" class="tp-loading muted text-sm">{{ t('common.loading') }}</div>
     </template>
 

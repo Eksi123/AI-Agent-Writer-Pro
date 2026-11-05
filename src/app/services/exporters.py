@@ -4,12 +4,13 @@
 文件名: exporters.py
 作者: xionggaoqing
 时间: 2026-10-27
-说明: 导出：zip 产物 = 正文（markdown/epub/mobi/txt 单选）+ `{小说名称}-大纲.md` 原件。
+说明: 导出：zip 产物 = 正文（markdown/epub/pdf/txt 单选）+ `{小说名称}-大纲.md` 原件。
 
     手册「三、(3) 导出」与「十一 · EPUB」要点：
     - EPUB 3 自研 `zipfile` 生成器：`mimetype` 必须为**首个条目且 STORE 不压缩**，
       含 `META-INF/container.xml` / `OEBPS/content.opf` / `OEBPS/nav.xhtml` / 各章 xhtml；
-    - mobi 由 EPUB 产物经**可选外部工具** calibre `ebook-convert` 转换，未安装则 503 / `50301`；
+      - PDF 由 reportlab 自研生成（自动子集嵌入系统中文字体），**取代 MOBI**——
+      不再依赖外部 calibre（mobi/calibre 链路整体删除）；
     - txt 自研纯文本拼接（卷章标题 + 正文按顺序连接）；
     - 异步任务落 `data/exports/`，动作写审计。
 """
@@ -21,7 +22,6 @@ import html
 import json
 import re
 import shutil
-import subprocess
 import tempfile
 import uuid
 import zipfile
@@ -37,38 +37,17 @@ from app.services import files
 
 logger = get_logger(__name__)
 
-ExportFormat = Literal["markdown", "epub", "mobi", "txt"]
-
-_CALIBRE_CANDIDATES = ("ebook-convert", "ebook-convert.exe", "ebook-convert.cmd")
-_PROBE_TIMEOUT_SEC = 10
+ExportFormat = Literal["markdown", "epub", "pdf", "txt"]
 
 
-# ---------------------------------------------------------------------------
-# calibre 探测
-# ---------------------------------------------------------------------------
+def pdf_available() -> bool:
+    """reportlab 是否可用（PDF 导出依赖探测，供 health 展示）。"""
+    try:
+        import reportlab  # noqa: F401
 
-
-def find_calibre() -> str | None:
-    """探测 calibre `ebook-convert` 可执行文件（带超时）。未安装返回 None。"""
-    exe = shutil.which("ebook-convert")
-    if exe:
-        return exe
-    for name in _CALIBRE_CANDIDATES:
-        found = shutil.which(name)
-        if found:
-            return found
-    # Windows 默认安装路径兜底
-    for candidate in (
-        Path(r"C:\Program Files\Calibre2\ebook-convert.exe"),
-        Path(r"C:\Program Files (x86)\Calibre2\ebook-convert.exe"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return None
-
-
-def calibre_available() -> bool:
-    return find_calibre() is not None
+        return True
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +61,12 @@ class ExportTask:
     novel_id: str
     title: str
     fmt: str
-    status: str = "pending"  # pending|running|done|failed
+    status: str = "pending"  # pending|running|done|failed|cancelled
     progress: int = 0
     file_path: Path | None = None
     error: str | None = None
+    #: 用户点击「停止导出」后置位；执行体在进度检查点据此中止
+    cancel_requested: bool = False
     created_at: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     )
@@ -116,18 +97,48 @@ def create_task(store: dict[str, ExportTask], *, novel_id: str, title: str, fmt:
     return task
 
 
-def run_export(store: dict[str, ExportTask], task_id: str, novel_id: str, fmt: str) -> None:
-    """后台任务执行体（`BackgroundTasks` 调用，同步实现）。"""
+def run_export(
+    store: dict[str, ExportTask],
+    task_id: str,
+    novel_id: str,
+    fmt: str,
+    *,
+    dest_dir: Path | None = None,
+) -> None:
+    """后台任务执行体（`BackgroundTasks` 调用，同步实现）。
+
+    `dest_dir`：导出产物落盘目录（通用设置「小说导出地址」，缺省桌面）。
+    """
     task = store.get(task_id)
     if task is None:  # pragma: no cover
         return
     task.status = "running"
+
+    def _cancelled() -> bool:
+        return task.cancel_requested
+
     try:
-        path = build_export(novel_id, fmt, progress=lambda p: setattr(task, "progress", p))
+        path = build_export(
+            novel_id,
+            fmt,
+            progress=lambda p: setattr(task, "progress", p),
+            cancel_check=_cancelled,
+        )
         task.file_path = path
         task.status = "done"
         task.progress = 100
+        # 完成后复制到「小说导出地址」（默认桌面）；复制失败不影响任务成功与下载
+        if dest_dir is not None:
+            try:
+                target = dest_dir / path.name
+                shutil.copy2(path, target)
+                logger.info("export_saved_to_dir", task_id=task_id, path=str(target))
+            except OSError as exc:
+                logger.warning("export_copy_to_dest_failed", dest=str(dest_dir), error=str(exc))
         logger.info("export_done", task_id=task_id, format=fmt, path=str(path))
+    except ExportCancelledError:
+        task.status = "cancelled"
+        logger.info("export_cancelled", task_id=task_id, format=fmt)
     except Exception as exc:
         task.status = "failed"
         task.error = f"{type(exc).__name__}: {exc}"
@@ -205,33 +216,71 @@ def collect_book(project_id: str) -> tuple[dict[str, Any], list[ExportVolume], s
 # ---------------------------------------------------------------------------
 
 
-def build_export(project_id: str, fmt: ExportFormat, *, progress: Any = None) -> Path:
-    """生成导出 zip 并返回路径。"""
+class ExportCancelledError(Exception):
+    """用户点击「停止导出」→ 执行体在进度检查点抛出，任务置 cancelled。"""
+
+
+def default_export_dir() -> Path:
+    """默认导出目录 = 用户桌面（跨平台回落用户主目录）。"""
+    home = Path.home()
+    for name in ("Desktop", "桌面"):
+        candidate = home / name
+        if candidate.is_dir():
+            return candidate
+    return home
+
+
+def resolve_export_dir(configured: str | None) -> Path:
+    """通用设置「小说导出地址」→ 实际目录（空/非法回落桌面；不存在则创建）。"""
+    raw = (configured or "").strip()
+    target = Path(raw).expanduser() if raw else default_export_dir()
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+    except OSError as exc:
+        logger.warning("export_dir_unusable_fallback_desktop", configured=raw, error=str(exc))
+        fallback = default_export_dir()
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def build_export(
+    project_id: str,
+    fmt: ExportFormat,
+    *,
+    progress: Any = None,
+    cancel_check: Any = None,
+) -> Path:
+    """生成导出 zip（暂存于 `data/exports/`）并返回路径。
+
+    `cancel_check`：返回 True 时抛 `ExportCancelledError`（进度检查点调用）；
+    落盘到「小说导出地址」由 `run_export` 在完成后复制完成（暂存区供下载接口使用）。
+    """
     meta, vols, outline_text = collect_book(project_id)
     title = str(meta.get("title") or project_id)
 
-    if fmt == "mobi" and not calibre_available():
-        raise DependencyUnavailableError(
-            "未检测到 calibre，无法转换 mobi。请安装 calibre 后重试，或选择 epub/txt/markdown。"
-        )
-
     def report(p: int) -> None:
+        if cancel_check is not None and cancel_check():
+            raise ExportCancelledError()
         if progress is not None:
             with contextlib.suppress(Exception):  # 进度回调失败不影响导出
                 progress(p)
 
     report(10)
-    exports_root().mkdir(parents=True, exist_ok=True)
+    out_root = exports_root()
+    out_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-    zip_path = exports_root() / f"{safe_filename(title)}-{fmt}-{stamp}.zip"
+    zip_path = out_root / f"{safe_filename(title)}-{fmt}-{stamp}.zip"
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         if fmt == "markdown":
             _write_markdown(zf, title, vols)
         elif fmt == "txt":
             _write_txt(zf, title, meta, vols)
-        elif fmt in ("epub", "mobi"):
+        elif fmt == "epub":
             _write_epub(zf, title, meta, vols)
+        elif fmt == "pdf":
+            zf.writestr(f"{safe_filename(title)}.pdf", _write_pdf(title, meta, vols))
         else:  # pragma: no cover - 路由层已限制取值
             raise ValueError(f"不支持的导出格式：{fmt}")
         report(60)
@@ -246,9 +295,6 @@ def build_export(project_id: str, fmt: ExportFormat, *, progress: Any = None) ->
             "export-manifest.json",
             _manifest_json(title, fmt, vols, outline_text is not None),
         )
-
-    if fmt == "mobi":
-        _convert_to_mobi(zip_path, title)
 
     report(100)
     return zip_path
@@ -380,7 +426,7 @@ def _inline(text: str) -> str:
 
 
 def _write_epub(zf: zipfile.ZipFile, title: str, meta: dict[str, Any], vols: list[ExportVolume]) -> None:
-    """EPUB 3 生成。★`mimetype` 必须是首个条目且 STORE 不压缩。"""
+    """EPUB 3 生成。`mimetype` 必须是首个条目且 STORE 不压缩。"""
     # ① mimetype：首条目 + 不压缩（EPUB 规范硬性要求）
     info = zipfile.ZipInfo("mimetype", date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_STORED
@@ -539,53 +585,122 @@ def _content_opf(
 
 
 # ---------------------------------------------------------------------------
-# mobi（可选外部工具 calibre）
+# PDF
 # ---------------------------------------------------------------------------
 
+#: 中文字体候选（按序探测，命中即子集嵌入；全部缺失则回落 reportlab 内置 CID 字体）
+_CJK_FONT_CANDIDATES = (
+    r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\simsun.ttc",
+    r"C:\Windows\Fonts\simhei.ttf",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
 
-def _convert_to_mobi(zip_path: Path, title: str) -> None:
-    """用 calibre 把 EPUB 转 mobi，产物一并放进 zip。
 
-    失败则抛 `DependencyUnavailableError`（503 / 50301），调用方标记任务 failed。
-    """
-    exe = find_calibre()
-    if exe is None:
-        raise DependencyUnavailableError("未检测到 calibre `ebook-convert`，无法生成 mobi")
+def _register_cjk_font() -> str:
+    """注册中文字体并返回字体名；无可用字体文件时回落内置 CID 字体（STSong-Light）。"""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFont
 
-
-    with tempfile.TemporaryDirectory(prefix="writer-mobi-") as tmp:
-        tmp_dir = Path(tmp)
-        epub_path = tmp_dir / f"{safe_filename(title)}.epub"
-        mobi_path = tmp_dir / f"{safe_filename(title)}.mobi"
-
-        # 从导出 zip 中还原 epub（zip 内即 epub 结构）
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            names = [n for n in zf.namelist() if n == "mimetype" or n.startswith(("META-INF/", "OEBPS/"))]
-            with zipfile.ZipFile(epub_path, "w", compression=zipfile.ZIP_DEFLATED) as ep:
-                mi = zipfile.ZipInfo("mimetype", date_time=(1980, 1, 1, 0, 0, 0))
-                mi.compress_type = zipfile.ZIP_STORED
-                ep.writestr(mi, zf.read("mimetype"))
-                for n in names:
-                    if n == "mimetype":
-                        continue
-                    ep.writestr(n, zf.read(n))
-
+    for path in _CJK_FONT_CANDIDATES:
+        fp = Path(path)
+        if not fp.exists():
+            continue
+        name = f"cjk-{fp.stem.lower()}"
         try:
-            proc = subprocess.run(  # noqa: S603 - 白名单可执行文件，参数固定
-                [exe, str(epub_path), str(mobi_path)],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DependencyUnavailableError(f"calibre 转换失败：{exc}") from exc
+            if name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(name, str(fp), subfontIndex=0))
+            return name
+        except Exception as exc:  # 字体损坏/不可读 → 试下一个
+            logger.warning("pdf_font_register_failed", font=path, error=str(exc))
+    # 兜底：reportlab 内置 Adobe CID 字体（无需字体文件，中文可显示）
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    return "STSong-Light"
 
-        if proc.returncode != 0 or not mobi_path.exists():
-            raise DependencyUnavailableError(
-                f"calibre 转换失败（exit={proc.returncode}）：{(proc.stderr or proc.stdout or '')[:300]}"
-            )
 
-        with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(mobi_path, mobi_path.name)
-        logger.info("mobi_converted", calibre=exe, mobi=mobi_path.name)
+def _pdf_paragraphs(text: str, font: str) -> list[Any]:
+    """正文 Markdown → reportlab 段落（标题/列表/引用/分隔线/普通段）。"""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import HRFlowable, Paragraph
+
+    body = ParagraphStyle("cjk-body", fontName=font, fontSize=11, leading=19, firstLineIndent=22)
+    h1 = ParagraphStyle("cjk-h1", fontName=font, fontSize=18, leading=26, spaceBefore=14, spaceAfter=8)
+    h2 = ParagraphStyle("cjk-h2", fontName=font, fontSize=14, leading=21, spaceBefore=10, spaceAfter=6)
+    li = ParagraphStyle("cjk-li", fontName=font, fontSize=11, leading=18, leftIndent=16)
+    quote = ParagraphStyle("cjk-quote", fontName=font, fontSize=10.5, leading=17, leftIndent=16, textColor="#555555")
+
+    out: list[Any] = []
+    for raw in (text or "").split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        esc = html.escape(stripped)
+        if stripped.startswith("# "):
+            out.append(Paragraph(html.escape(stripped[2:]), h1))
+        elif stripped.startswith("## "):
+            out.append(Paragraph(html.escape(stripped[3:]), h2))
+        elif stripped.startswith(("- ", "* ")):
+            out.append(Paragraph(f"• {esc[2:]}", li))
+        elif stripped.startswith("> "):
+            out.append(Paragraph(esc[2:], quote))
+        elif re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
+            out.append(HRFlowable(width="80%", thickness=0.6, spaceBefore=6, spaceAfter=6))
+        else:
+            out.append(Paragraph(esc, body))
+    return out
+
+
+def _write_pdf(title: str, meta: dict[str, Any], vols: list[ExportVolume]) -> bytes:
+    """PDF：整本小说（封面页 + 卷章标题 + 正文），reportlab 生成，返回 PDF 字节。
+
+    reportlab 缺失时抛 `DependencyUnavailableError`（503 / 50301），前端提示安装依赖。
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+    except Exception as exc:  # pragma: no cover - 依赖缺失
+        raise DependencyUnavailableError(
+            "缺少 PDF 导出依赖 reportlab，请执行 `uv pip install reportlab` 后重试。"
+        ) from exc
+
+    font = _register_cjk_font()
+    cover_title = ParagraphStyle("cjk-cover", fontName=font, fontSize=26, leading=36, alignment=1)
+    cover_sub = ParagraphStyle("cjk-cover-sub", fontName=font, fontSize=12, leading=18, alignment=1, textColor="#666666")
+
+    story: list[Any] = [Spacer(1, 60 * mm), Paragraph(html.escape(title), cover_title)]
+    author = str(meta.get("author_name") or "").strip()
+    if author:
+        story.append(Spacer(1, 8 * mm))
+        story.append(Paragraph(html.escape(f"作者：{author}"), cover_sub))
+    story.append(PageBreak())
+
+    for vol in vols:
+        story.extend(_pdf_paragraphs(f"# {vol.title}", font))
+        story.append(Spacer(1, 4 * mm))
+        for ch in vol.chapters:
+            story.extend(_pdf_paragraphs(f"## {ch['title']}", font))
+            story.extend(_pdf_paragraphs(ch["content"], font))
+            story.append(Spacer(1, 3 * mm))
+        story.append(PageBreak())
+
+    with tempfile.TemporaryDirectory(prefix="writer-pdf-") as tmp:
+        pdf_path = Path(tmp) / f"{safe_filename(title)}.pdf"
+        doc = SimpleDocTemplate(
+            str(pdf_path),
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=18 * mm,
+            bottomMargin=18 * mm,
+            title=title,
+        )
+        doc.build(story)
+        data = pdf_path.read_bytes()
+    logger.info("pdf_exported", title=title, volumes=len(vols), bytes=len(data))
+    return data

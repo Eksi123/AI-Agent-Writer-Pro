@@ -3,8 +3,8 @@
  * 工作台（三栏主界面）：
  *   左栏 = 项目列表（+ 设置 / AI 设置入口）
  *   中栏 = 阅读模式（正文/大纲） / 编辑模式（大纲节点 → 大纲编辑器；章节节点 → 正文编辑器）
- *          ★v1028：目录不放在最上面；无小说项目时不展示目录，有项目时浮在阅读区域左上角，可点击展开收起
- *          ★v1029：编辑模式删除【正文】【卷章】页签（页签按钮被目录浮层遮挡且卷章管理已由目录承载），
+ * 目录不放在最上面；无小说项目时不展示目录，有项目时浮在阅读区域左上角，可点击展开收起
+ * 编辑模式删除【正文】【卷章】页签（页签按钮被目录浮层遮挡且卷章管理已由目录承载），
  *                  改为「大纲节点 → OutlineEditor / 章节节点 → TiptapEditor」；
  *                  主页面右上方新增卷章结构操作条（插入卷/章、重命名、删除），不与目录重叠
  *   右栏 = Agent 面板（可收起，可向左拉伸）
@@ -33,6 +33,8 @@ import { useReaderStore } from '@/stores/reader'
 import { useSettingsStore } from '@/stores/settings'
 import { t } from '@/i18n'
 import { recordRecentChapter } from '@/utils/recent'
+import { formatChapterTitle, formatVolumeTitle } from '@/utils/titles'
+import { countWords } from '@/utils/words'
 import type { Novel } from '@/types'
 
 const router = useRouter()
@@ -45,7 +47,7 @@ const agentStore = useAgentStore()
 const agentOpen = ref(false)
 const exportVisible = ref(false)
 const exportNovel = ref<Novel | null>(null)
-/** ★v1031：回收站抽屉（入口在顶部工具栏 AI写作助手左边） */
+/** 回收站抽屉（入口在顶部工具栏 AI写作助手左边） */
 const recycleVisible = ref(false)
 
 /** 回收站里回收了整本小说 → 重新拉项目列表并选中它（大纲随之回来） */
@@ -62,7 +64,7 @@ async function onChapterRestored(novelId: string): Promise<void> {
   if (project.currentNovelId === novelId) await project.loadVolumes()
 }
 
-/** v1029：右栏 AI 会话框宽度（px），可向左拉伸；默认沿用 --agent-width，上限 = 主页面宽度的 2/5 */
+/** 右栏 AI 会话框宽度（px），可向左拉伸；默认沿用 --agent-width，上限 = 主页面宽度的 2/5 */
 const AGENT_DEFAULT_WIDTH = 340
 const agentWidth = ref(AGENT_DEFAULT_WIDTH)
 const layoutRef = ref<HTMLElement | null>(null)
@@ -78,7 +80,7 @@ const editingOutline = computed(
 )
 
 /**
- * v1031：工具栏保存 icon 的可用态——没有任何待保存内容时置灰。
+ * 工具栏保存 icon 的可用态——没有任何待保存内容时置灰。
  * 大纲节点看大纲脏状态，章节节点看正文脏状态；阅读模式不展示该按钮。
  */
 const hasPendingSave = computed(() => {
@@ -88,17 +90,61 @@ const hasPendingSave = computed(() => {
 })
 
 /**
- * ★v1101：当前章节被 AI 编辑锁定 → 工具栏保存 icon 置灰 +
- * [自动保存] 右侧展示灰色提示「AI编辑中，请稍后再试……」；
+ * 当前章节被 AI 编辑锁定 → 工具栏保存 icon 置灰 +
+ * [自动保存] 右侧展示灰色提示「AI写作中请稍候…」；
  * 编辑器只读、手动/自动保存均被 editor store 拒绝。
+ * 大纲被 AI 编辑（锁键 `outline:{projectId}`）同样计入。
  */
-const chapterLocked = computed(() => editorStore.isChapterLocked(editorStore.chapterId))
+const contentLocked = computed(
+  () =>
+    editorStore.isChapterLocked(editorStore.chapterId) ||
+    editorStore.isOutlineLocked(project.currentNovelId),
+)
 
 /**
- * v1030续(6)：正文选区悬浮[AI润色] → 选中文本以「上下文块」形式加入模型对话（同添加文件），
+ * 章节翻页导航（整本小说口径）——按卷序+章序展平的序列里取上一章/下一章。
+ * 全书第一章的[上一章]、全书最后一章的[下一章]置灰不可点击；
+ * 导航按钮放在工具栏行（目录右侧），避免被悬浮目录遮挡。
+ */
+const chapterNav = computed(() => {
+  const list = project.flatChapters
+  const idx = list.findIndex((x) => x.chapter.id === reader.activeChapterId)
+  const cur = idx >= 0 ? list[idx] : null
+  const volIdx = cur ? project.volumeTree.findIndex((v) => v.id === cur.volume.id) : -1
+  return {
+    index: idx,
+    total: list.length,
+    prev: idx > 0 ? list[idx - 1].chapter.id : null,
+    next: idx >= 0 && idx < list.length - 1 ? list[idx + 1].chapter.id : null,
+    volumeTitle: cur
+      ? formatVolumeTitle(cur.volume.title, cur.volume.sort_order, volIdx)
+      : '',
+  }
+})
+
+function goChapter(id: string | null): void {
+  if (id) reader.openChapter(id)
+}
+
+/**
+ * 编辑模式工具栏右末尾的位置标签「第X章 章名 XXX字」。
+ * 按当前正在编辑的章定位（大纲节点不显示）；字数取 editorStore.draft 实时统计
+ * （与后端 count_words 同口径），用户编辑时随输入刷新。
+ */
+const editLocation = computed(() => {
+  const id = editorStore.chapterId
+  if (!id) return ''
+  const found = project.findChapter(id)
+  if (!found) return ''
+  const chIdx = found.volume.chapters.findIndex((c) => c.id === id)
+  return `${formatChapterTitle(found.chapter.title, found.chapter.sort_order, chIdx)} ${countWords(editorStore.draft)}字`
+})
+
+/**
+ * 正文选区悬浮[AI润色] → 选中文本以「上下文块」形式加入模型对话（同添加文件），
  * 并带上**章节 id + 所在段落范围 + 前后文**，让大模型知道这段文本在文章中的位置再修改；
  * 同时展开右栏会话框便于继续输入润色要求。
- * ★标签由 store 归一为 `章节名_节选X`（简短），详细的段落范围写进消息正文。
+ * 标签由 store 归一为 `章节名_节选X`（简短），详细的段落范围写进消息正文。
  */
 function onPolishSelection(payload: {
   label: string
@@ -115,7 +161,7 @@ function onPolishSelection(payload: {
 }
 
 /**
- * v1029：AI 会话框可向左拉伸；v1030续：拉伸的是**左边界**（右边界始终贴着屏幕右侧不动），
+ * AI 会话框可向左拉伸；拉伸的是**左边界**（右边界始终贴着屏幕右侧不动），
  * 会话框宽度上限 = 整个屏幕宽度的 2/5；中栏用 flex:1 + min-width:0 随之自适应收窄，不留空白。
  */
 const AGENT_MAX_RATIO = 2 / 5
@@ -157,10 +203,10 @@ onMounted(async () => {
   await settingsStore.load()
   window.addEventListener('mousemove', onDragMove)
   window.addEventListener('mouseup', onDragEnd)
-  // v1030续：窗口尺寸变化时夹住会话框宽度，避免出现「右侧留白」
+  // 窗口尺寸变化时夹住会话框宽度，避免出现「右侧留白」
   window.addEventListener('resize', onWindowResize)
-  // v1028：项目列表加载与「默认选中上次打开的项目」由 ProjectList 统一负责（含 localStorage 记忆）
-  // ★v1101：启动时与后端对账 AI 编辑锁（防漏 SSE 事件导致一直灰着或一直可编辑）
+  // 项目列表加载与「默认选中上次打开的项目」由 ProjectList 统一负责（含 localStorage 记忆）
+  // 启动时与后端对账 AI 编辑锁（防漏 SSE 事件导致一直灰着或一直可编辑）
   void editorStore.refreshLocks()
 })
 
@@ -179,7 +225,7 @@ watch(
   () => reader.activeChapterId,
   async (id) => {
     if (!id) return
-    // v1029：记录「最近打开的小说章节」（供添加文件页展示，最多 10 条）
+    // 记录「最近打开的小说章节」（供添加文件页展示，最多 10 条）
     const found = project.findChapter(id)
     if (found && project.currentNovel) {
       recordRecentChapter({
@@ -205,7 +251,7 @@ function onExport(novel: Novel): void {
 }
 
 async function onOutlineSaved(): Promise<void> {
-  // v1029：大纲不再回填卷章顺序，仅需刷新项目统计
+  // 大纲不再回填卷章顺序，仅需刷新项目统计
   await project.loadVolumes()
 }
 
@@ -267,33 +313,50 @@ window.addEventListener('beforeunload', (e) => {
         @open-recycle="recycleVisible = true"
       />
 
-      <!-- v1028：没有小说项目时不展示目录，提示文案改为「点击「新建小说」开始创作」 -->
+      <!-- 没有小说项目时不展示目录，提示文案改为「点击「新建小说」开始创作」 -->
       <div v-if="!hasNovel" class="empty-state">
         <el-empty :description="t('sidebar.noProjects')" />
       </div>
 
       <div v-else class="main-body">
-        <!-- v1029：编辑模式顶部留出「目录」浮层的高度，避免遮挡编辑器工具条按钮 -->
+        <!-- 编辑模式顶部留出「目录」浮层的高度，避免遮挡编辑器工具条按钮 -->
         <div class="content-area flex-fill">
-          <!-- v1030：工具栏（原「目录」入口那一行）＝ 目录 + 卷章结构操作 + 保存 + 自动保存标记。
-               阅读模式保持 v1028 的悬浮样式；编辑模式为独占一行，避免遮挡编辑器工具条 -->
-          <div class="float-toolbar" :class="{ 'in-flow': reader.mode === 'edit' }">
+        <!-- 工具栏（原「目录」入口那一行）＝ 目录 + 翻页导航 + 卷章结构操作 + 保存 + 自动保存标记。
+        统一独占一行（in-flow）——阅读模式的章节导航并入本行，
+               避免悬浮目录遮挡[上一章]；行右末尾展示「n / N + 第X卷 卷名」。 -->
+          <div class="float-toolbar">
             <TocDrawer />
+
+            <!-- 阅读模式章节翻页（整本小说口径；首/末章对应按钮置灰） -->
+            <template v-if="reader.mode === 'read' && reader.activeChapterId">
+              <span class="tb-sep" />
+              <el-button size="small" :disabled="!chapterNav.prev" @click="goChapter(chapterNav.prev)">
+                {{ t('reader.prevChapter') }}
+              </el-button>
+              <el-button size="small" :disabled="!chapterNav.next" @click="goChapter(chapterNav.next)">
+                {{ t('reader.nextChapter') }}
+              </el-button>
+            </template>
 
             <template v-if="reader.mode === 'edit'">
               <span class="tb-sep" />
               <EditorActionBar v-if="hasNovel" />
               <span class="tb-sep" />
 
-              <!-- ★v1031：[回退编辑]（icon，保存左边）——回退当前章节的编辑，最多 5 次，类似 Word 撤销 -->
+              <!-- [回退编辑]（icon，保存左边）——回退当前节点的编辑，最多 5 次，类似 Word 撤销
+              大纲节点走大纲回退栈，章节节点走正文回退栈 -->
               <el-tooltip
-                :content="editorStore.canUndo ? t('editor.undoEditHint') : t('editor.undoEmpty')"
+                :content="
+                  (editingOutline ? editorStore.canUndoOutline : editorStore.canUndo)
+                    ? t('editor.undoEditHint')
+                    : t('editor.undoEmpty')
+                "
                 placement="bottom"
               >
                 <button
                   class="tb-icon-btn"
-                  :disabled="!editorStore.canUndo || editingOutline"
-                  @click="editorStore.requestUndo()"
+                  :disabled="(editingOutline ? !editorStore.canUndoOutline : !editorStore.canUndo)"
+                  @click="editingOutline ? editorStore.requestOutlineUndo() : editorStore.requestUndo()"
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
                     <path d="M12.5 8c-2.6 0-4.9 1-6.6 2.7L3 8v7h7l-2.7-2.7A7.5 7.5 0 0 1 12.5 10c4.1 0 7.5 3.2 7.5 7h2c0-4.9-4.3-9-9.5-9z" />
@@ -301,12 +364,12 @@ window.addEventListener('beforeunload', (e) => {
                 </button>
               </el-tooltip>
 
-              <!-- 保存（icon）：v1031 无待保存内容时置灰，有待保存内容恢复可点；
-                   ★v1101：AI 编辑中一律置灰（用户编辑过也保存不出去） -->
+              <!-- 保存（icon）：无待保存内容时置灰，有待保存内容恢复可点；
+                   AI 编辑中一律置灰（用户编辑过也保存不出去） -->
               <el-tooltip :content="t('common.save')" placement="bottom">
                 <button
                   class="tb-icon-btn"
-                  :disabled="editorStore.saving || !hasPendingSave || chapterLocked"
+                  :disabled="editorStore.saving || !hasPendingSave || contentLocked"
                   @click="editorStore.requestSave()"
                 >
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">
@@ -320,9 +383,23 @@ window.addEventListener('beforeunload', (e) => {
                 {{ t('settings.autosaveEnabled') }}
               </span>
 
-              <!-- ★v1101：AI 编辑中提示（灰色，位于[自动保存]右侧） -->
-              <span v-if="chapterLocked" class="ai-lock-hint">AI编辑中，请稍后再试……</span>
+              <!-- AI 编辑中提示（灰色，位于[自动保存]右侧）；文案与大纲锁共用 -->
+              <span v-if="contentLocked" class="ai-lock-hint">AI写作中请稍候…</span>
             </template>
+
+            <!-- 行右末尾——阅读模式（打开具体章时）：n / N + 卷名；
+                 大纲页不显示进度；编辑模式：第X卷 卷名 / 第X章 章名 -->
+            <span class="tb-spacer" />
+            <span
+              v-if="reader.mode === 'read' && chapterNav.index >= 0 && chapterNav.total"
+              class="tb-position muted text-sm"
+            >
+              {{ chapterNav.index + 1 }} / {{ chapterNav.total }}
+              <span v-if="chapterNav.volumeTitle" class="tb-volume">{{ chapterNav.volumeTitle }}</span>
+            </span>
+            <span v-else-if="reader.mode === 'edit' && editLocation" class="tb-position muted text-sm">
+              {{ editLocation }}
+            </span>
           </div>
 
           <!-- 阅读模式 -->
@@ -331,7 +408,14 @@ window.addEventListener('beforeunload', (e) => {
             <ChapterReader v-else :chapter-id="reader.activeChapterId" />
           </template>
 
-          <!-- 编辑模式（v1029：无页签，按当前节点直接切换编辑器） -->
+          <!-- 章节正文加载窗口期（换章/刷新/热重载）→ 内容区居中动态蒙版，
+               避免看到上一章内容或空内容 -->
+          <div v-if="editorStore.chapterLoading" class="chapter-loading-mask">
+            <span class="loading-spinner" />
+            <span class="muted text-sm">{{ t('common.loading') }}</span>
+          </div>
+
+          <!-- 编辑模式 -->
           <template v-else>
             <OutlineEditor v-if="editingOutline" @saved="onOutlineSaved" />
 
@@ -350,7 +434,7 @@ window.addEventListener('beforeunload', (e) => {
       </div>
     </main>
 
-    <!-- 右栏：Agent 面板（可收起；v1029 可向左拉伸，v1030续 拉伸后铺满右侧不留空白） -->
+    <!-- 右栏：Agent 面板（可收起、可向左拉伸，拉伸后铺满右侧不留空白） -->
     <template v-if="agentOpen">
       <div class="resize-handle" :title="t('agent.resizeHint')" @mousedown="onDragStart">
         <span class="resize-grip" aria-hidden="true" />
@@ -362,7 +446,7 @@ window.addEventListener('beforeunload', (e) => {
 
     <ExportDialog v-model="exportVisible" :novel="exportNovel" />
 
-    <!-- ★v1031：回收站抽屉（被删章节的归档 / 回收 / 彻底删除） -->
+    <!-- 回收站抽屉（被删章节的归档 / 回收 / 彻底删除） -->
     <RecycleBin
       v-model="recycleVisible"
       @novel-restored="onNovelRestored"
@@ -384,25 +468,47 @@ window.addEventListener('beforeunload', (e) => {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
-  /* v1028：目录悬浮层的定位上下文 */
+  /* 目录悬浮层的定位上下文；兼作 loading 蒙版定位上下文 */
   position: relative;
 }
 
-/* v1030：工具栏（「目录」所在那一行）：
-   目录 + 插入卷/章 + 重命名 + 删除 + 保存 + 自动保存标记。
-   阅读模式悬浮在左上角（v1028 行为）；编辑模式独占一行（in-flow）。 */
-.float-toolbar {
+/* 章节加载蒙版（内容区居中，动态旋转指示） */
+.chapter-loading-mask {
   position: absolute;
-  top: 8px;
-  left: 12px;
-  z-index: 30;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.loading-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--el-color-primary);
+  animation: chapter-spin 0.8s linear infinite;
+}
+
+@keyframes chapter-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 工具栏（「目录」所在那一行）：
+   目录 + 翻页导航 + 插入卷/章 + 重命名 + 删除 + 保存 + 自动保存标记。
+   两种模式统一独占一行（in-flow）——阅读模式的章节导航并入本行，
+   不再悬浮遮挡阅读区（旧版阅读模式 absolute 悬浮会盖住[上一章]）。 */
+.float-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-
-.float-toolbar.in-flow {
-  position: static;
   flex-shrink: 0;
   padding: 5px 12px;
   border-bottom: 1px solid var(--border);
@@ -414,6 +520,22 @@ window.addEventListener('beforeunload', (e) => {
   height: 16px;
   margin: 0 5px;
   background: var(--border);
+}
+
+/* 工具栏行右末尾的进度与卷名（n / N + 第X卷 卷名） */
+.tb-spacer {
+  flex: 1;
+}
+
+.tb-position {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.tb-volume {
+  color: var(--text-muted);
 }
 
 .tb-icon-btn {
@@ -462,7 +584,7 @@ window.addEventListener('beforeunload', (e) => {
   background: color-mix(in srgb, var(--el-color-success) 10%, var(--bg-panel));
 }
 
-/* ★v1101：AI 编辑中提示（灰色弱化文案，紧跟[自动保存]标记） */
+/* AI 编辑中提示（灰色弱化文案，紧跟[自动保存]标记） */
 .ai-lock-hint {
   display: inline-flex;
   align-items: center;
@@ -489,9 +611,9 @@ window.addEventListener('beforeunload', (e) => {
   flex-direction: column;
 }
 
-/* v1029：右栏拉伸把手
-   v1030续：把手标记随主题变化——浅色 / 护眼主题为黑色，深色主题为白色（--resize-handle）
-   ★v1031 续：恢复单竖杠标记；悬浮高亮色也跟随主题（由 --resize-handle 调出，不再用主题色） */
+/* 右栏拉伸把手
+   把手标记随主题变化——浅色 / 护眼主题为黑色，深色主题为白色（--resize-handle）
+   恢复单竖杠标记；悬浮高亮色也跟随主题（由 --resize-handle 调出，不再用主题色） */
 .resize-handle {
   position: relative;
   width: 7px;
@@ -513,13 +635,13 @@ window.addEventListener('beforeunload', (e) => {
   background: var(--resize-handle);
 }
 
-/* ★v1031 续：悬浮高亮 = 标记色（黑/白）的低透明度调出，三种主题下都协调 */
+/* 悬浮高亮 = 标记色（黑/白）的低透明度调出，三种主题下都协调 */
 .resize-handle:hover {
   background: color-mix(in srgb, var(--resize-handle) 14%, transparent);
 }
 
-/* v1029：宽度由拖拽把手控制（内联 style），默认 340px；
-   v1030续：拉伸到几乎铺满右侧屏幕，中栏自适应收窄，不留空白 */
+/* 宽度由拖拽把手控制（内联 style），默认 340px；
+   拉伸到几乎铺满右侧屏幕，中栏自适应收窄，不留空白 */
 .agent-aside {
   flex-shrink: 0;
   min-width: 300px;

@@ -6,9 +6,9 @@
 时间: 2026-10-27
 说明: 左上角动态组件数据 API（手册「六 → 路由树 · 配置 / widgets」）。
 
-    GET /widgets/weather?latitude=&longitude=|?city=   ★动态组件天气
-    GET /widgets/city?latitude=&longitude=             ★反向地理编码（失败回落 settings.city）
-    GET /widgets/pet-state?novel_id=                   ★宠物状态（writing|idle）
+    GET /widgets/weather?latitude=&longitude=|?city= 动态组件天气
+    GET /widgets/city?latitude=&longitude= 反向地理编码（失败回落 settings.city）
+    GET /widgets/pet-state?novel_id= 宠物状态（writing|idle）
 
     天气/地理编码逻辑在 `services/weather.py`（与内置天气 MCP 共用，避免两份实现漂移）。
 """
@@ -31,7 +31,7 @@ router = APIRouter(tags=["widgets"])
 
 
 async def _fallback_city(session: AsyncSession) -> str:
-    """回落城市：通用设置的 `city`（★语义是定位失败时的兜底，不是定位结果）。"""
+    """回落城市：通用设置的 `city`（语义是定位失败时的兜底，不是定位结果）。"""
     row = await session.get(UserSettings, "default")
     if row is not None and row.city:
         return row.city
@@ -44,7 +44,7 @@ async def widget_weather(
     latitude: float | None = Query(default=None, ge=-90, le=90),
     longitude: float | None = Query(default=None, ge=-180, le=180),
     city: str | None = Query(default=None, max_length=60),
-    refresh: bool = Query(default=False, description="v1028：跳过缓存取实时数据"),
+    refresh: bool = Query(default=False, description="跳过缓存取实时数据"),
 ) -> dict:
     """组件天气：优先坐标（浏览器定位）→ 反向地理编码取城市名；否则按城市名；都无则回落设置城市。
 
@@ -53,7 +53,7 @@ async def widget_weather(
     if latitude is not None and longitude is not None:
         located = await weather_service.reverse_geocode(latitude, longitude)
         label = (located or {}).get("city") or city or await _fallback_city(session)
-        # v1029：组件第一排要展示「具体地址」（反向地理编码给出）
+        # 组件第一排要展示「具体地址」（反向地理编码给出）
         address = (located or {}).get("address") or ""
         return ok(
             await weather_service.current_weather_by_coords(
@@ -67,7 +67,7 @@ async def widget_weather(
         )
 
     target = (city or "").strip() or await _fallback_city(session)
-    # ★v1101：未带坐标且未显式指定城市 → 用的是「回落城市」，source 标明供组件提示
+    # 未带坐标且未显式指定城市 → 用的是「回落城市」，source 标明供组件提示
     source = "city" if (city or "").strip() else "fallback_city"
     return ok(await weather_service.current_weather(target, force_refresh=refresh, source=source))
 

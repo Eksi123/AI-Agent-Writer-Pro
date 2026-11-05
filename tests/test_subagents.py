@@ -62,7 +62,7 @@ class TestSubagents:
         agents = build_subagents()
         names = [a["name"] for a in agents]
         assert names == list(BUILTIN_SUBAGENTS.keys())
-        assert set(names) == {"planner", "writer", "reviewer", "web-searcher"}
+        assert set(names) == {"planner", "writer", "reviewer", "recaller", "web-searcher"}
         for a in agents:
             assert a["mode"] == "isolated"
             assert a["description"] and a["system_prompt"]
@@ -75,6 +75,11 @@ class TestSubagents:
             assert {"read_file", "write_file", "edit_file"} <= set(specs[name]["tools"])
         # 审查者只读
         assert set(specs["reviewer"]["tools"]) == {"read_file", "ls", "grep", "glob"}
+        # 回顾者只读 + 大纲按需摘录（不写文件）
+        assert set(specs["recaller"]["tools"]) == {
+            "read_file", "grep", "glob", "outline_recall",
+        }
+        assert "write_file" not in specs["recaller"]["tools"]
         # 检索者只有 web_search
         assert specs["web-searcher"]["tools"] == ["web_search"]
 
@@ -109,13 +114,13 @@ class TestSubagentsApi:
     """测试子代理的 HTTP API 端点。"""
 
     async def test_builtin_seeded_on_startup(self, client):
-        """应用启动播种 4 个内置子代理（★v1102：planner/writer/reviewer/web-searcher）。"""
+        """应用启动播种 5 个内置子代理。"""
         resp = await client.get("/api/v1/subagents")
         data = resp.json()["data"]
         names = {s["name"] for s in data}
-        assert {"planner", "writer", "reviewer", "web-searcher"} <= names
+        assert {"planner", "writer", "reviewer", "recaller", "web-searcher"} <= names
         builtins = [s for s in data if s["is_builtin"]]
-        assert len(builtins) == 4
+        assert len(builtins) == 5
         for b in builtins:
             assert b["enabled"] is True
             assert b["system_prompt"]
@@ -238,7 +243,7 @@ class TestSubagentAssembly:
 
         specs = await load_subagent_specs(session)
         names = {s["name"] for s in specs}
-        # ★v1102：4 个内置子代理
+        # 4 个内置子代理
         assert {"planner", "writer", "reviewer", "web-searcher"} <= names
 
         novel = (await client.post("/api/v1/novels", json={"title": "子代理装配书"})).json()["data"]

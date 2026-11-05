@@ -8,7 +8,7 @@
     （整章覆盖 / 大范围 edit / 项目内 delete）→ `interrupt()` 转人工审批。
 
     与 `interrupt_on={"delete": True}`（工具级开关，builder 配置）互补。
-    ★装配位置必须为中间件栈**最外层**：GraphInterrupt 若被外层中间件吞掉，
+    装配位置必须为中间件栈**最外层**：GraphInterrupt 若被外层中间件吞掉，
     审批将永远无法暂停 run（详见 loop/builder.build_middleware_stack 注释）。
 """
 

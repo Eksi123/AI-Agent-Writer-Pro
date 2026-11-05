@@ -4,7 +4,7 @@
 文件名: __init__.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: 用户自建技能装载（架构优化 v1102）。
+说明: 用户自建技能装载。
 
     用户技能的**配置数据**存 DB `skill_configs`（经 services/skills CRUD 维护），
     并**物化**到 `data/skills/{name}/SKILL.md`，由 harness/sandbox/backend 经虚拟路径

@@ -41,6 +41,11 @@ _TOOL_OPERATION = {
 _WARN_AFTER = 2
 _BLOCK_AFTER = 3
 
+#: 大工具结果截断（对话历史瘦身）：read_file 返回超过该字符数时截断并卸载全文
+_READ_TRIM_LIMIT = 8000
+_READ_HEAD = 3000
+_READ_TAIL = 1000
+
 
 def _args_path(args: dict[str, Any]) -> str:
     """从工具参数取路径（各工具参数名不同）。"""
@@ -194,6 +199,7 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
             )
 
         duration_ms = int((time.perf_counter() - started) * 1000)
+        result = self._trim_large_read(request, result)
         excerpt, size, status, error_text = self._inspect_result(result)
         self.stats["success" if status == "success" else "error"] += 1
 
@@ -225,6 +231,30 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
         return result
 
     # ---- 内部 ----
+
+    def _trim_large_read(self, request: Any, result: Any) -> Any:
+        """read_file 结果过大时截断进历史：头 + 尾 + 省略提示（对话历史瘦身）。
+
+        提示中引导用 read_file 的 offset/limit 分段重读原文件（deepagents 原生分页），
+        不做额外卸载文件，避免状态区写入的脆弱性。
+        """
+        tool_name = request.tool_call.get("name") or ""
+        if tool_name != "read_file" or not isinstance(result, ToolMessage):
+            return result
+        content = result.content
+        if not isinstance(content, str) or len(content) <= _READ_TRIM_LIMIT:
+            return result
+        path = _args_path(request.tool_call.get("args") or {})
+        omitted = len(content) - _READ_HEAD - _READ_TAIL
+        hint = f"…（省略 {omitted} 字）如需全文请用 read_file 的 offset/limit 分段读取{('：' + path) if path else ''}…"
+        trimmed = content[:_READ_HEAD] + "\n" + hint + "\n" + content[-_READ_TAIL:]
+        logger.info("large_read_trimmed", size=len(content), trimmed_to=len(trimmed))
+        return ToolMessage(
+            content=trimmed,
+            tool_call_id=result.tool_call_id,
+            name=result.name,
+            status=getattr(result, "status", None),
+        )
 
     def _inspect_result(self, result: Any) -> tuple[str, int, str, str | None]:
         """返回 (excerpt, size, status, error)。"""

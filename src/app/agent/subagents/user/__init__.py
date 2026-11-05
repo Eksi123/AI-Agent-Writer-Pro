@@ -4,13 +4,13 @@
 文件名: __init__.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: 用户自建子代理装载（架构优化 v1102）。
+说明: 用户自建子代理装载。
 
     用户子代理的**配置数据**存 DB `subagent_configs`（is_builtin=False，
     经 services/subagents CRUD 维护）；本模块只负责把 DB 行装载为装配 spec
     （与内置 spec 同构），由 loop/builder 统一装配。
 
-    ★与内置的优先级：同名被 DB 唯一约束挡住；功能重叠时内置优先——
+    与内置的优先级：同名被 DB 唯一约束挡住；功能重叠时内置优先——
     `load_specs` 把内置排在用户自建之前，主 Agent 的 task 工具按序展示，
     同域任务优先派发内置子代理。
 """
@@ -43,7 +43,7 @@ def _loads_list(raw: str | None) -> list[str]:
 def row_to_spec(row: SubagentConfig) -> dict[str, Any]:
     """DB 行 → 装配 spec（与内置 spec 同构；提示词为空时回落内置同名定义）。
 
-    ★工具回落：DB 未显式勾选工具（tools_json 为空）时，用内置 spec 的默认工具集
+    工具回落：DB 未显式勾选工具（tools_json 为空）时，用内置 spec 的默认工具集
     （按职能预配，见 builtin/{name}/spec.py）——保证内置子代理开箱即用。
     """
     mode = row.mode or "isolated"

@@ -4,14 +4,14 @@
 文件名: preflight.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: 固定流程：导出成书预检（架构优化 v1102，workflows 新增流程）。
+说明: 固定流程：导出成书预检（workflows 新增流程）。
 
-    导出机制本体在 `services/exporters.py`（zip/EPUB/MOBI/TXT 打包，应用功能）；
+    导出机制本体在 `services/exporters.py`（zip/EPUB/PDF/TXT 打包，应用功能）；
     本流程只做**导出前的质量关卡**——纯规则判定（不调 LLM，可预测、可单测、零成本）：
 
     E1 结构完整性：大纲文件存在且可解析；卷章非空；
     E2 内容完备性：空章 / 过短章（<50 字）/ 未定稿章清单；
-    E3 格式可用性：mobi 需要 calibre（缺失 → 阻断项）；epub/txt/markdown 恒可用；
+    E3 格式可用性：pdf 需要 reportlab（缺失 → 阻断项）；epub/txt/markdown 恒可用；
     E4 汇总：checklist（blocking / warning 两级）+ 是否放行（无 blocking 即放行）。
 
     调用方（API `POST /novels/{id}/export-preflight`）拿 checklist 给用户过目，
@@ -128,16 +128,16 @@ async def run_export_preflight(
             }
         )
 
-    # ---- E3 格式可用性 ----
-    if fmt == "mobi":
-        from app.services.exporters import calibre_available
+        # ---- E3 格式可用性----
+    if fmt == "pdf":
+        from app.services.exporters import pdf_available
 
-        if not calibre_available():
+        if not pdf_available():
             checks.append(
                 {
                     "level": "blocking",
-                    "code": "calibre_missing",
-                    "message": "MOBI 导出需要 calibre（ebook-convert），当前未安装",
+                    "code": "pdf_dependency_missing",
+                    "message": "PDF 导出需要 reportlab 依赖（uv pip install reportlab），当前未安装",
                 }
             )
     elif fmt not in ("epub", "txt", "markdown"):

@@ -27,18 +27,6 @@ const scroller = ref<HTMLElement | null>(null)
 
 const html = computed(() => DOMPurify.sanitize(md.render(content.value || '')))
 
-/** 当前章在展平序列中的位置，用于翻页 */
-const position = computed(() => {
-  const list = project.flatChapters
-  const idx = list.findIndex((x) => x.chapter.id === props.chapterId)
-  return {
-    index: idx,
-    total: list.length,
-    prev: idx > 0 ? list[idx - 1].chapter.id : null,
-    next: idx >= 0 && idx < list.length - 1 ? list[idx + 1].chapter.id : null,
-  }
-})
-
 async function load(id: string): Promise<void> {
   loading.value = true
   error.value = null
@@ -81,34 +69,13 @@ function onScroll(): void {
   }
 }
 
-function go(id: string | null): void {
-  if (id) reader.openChapter(id)
-}
-
 watch(() => props.chapterId, (id) => void load(id), { immediate: true })
 </script>
 
 <template>
   <div class="chapter-reader">
-    <div class="row-between reader-bar">
-      <div class="row">
-        <el-button size="small" :disabled="!position.prev" @click="go(position.prev)">
-          {{ t('reader.prevChapter') }}
-        </el-button>
-        <el-button size="small" :disabled="!position.next" @click="go(position.next)">
-          {{ t('reader.nextChapter') }}
-        </el-button>
-      </div>
-      <div class="row">
-        <span class="muted text-sm" v-if="position.total">
-          {{ position.index + 1 }} / {{ position.total }}
-        </span>
-        <el-button size="small" text @click="reader.toggleNight()">
-          {{ t('reader.nightMode') }}
-        </el-button>
-      </div>
-    </div>
-
+  <!-- 上一章/下一章与「n / N + 卷名」已上移到 WorkspaceView 工具栏行
+         （整本小说口径翻页，首/末章按钮置灰），本组件只负责正文渲染与进度记忆。 -->
     <div ref="scroller" class="scroll-y flex-fill reader-scroll" :class="{ night: reader.nightMode }" @scroll="onScroll">
       <el-skeleton v-if="loading" :rows="6" animated class="pad" />
       <el-alert v-else-if="error" :title="error" type="error" :closable="false" class="pad" />
@@ -128,12 +95,6 @@ watch(() => props.chapterId, (id) => void load(id), { immediate: true })
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.reader-bar {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
 }
 
 .reader-scroll {

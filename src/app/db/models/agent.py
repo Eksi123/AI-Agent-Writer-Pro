@@ -8,8 +8,8 @@
     agent_interrupts（M3）+ subagent_configs / skill_configs（M5）+ mcp_servers（M6）
     （手册「五、数据模型」）。
 
-    ★消息树用 `parent_id + branch_index`，会话保存 `active_leaf_id`；
-    ★跨库不建外键：LangGraph checkpoint 另存 `data/agent_state.db`。
+    消息树用 `parent_id + branch_index`，会话保存 `active_leaf_id`；
+    跨库不建外键：LangGraph checkpoint 另存 `data/agent_state.db`。
 """
 
 from __future__ import annotations

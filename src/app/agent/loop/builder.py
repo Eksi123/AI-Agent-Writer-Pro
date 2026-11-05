@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: `create_deep_agent` 装配（手册「二、(2) Agent-Loop」+「二、(5)」）。
 
-    装配要点（★架构优化后）：
+    装配要点（架构优化后）：
     - `backend`：CompositeBackend 路由（`/projects/`、`/skills/user/`、会话精选）
       —— 技能 = 用户自建，无 `/skills/builtin/` 路由
     - `permissions`：8 条有序规则（`{pid}` 替换为当前项目），兜底 deny 最后
@@ -19,7 +19,10 @@
     - `skills`：`["/skills/user/"]`（虚拟路径）+ 会话精选 `/skills/session-{sid}/`
     - `subagents`：4 个内置写作子代理 planner/writer/reviewer/web-searcher
       （subagents/builtin/*/spec.py + prompt.md；general-purpose 由 deepagents 自动追加）
-    - `interrupt_on`：delete 工具无条件审批（参数级高危写入由 WriteApprovalMiddleware 处理）
+      - 无预设降级链——当前模型连续失败达阈值才切换备用模型
+      （ModelSwitchOnFailureMiddleware）；删除卷章弹风险确认，编辑/生成不审批
+      - `interrupt_on` 置空——删除卷章的风险确认由 WriteApprovalMiddleware
+      按参数判定（批准 / 拒绝 / 补充要求 三选一）
 
     **不引入** LocalShellBackend / LangSmithSandbox（会激活 execute 且与 permissions 冲突）。
 """
@@ -41,11 +44,13 @@ from app.agent.loop.context import AgentContext
 from app.agent.loop.llm.factory import get_chat_model
 from app.agent.loop.middleware import (
     ContentLockMiddleware,
+    ContextOverflowGuardMiddleware,
     FileChangeNotifyMiddleware,
     HiddenContextInjectionMiddleware,
     RecapInjectionMiddleware,
     SteerInjectionMiddleware,
     WorkspaceGuardMiddleware,
+    ReadScopeGuardMiddleware,
     WriteApprovalMiddleware,
 )
 from app.agent.loop.prompts import render
@@ -59,17 +64,21 @@ logger = get_logger(__name__)
 #: skills 虚拟路径（技能 = 用户自建；会话精选目录由 build_agent 按需追加）
 SKILL_PATHS = ["/skills/user/"]
 
-#: delete 工具无条件审批（`interrupt_on` 只能做工具级开关，参数级见 WriteApprovalMiddleware）
-INTERRUPT_ON: dict[str, Any] = {"delete": True}
+#: 不再用工具级 `interrupt_on`（它只能整工具开关且默认四按钮）；
+#: 删除卷章的风险确认统一由 WriteApprovalMiddleware 按参数判定（批准/拒绝/补充要求）。
+INTERRUPT_ON: dict[str, Any] = {}
 
 #: 单次 run 的 LLM 调用软上限（硬上限另经 config recursion_limit）
 DEFAULT_MODEL_CALL_LIMIT = 40
+
+#: 系统提示里梗概的注入上限（每轮模型调用都重发，长梗概改由 AI 按需读 novel.yaml）
+_SYNOPSIS_LIMIT = 120
 
 
 async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
     """从 DB 读取启用的子代理配置（内置已播种 + 用户自建）。
 
-    ★v1102：装载逻辑迁至 `subagents/user.load_specs`（内置在前 = 内置优先），
+    装载逻辑迁至 `subagents/user.load_specs`（内置在前 = 内置优先），
     此处保留同名入口（builder/测试的既有调用点不变）。
     DB 为空（如未播种的测试环境）时回落内置定义，保证 agent 始终有写作子代理可用。
     """
@@ -77,7 +86,8 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
 
 
 #: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search），
-#: 值为 deepagents FilesystemMiddleware 的工具名（web_search 走自研 registry，不在 fs 工具内）。
+#: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_recall`
+#: 走自研 registry（非文件工具，作为 extra 工具实例下发）。
 _FS_TOOL_ALIASES = {
     "read_file": "read_file",
     "read": "read_file",
@@ -91,6 +101,13 @@ _FS_TOOL_ALIASES = {
     "glob": "glob",
     "web_search": "web_search",
     "web_serach": "web_search",  # 容错：文档里的拼写
+    "outline_recall": "outline_recall",
+}
+
+#: 非文件类自研工具（名字 → 惰性导入路径）
+_EXTRA_TOOL_MODULES = {
+    "web_search": "app.agent.tools.builtin.web_search",
+    "outline_recall": "app.agent.tools.builtin.outline_recall",
 }
 
 
@@ -103,7 +120,7 @@ def build_subagents_from_specs(
 ) -> list[Any]:
     """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
 
-    v1028：`spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search）。
+    `spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search）。
     非空时把子代理的工具集收窄为这些工具——文件类工具经
     `FilesystemMiddleware(tools=[...])` 限定，`web_search` 直接给工具实例。
     """
@@ -151,11 +168,12 @@ def build_subagents_from_specs(
 def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
     """把勾选的工具名解析为「文件工具名列表 + 非文件工具实例列表 + 是否有显式勾选」。
 
-    ★deepagents 要求 FilesystemMiddleware 的 tools 必含 `read_file`，故勾选了任何
-    文件工具时自动补上 read_file。
+    deepagents 要求 FilesystemMiddleware 的 tools 必含 `read_file`，故勾选了任何
+    文件工具时自动补上 read_file。非文件工具（`web_search` / `outline_recall`）
+    直接作为工具实例下发。
     """
     fs: list[str] = []
-    want_web_search = False
+    want_extra: list[str] = []
     selected = False
     for raw in names:
         key = (raw or "").strip()
@@ -166,8 +184,9 @@ def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
             logger.warning("subagent_tool_unknown", tool=raw)
             continue
         selected = True
-        if real == "web_search":
-            want_web_search = True
+        if real in _EXTRA_TOOL_MODULES:
+            if real not in want_extra:
+                want_extra.append(real)
         elif real not in fs:
             fs.append(real)
 
@@ -175,13 +194,14 @@ def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
         fs.insert(0, "read_file")
 
     extra: list[Any] = []
-    if want_web_search:
+    for name in want_extra:
         try:
-            from app.agent.tools.builtin.web_search import web_search
+            import importlib
 
-            extra.append(web_search)
+            mod = importlib.import_module(_EXTRA_TOOL_MODULES[name])
+            extra.append(getattr(mod, name))
         except Exception as exc:  # pragma: no cover
-            logger.warning("web_search_tool_unavailable", error=str(exc))
+            logger.warning("subagent_extra_tool_unavailable", tool=name, error=str(exc))
     return {"fs": fs, "extra": extra, "selected": selected}
 
 
@@ -215,8 +235,9 @@ async def enabled_user_skills(session: AsyncSession) -> list[str]:
 def build_middleware_stack(
     *,
     primary_model: BaseChatModel,
-    fallback_models: list[BaseChatModel],
+    alternate_models: list[BaseChatModel],
     recap_provider: Any = None,
+    outline_ctx_provider: Any = None,
     steer_provider: Any = None,
     hidden_context_provider: Any = None,
     model_call_limit: int = DEFAULT_MODEL_CALL_LIMIT,
@@ -226,11 +247,14 @@ def build_middleware_stack(
     """按手册顺序装配中间件栈。
 
     顺序（不可随意调换）：
-    WriteApproval（★v1101 提到最外层）→ ModelRetry → ModelFallback → ModelCallLimit → TodoList
-    → RecapInjection → HiddenContext → SteerInjection → WorkspaceGuard
+    WriteApproval→ ModelRetry → ModelSwitchOnFailure → ModelCallLimit
+    → TodoList → RecapInjection → HiddenContext → SteerInjection → WorkspaceGuard
     → FileChangeNotify → ContentLock
 
-    ★v1101：WriteApproval 必须最外层——其 `interrupt()` 抛出的 GraphInterrupt 若被
+    删除 ModelFallback 降级链——改为「当前模型连续失败达阈值才切换备用模型」
+    （ModelSwitchOnFailureMiddleware）；编辑大纲/生成正文不审批，仅删除卷章弹风险确认。
+
+    WriteApproval 必须最外层——其 `interrupt()` 抛出的 GraphInterrupt 若被
     外层中间件（deepagents Filesystem 等）的 try/except 吞掉，会变成一条错误 ToolMessage，
     审批永远无法暂停 run（resolve 后 resume 空转、Agent 反复重试）。置于最外层后
     GraphInterrupt 直达 ToolNode，正确挂起 graph。
@@ -240,14 +264,18 @@ def build_middleware_stack(
     # ⓪ 高危写入审批（最外层：保证 interrupt() 的 GraphInterrupt 不被吞）
     stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
 
-    # ①~③ LLM 容错三段（重试 → 降级 → 限次）：装配逻辑在 harness/llm/resilience
+    # ①~③ LLM 容错三段（重试 → 连续失败切换 → 限次）：装配逻辑在 harness/llm/resilience
     stack.extend(
         build_resilience_middleware(
             primary_model=primary_model,
-            fallback_models=fallback_models,
+            alternate_models=alternate_models,
             model_call_limit=model_call_limit,
         )
     )
+
+    # ③.5 上下文超限兜底：设定窗口 > 真实窗口时 provider 报超限错误，
+    # 由该中间件捕获并主动摘要压缩历史后重试（挂在压缩中间件外层）
+    stack.append(ContextOverflowGuardMiddleware(primary_model))
 
     # ④ 待办：提供 write_todos 工具 → plan.update 事件（deepagents 默认不带，显式加入）
     try:
@@ -261,9 +289,16 @@ def build_middleware_stack(
         stack.append(summarization_mw)
 
     # ⑥~⑩ 自定义中间件
-    stack.append(RecapInjectionMiddleware(recap_provider=recap_provider))
+    stack.append(
+        RecapInjectionMiddleware(
+            recap_provider=recap_provider,
+            outline_ctx_provider=outline_ctx_provider,
+        )
+    )
     stack.append(HiddenContextInjectionMiddleware(provider=hidden_context_provider))
     stack.append(SteerInjectionMiddleware(steer_provider=steer_provider))
+    # 读取授权守卫在 WorkspaceGuard 之前：先判定是否允许读，再走路径校验/审计
+    stack.append(ReadScopeGuardMiddleware())
     stack.append(WorkspaceGuardMiddleware())
     stack.append(FileChangeNotifyMiddleware())
     stack.append(ContentLockMiddleware())
@@ -272,10 +307,29 @@ def build_middleware_stack(
 
 
 def _build_summarization(model: BaseChatModel, *, max_context: int | None) -> Any | None:
-    """上下文压缩中间件（deepagents 版：卸载驱逐消息 + 预截断大参数 + 溢出重试）。"""
-    try:
-        from deepagents.middleware.summarization import create_summarization_middleware
+    """上下文压缩中间件（deepagents 版：卸载驱逐消息 + 预截断大参数 + 溢出重试）。
 
+    触发阈值改为**配置窗口驱动**——已注入上下文剩余 <20%（即达到窗口 80%）
+    时自动压缩；窗口未知时回落 deepagents 的模型画像默认值。
+    """
+    window = int(max_context or 0)
+    try:
+        from deepagents.middleware.summarization import (
+            SummarizationMiddleware as DeepSummarizationMiddleware,
+            compute_summarization_defaults,
+            create_summarization_middleware,
+        )
+
+        if window > 0:
+            defaults = compute_summarization_defaults(model)
+            return DeepSummarizationMiddleware(
+                model=model,
+                backend=build_backend(),
+                # 剩余 <20% 即压缩：触发点 = 窗口 × 80%
+                trigger=("tokens", max(2000, int(window * 0.8))),
+                keep=defaults["keep"],
+                truncate_args_settings=defaults["truncate_args_settings"],
+            )
         return create_summarization_middleware(model, build_backend())
     except Exception as exc:
         logger.info("summarization_mw_unavailable", error=str(exc))
@@ -283,7 +337,7 @@ def _build_summarization(model: BaseChatModel, *, max_context: int | None) -> An
     try:
         from langchain.agents.middleware import SummarizationMiddleware
 
-        tokens = int((max_context or 32768) * 0.8)
+        tokens = int((window or 262_144) * 0.8)
         return SummarizationMiddleware(model=model, trigger=("tokens", max(2000, tokens)))
     except Exception as exc:  # pragma: no cover
         logger.warning("summarization_fallback_unavailable", error=str(exc))
@@ -291,7 +345,7 @@ def _build_summarization(model: BaseChatModel, *, max_context: int | None) -> An
 
 
 def _steer_provider(run_id: str) -> list[str]:
-    """v1028：取出该 run 的用户引导消息（「通过消息引导发送」）。
+    """取出该 run 的用户引导消息（「通过消息引导发送」）。
 
     经 `run_manager` 的 run 级队列中转；builder 不持有状态，避免并发 run 串数据。
     """
@@ -305,8 +359,9 @@ async def build_agent(
     *,
     project_id: str,
     model: BaseChatModel,
-    fallback_models: list[BaseChatModel] | None = None,
+    fallback_models: list[BaseChatModel] | None = None, # 语义=连续失败切换的备用模型
     recap_provider: Any = None,
+    outline_ctx_provider: Any = None,
     subagents_enabled: bool = True,
     tools_enabled: bool = True,
     write_approval_enabled: bool = True,
@@ -315,12 +370,15 @@ async def build_agent(
     subagent_names: set[str] | None = None,
     skill_names: set[str] | None = None,
     hidden_context_provider: Any = None,
+    max_context: int | None = None,
 ) -> dict[str, Any]:
     """构建 deep agent。返回装配结果 dict（含 graph 与元信息，供 runner 使用）。
 
-    调用方传入已解析的 `model`（主模型）与可选 `fallback_models`（降级链）。
+    调用方传入已解析的 `model`（主模型）与可选 `fallback_models`（语义改为
+    「连续失败切换」的备用模型列表）。
     `subagent_names` / `skill_names`：会话级选择（手册「三、(3) 输入窗口」上下文 Chips），
     空/None = 用全局默认（全部启用子代理 + 全部技能目录）。`session_id` 用于会话技能精选目录挂载。
+    `max_context`：配置上下文窗口（token），驱动压缩中间件触发阈值（剩余 <10% 压缩）。
     """
 
 
@@ -365,22 +423,26 @@ async def build_agent(
 
     middleware_stack = build_middleware_stack(
         primary_model=model,
-        fallback_models=fallback_models or [],
+        alternate_models=fallback_models or [],
         recap_provider=recap_provider,
+        outline_ctx_provider=outline_ctx_provider,
         steer_provider=_steer_provider,
         hidden_context_provider=hidden_context_provider,
         write_approval_enabled=write_approval_enabled,
         model_call_limit=get_settings().agent_model_call_limit,
+        max_context=max_context,
     )
 
-    # 系统提示（项目元信息 + 铁律；前情提要经 RecapInjection 动态注入）
+    # 系统提示（项目元信息 + 铁律；前情提要/大纲摘录经 RecapInjection 按需注入）
     novel = await _load_novel_meta(session, project_id)
+    # 梗概每次模型调用都重发 → 截断到 120 字（完整梗概在 novel.yaml，AI 可按需读）
+    synopsis = _clip(str(novel.get("synopsis") or ""), _SYNOPSIS_LIMIT)
     system_prompt = render(
         "main_agent.md.j2",
         novel_title=novel.get("title") or "未命名项目",
         author_name=novel.get("author_name"),
         genre=novel.get("genre"),
-        synopsis=novel.get("synopsis"),
+        synopsis=synopsis,
         project_id=project_id,
         recap="",
         extra_instructions="",
@@ -445,3 +507,11 @@ async def _load_novel_meta(session: AsyncSession, project_id: str) -> dict[str, 
         "genre": novel.genre,
         "synopsis": novel.synopsis,
     }
+
+
+def _clip(text: str, limit: int) -> str:
+    """按字数截断（超长加省略号），用于系统提示里的长字段。"""
+    t = (text or "").strip()
+    if len(t) <= limit:
+        return t
+    return t[:limit] + "…"

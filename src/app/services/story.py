@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 大纲读写与校验服务。
 
-    ★v1029：大纲是**参考资料**而非结构约束——它是 AI 生成正文的重要来源
+    大纲是**参考资料**而非结构约束——它是 AI 生成正文的重要来源
     （「参考大纲第X卷第X章的内容简介生成对应章节」），但**不再回填卷章 `sort_order`**。
     卷章结构与顺序由 `services/volumes.py` 直接维护（插入即顺延、删空即删卷）。
     `sync_order_from_outline` 保留为**只读校验/诊断**入口（报告大纲与实际结构的差异，
@@ -72,7 +72,7 @@ async def read_outline(session: AsyncSession, project_id: str) -> dict[str, Any]
 async def write_outline(
     session: AsyncSession, project_id: str, content: str
 ) -> dict[str, Any]:
-    """保存大纲。★v1029：大纲不再回填卷章顺序，只产出只读差异报告（`order_sync`）。"""
+    """保存大纲。大纲不再回填卷章顺序，只产出只读差异报告（`order_sync`）。"""
 
     novel = await novels.get_novel(session, project_id)
     guard = WorkspaceGuard(project_id)
@@ -112,14 +112,14 @@ async def write_outline(
         "filename": rel.rsplit("/", 1)[-1],
         "content": content,
         "word_count": files.count_words(content),
-        # v1029：大纲不再回填顺序，只返回只读差异报告
+        # 大纲不再回填顺序，只返回只读差异报告
         "order_synced": False,
         "order_sync": sync,
     }
 
 
 def outline_order_diff(project_id: str, outline_text: str | None = None) -> dict[str, Any]:
-    """★v1029：**只读**比对大纲小节先后与卷章实际 `sort_order` 的差异。
+    """**只读**比对大纲小节先后与卷章实际 `sort_order` 的差异。
 
     大纲降级为参考资料后不再写盘——本函数只产出差异报告（`volume_order` /
     `volumes_updated` / `chapters_updated` 表示「若按大纲会有多少处不同」）与警告，
@@ -225,7 +225,7 @@ def outline_order_diff(project_id: str, outline_text: str | None = None) -> dict
 
 
 def sync_order_from_outline(project_id: str, outline_text: str | None = None) -> dict[str, Any]:
-    """兼容别名：v1029 起大纲不再回填 `sort_order`，只返回只读差异报告。"""
+    """兼容别名：起大纲不再回填 `sort_order`，只返回只读差异报告。"""
     return outline_order_diff(project_id, outline_text)
 
 

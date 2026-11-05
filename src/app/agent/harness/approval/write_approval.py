@@ -9,13 +9,11 @@
     手册「二、(2) 人为介入」第 2 层：`interrupt_on` 只能做工具级开关、无法按参数判定，
     故「整章覆盖 / 大范围 edit / 批量 delete」由本中间件在 `awrap_tool_call` 内触发中断。
 
-    高危判定（任一命中即中断，阈值可配）：
-    - `write_file` 目标是**已存在的非空章节文件**且新内容与旧内容不同 → 整章覆盖；
-    - `edit_file` 的 `old_string` 或 `new_string` 超过 `edit_threshold` 字符 → 大范围改写；
-    - `delete` 任何项目内文件/目录 → 不可逆删除。
+    高危判定：本应用是 AI 写小说，编辑大纲 / 生成卷章正文不审批；
+    仅 `delete` 项目内卷/章文件 → 风险操作中断（批准 / 拒绝 / 补充要求 三选一）。
 
     恢复语义（`decision`）：
-    - `approve` → 原样执行；`edit` → 用 `edited_args` 替换参数后执行；
+    - `approve` → 原样执行；
     - `reject` → 不执行，向模型返回「用户拒绝」ToolMessage；
     - `respond` → 不执行，把用户补充说明 `message` 回给模型。
 """
@@ -64,6 +62,10 @@ def classify_risk(
 ) -> tuple[str | None, str]:
     """判定是否高危。
 
+    本应用是 AI 写小说，编辑大纲 / 生成卷章正文属常规操作，**不再审批**；
+    仅当 Agent 要**删除项目内卷/章文件**（`delete` 工具）时提示风险操作，
+    由用户三选一：批准 / 拒绝 / 补充要求。
+
     Returns:
         (risk_kind, reason)；`risk_kind` 为 None 表示放行。
     """
@@ -73,35 +75,6 @@ def classify_risk(
             host = virtual_to_host(path)
             is_dir = bool(host and host.is_dir())
             return "delete", f"删除{'目录' if is_dir else '文件'}不可逆：{path}"
-
-    if tool_name == "write_file":
-        path = str(args.get("file_path") or "")
-        content = str(args.get("content") or "")
-        if not path.startswith("/projects/"):
-            return None, ""
-        host = virtual_to_host(path)
-        if host is not None and host.is_file():
-            try:
-                old = host.read_text(encoding="utf-8")
-            except OSError:
-                return None, ""
-            if len(old.strip()) >= overwrite_threshold and old != content:
-                return "overwrite", (
-                    f"整章覆盖：{path} 已有 {len(old)} 字符正文，将被 {len(content)} 字符替换"
-                )
-        return None, ""
-
-    if tool_name == "edit_file":
-        old_string = str(args.get("old_string") or "")
-        new_string = str(args.get("new_string") or "")
-        path = str(args.get("file_path") or "")
-        if not path.startswith("/projects/"):
-            return None, ""
-        if len(old_string) >= edit_threshold or len(new_string) >= edit_threshold:
-            return "large_edit", (
-                f"大范围改写：{path}（old {len(old_string)} 字符 / new {len(new_string)} 字符）"
-            )
-        return None, ""
 
     return None, ""
 
@@ -117,8 +90,8 @@ class WriteApprovalMiddleware(AgentMiddleware):
         enabled: bool = True,
         edit_threshold: int = DEFAULT_EDIT_THRESHOLD,
         overwrite_threshold: int = DEFAULT_OVERWRITE_THRESHOLD,
-        allowed_decisions: tuple[str, ...] = ("approve", "edit", "reject", "respond"),
-        skip_tools: tuple[str, ...] = ("delete",),
+        allowed_decisions: tuple[str, ...] = ("approve", "reject", "respond"),
+        skip_tools: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.enabled = enabled
@@ -179,7 +152,7 @@ class WriteApprovalMiddleware(AgentMiddleware):
             )
         await self._set_run_status(context, "awaiting_approval")
 
-        # ★挂起：resume 时本方法会重跑，interrupt() 直接返回决定
+        # 挂起：resume 时本方法会重跑，interrupt() 直接返回决定
         decision = interrupt(payload)
 
         record = await self._record_decision(run_id, tool_call_id, interrupt_id, decision)
@@ -224,110 +197,129 @@ class WriteApprovalMiddleware(AgentMiddleware):
     # ---- DB ----
 
     async def _find_decided(self, run_id: str, tool_call_id: str) -> dict[str, Any] | None:
-        if not run_id or not tool_call_id:
-            return None
-        try:
-            from sqlalchemy import select
-
-            from app.db.models import AgentInterrupt
-            from app.db.session import session_scope
-
-            async with session_scope() as db:
-                rows = (
-                    await db.execute(
-                        select(AgentInterrupt).where(
-                            AgentInterrupt.run_id == run_id,
-                            AgentInterrupt.type == "approval",
-                            AgentInterrupt.decision.is_not(None),
-                        )
-                    )
-                ).scalars().all()
-                for row in rows:
-                    payload = _loads(row.payload_json)
-                    if payload.get("tool_call_id") == tool_call_id:
-                        return _interrupt_record(row, payload)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("interrupt_lookup_failed", run_id=run_id, error=str(exc))
-        return None
+        return await find_decided(run_id, tool_call_id)
 
     async def _create_interrupt(self, context: Any, payload: dict[str, Any]) -> str:
-        """幂等创建中断行：同 (run_id, tool_call_id) 未决行直接复用。"""
-
-        run_id = getattr(context, "run_id", "") or ""
-        session_id = getattr(context, "session_id", "") or ""
-        try:
-            from sqlalchemy import select
-
-            from app.db.models import AgentInterrupt
-            from app.db.session import session_scope
-
-            async with session_scope() as db:
-                existing = (
-                    await db.execute(
-                        select(AgentInterrupt).where(
-                            AgentInterrupt.run_id == run_id,
-                            AgentInterrupt.type == "approval",
-                            AgentInterrupt.decision.is_(None),
-                        )
-                    )
-                ).scalars().all()
-                for row in existing:
-                    if _loads(row.payload_json).get("tool_call_id") == payload.get("tool_call_id"):
-                        return row.id
-
-                interrupt_id = new_id()
-                db.add(
-                    AgentInterrupt(
-                        id=interrupt_id,
-                        run_id=run_id,
-                        session_id=session_id,
-                        type="approval",
-                        tool_name=payload.get("tool_name"),
-                        payload_json=json.dumps(payload, ensure_ascii=False, default=str),
-                        created_at=utcnow(),
-                    )
-                )
-                return interrupt_id
-        except Exception as exc:  # pragma: no cover - DB 失败时仍继续中断（内存态可恢复）
-            logger.warning("interrupt_create_failed", run_id=run_id, error=str(exc))
-            return new_id()
+        return await create_interrupt(context, payload)
 
     async def _record_decision(
         self, run_id: str, tool_call_id: str, interrupt_id: str, decision: Any
     ) -> dict[str, Any]:
-        """把 resume 值落库（resolve API 通常已写，此处兜底幂等）。"""
-        record = _normalize_decision(decision)
-        try:
-            from app.db.base import utcnow
-            from app.db.models import AgentInterrupt
-            from app.db.session import session_scope
-
-            async with session_scope() as db:
-                row = await db.get(AgentInterrupt, interrupt_id)
-                if row is not None and row.decision is None:
-                    row.decision = record["decision"]
-                    row.response_json = json.dumps(record, ensure_ascii=False, default=str)
-                    row.decided_by = "user"
-                    row.decided_at = utcnow()
-        except Exception as exc:  # pragma: no cover
-            logger.warning("interrupt_record_failed", run_id=run_id, error=str(exc))
-        record["tool_call_id"] = tool_call_id
-        return record
+        return await record_decision(run_id, tool_call_id, interrupt_id, decision)
 
     async def _set_run_status(self, context: Any, status: str) -> None:
-        run_id = getattr(context, "run_id", "") or ""
-        if not run_id:
-            return
-        try:
-            from app.db.models import AgentRun
-            from app.db.session import session_scope
+        await set_run_status(context, status)
 
-            async with session_scope() as db:
-                row = await db.get(AgentRun, run_id)
-                if row is not None and row.status in ("running", "pending"):
-                    row.status = status
-        except Exception:  # pragma: no cover
-            pass
+
+async def find_decided(run_id: str, tool_call_id: str) -> dict[str, Any] | None:
+    """查本 run 内该 tool_call 已有决定（中断恢复重放时直接执行，不重复中断）。"""
+    if not run_id or not tool_call_id:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import AgentInterrupt
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            rows = (
+                await db.execute(
+                    select(AgentInterrupt).where(
+                        AgentInterrupt.run_id == run_id,
+                        AgentInterrupt.type == "approval",
+                        AgentInterrupt.decision.is_not(None),
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                payload = _loads(row.payload_json)
+                if payload.get("tool_call_id") == tool_call_id:
+                    return _interrupt_record(row, payload)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("interrupt_lookup_failed", run_id=run_id, error=str(exc))
+    return None
+
+
+async def create_interrupt(context: Any, payload: dict[str, Any]) -> str:
+    """幂等创建中断行：同 (run_id, tool_call_id) 未决行直接复用。"""
+
+    run_id = getattr(context, "run_id", "") or ""
+    session_id = getattr(context, "session_id", "") or ""
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import AgentInterrupt
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            existing = (
+                await db.execute(
+                    select(AgentInterrupt).where(
+                        AgentInterrupt.run_id == run_id,
+                        AgentInterrupt.type == "approval",
+                        AgentInterrupt.decision.is_(None),
+                    )
+                )
+            ).scalars().all()
+            for row in existing:
+                if _loads(row.payload_json).get("tool_call_id") == payload.get("tool_call_id"):
+                    return row.id
+
+            interrupt_id = new_id()
+            db.add(
+                AgentInterrupt(
+                    id=interrupt_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                    type="approval",
+                    tool_name=payload.get("tool_name"),
+                    payload_json=json.dumps(payload, ensure_ascii=False, default=str),
+                    created_at=utcnow(),
+                )
+            )
+            return interrupt_id
+    except Exception as exc:  # pragma: no cover - DB 失败时仍继续中断（内存态可恢复）
+        logger.warning("interrupt_create_failed", run_id=run_id, error=str(exc))
+        return new_id()
+
+
+async def record_decision(
+    run_id: str, tool_call_id: str, interrupt_id: str, decision: Any
+) -> dict[str, Any]:
+    """把 resume 值落库（resolve API 通常已写，此处兜底幂等）。"""
+    record = _normalize_decision(decision)
+    try:
+        from app.db.base import utcnow
+        from app.db.models import AgentInterrupt
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            row = await db.get(AgentInterrupt, interrupt_id)
+            if row is not None and row.decision is None:
+                row.decision = record["decision"]
+                row.response_json = json.dumps(record, ensure_ascii=False, default=str)
+                row.decided_by = "user"
+                row.decided_at = utcnow()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("interrupt_record_failed", run_id=run_id, error=str(exc))
+    record["tool_call_id"] = tool_call_id
+    return record
+
+
+async def set_run_status(context: Any, status: str) -> None:
+    run_id = getattr(context, "run_id", "") or ""
+    if not run_id:
+        return
+    try:
+        from app.db.models import AgentRun
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            row = await db.get(AgentRun, run_id)
+            if row is not None and row.status in ("running", "pending"):
+                row.status = status
+    except Exception:  # pragma: no cover
+        pass
 
 
 # ---- 决策归一化 ----

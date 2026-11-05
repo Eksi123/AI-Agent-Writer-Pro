@@ -9,7 +9,7 @@
         /projects/       → data/workspaces/     （各小说工作区）
         /skills/user/    → data/skills/         （用户自建技能物化目录，只读）
 
-    ★v1102（架构优化）：
+    （架构优化）：
     - **技能 = 用户自建**：包内不再随包携带写作技能目录，`/skills/builtin/` 路由取消；
       虚拟路径 `/skills/user/` 与 DB 落库的 `/skills/user/{name}` 绑定保持不变；
     - 权限规则 ④（`/skills/**` 读允许/写拒绝）继续覆盖 `/skills/user/`，语义不变。

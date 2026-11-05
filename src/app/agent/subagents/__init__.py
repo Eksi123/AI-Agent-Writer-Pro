@@ -4,9 +4,9 @@
 文件名: __init__.py
 作者: xionggaoqing
 时间: 2026-10-27
-说明: 写作子代理配置与构建（手册「二、(3) Sub-agents」，架构优化 v1102）。
+说明: 写作子代理配置与构建（手册「二、(3) Sub-agents」，架构优化 ）。
 
-    ★v1102：4 个内置子代理 planner / writer / reviewer / web-searcher
+    4 个内置子代理 planner / writer / reviewer / web-searcher
     （UI 展示名 Planner / Writer / Reviewer / Web_Searcher）：
     - `builtin/{name}/`：出厂定义（spec.py）+ 系统提示词（prompt.md，独立文件）；
     - `user/`：用户自建子代理装载（配置数据在 DB，经 services/subagents CRUD）；

@@ -23,9 +23,9 @@ class ErrorCode:
     NOT_FOUND = 40401
     VERSION_CONFLICT = 40901
     RUN_STATE_CONFLICT = 40902
-    #: v1101：同时「AI 思考执行中」的会话数已达上限（默认 5）
+    #: 同时「AI 思考执行中」的会话数已达上限（默认 5）
     RUN_CONCURRENCY_LIMIT = 40904
-    #: v1101：章节正被 AI 编辑（内容锁），用户保存（含自动保存）一律拒绝
+    #: 章节正被 AI 编辑（内容锁），用户保存（含自动保存）一律拒绝
     CONTENT_LOCKED = 40903
     STREAM_BUFFER_LOST = 41001
     NAMING_INVALID = 42201
@@ -116,7 +116,7 @@ class VersionConflictError(ApiError):
 
 
 class ContentLockedError(ApiError):
-    """v1101：章节正被 AI 编辑（409 / 40903）。用户保存（含自动保存）一律拒绝。"""
+    """章节正被 AI 编辑（409 / 40903）。用户保存（含自动保存）一律拒绝。"""
 
     code = ErrorCode.CONTENT_LOCKED
 
@@ -132,7 +132,7 @@ class OutlineParseError(ApiError):
 
 
 class DependencyUnavailableError(ApiError):
-    """外部依赖缺失，如 calibre 未安装、FTS5 不可用、MCP 探测失败（503 / 50301）。"""
+    """外部依赖缺失，如 reportlab 未安装、FTS5 不可用、MCP 探测失败（503 / 50301）。"""
 
     code = ErrorCode.DEPENDENCY_UNAVAILABLE
 

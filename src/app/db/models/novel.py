@@ -7,8 +7,8 @@
 说明: 内容域 ORM：novels / chapter_revisions / reading_progress / project_index
     （手册「五、数据模型」M1）。
 
-    ★项目登记表只做登记 + 外键锚点，正文以工作区文件为事实源，可全量重建；
-    ★`project_index` 是派生索引（字数/章数/脏标记），不是事实源。
+    项目登记表只做登记 + 外键锚点，正文以工作区文件为事实源，可全量重建；
+    `project_index` 是派生索引（字数/章数/脏标记），不是事实源。
 """
 
 from __future__ import annotations

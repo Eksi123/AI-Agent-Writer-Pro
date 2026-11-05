@@ -6,12 +6,12 @@
 时间: 2026-10-27
 说明: 导出 zip 与 EPUB 结构（手册「十一 · EPUB / 导出」域）。
 
-    ★必测：
+    必测：
     - `mimetype` 为 zip **首条目且 STORE 不压缩**；
     - `META-INF/container.xml`、`OEBPS/content.opf`、`nav.xhtml` 存在且 XML 合法；
     - 章节顺序与卷章树（按 `sort_order`）一致；txt 拼接顺序正确；
     - zip 内含正文（按 format）+ 大纲原 md；
-    - calibre 未安装时 mobi 返回 503 / `50301`。
+    - MOBI/calibre 已移除；PDF 由 reportlab 生成（依赖缺失时任务 failed 并报 50301 文案）。
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from app.api import novels as novels_api
 from app.core.paths import exports_root
 from app.db.models import AuditLog
 from app.db.session import get_sessionmaker
@@ -123,7 +122,7 @@ async def test_export_txt_concatenation_order(client, book):
 
 @pytest.mark.asyncio
 async def test_export_epub_mimetype_first_and_stored(client, book):
-    """★EPUB：`mimetype` 必须是 zip **首条目**且 **STORE 不压缩**。"""
+    """EPUB：`mimetype` 必须是 zip **首条目**且 **STORE 不压缩**。"""
     novel_id = book["novel_id"]
     path = await _run_export(client, novel_id, "epub")
 
@@ -136,7 +135,7 @@ async def test_export_epub_mimetype_first_and_stored(client, book):
 
 @pytest.mark.asyncio
 async def test_export_epub_required_files_valid_xml(client, book):
-    """★EPUB：container.xml / content.opf / nav.xhtml 存在且 XML 合法。"""
+    """EPUB：container.xml / content.opf / nav.xhtml 存在且 XML 合法。"""
     novel_id = book["novel_id"]
     path = await _run_export(client, novel_id, "epub")
 
@@ -164,7 +163,7 @@ async def test_export_epub_required_files_valid_xml(client, book):
 
 @pytest.mark.asyncio
 async def test_export_epub_chapter_order_matches_tree(client, book):
-    """★EPUB spine 顺序与卷章树（按 sort_order）一致。"""
+    """EPUB spine 顺序与卷章树（按 sort_order）一致。"""
     novel_id = book["novel_id"]
     path = await _run_export(client, novel_id, "epub")
 
@@ -212,21 +211,38 @@ async def test_export_includes_outline_original(client, book):
 
 @pytest.mark.asyncio
 async def test_export_invalid_format_rejected(client, book):
-    resp = await client.post(f"/api/v1/novels/{book['novel_id']}/export", params={"format": "pdf"})
+    """mobi 已移除 → 400 拒绝。"""
+    resp = await client.post(f"/api/v1/novels/{book['novel_id']}/export", params={"format": "mobi"})
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
-async def test_export_mobi_without_calibre_503(client, book, monkeypatch):
-    """★calibre 未安装 → 受理阶段即返回 503 / `50301`（前端据此置灰该选项）。"""
+async def test_export_pdf(client, book):
+    """PDF 导出——reportlab 可用时 zip 内含 .pdf；缺失时任务 failed 且提示安装依赖。"""
+    import importlib.util
 
-    monkeypatch.setattr(novels_api, "calibre_available", lambda: False)
+    has_reportlab = importlib.util.find_spec("reportlab") is not None
+    novel_id = book["novel_id"]
+    resp = await client.post(f"/api/v1/novels/{novel_id}/export", params={"format": "pdf"})
+    assert resp.status_code == 200, resp.text
+    task_id = resp.json()["data"]["task_id"]
+    done = await _wait_task(client, novel_id, task_id)
+    if has_reportlab:
+        assert done["status"] == "done", done
+        with zipfile.ZipFile(exports_root() / done["filename"]) as zf:
+            assert [n for n in zf.namelist() if n.endswith(".pdf")], "zip 内应含 PDF 产物"
+    else:
+        assert done["status"] == "failed"
+        assert "reportlab" in (done["error"] or "")
 
-    resp = await client.post(f"/api/v1/novels/{book['novel_id']}/export", params={"format": "mobi"})
-    assert resp.status_code == 503, resp.text
-    body = resp.json()
-    assert body["code"] == 50301
-    assert "calibre" in body["message"].lower()
+
+async def _wait_task(client, novel_id: str, task_id: str) -> dict:
+    for _ in range(60):
+        data = (await client.get(f"/api/v1/novels/{novel_id}/export-tasks/{task_id}")).json()["data"]
+        if data["status"] in ("done", "failed"):
+            return data
+        await asyncio.sleep(0.2)
+    raise AssertionError("导出任务超时未完成")
 
 
 @pytest.mark.asyncio
@@ -248,10 +264,10 @@ async def test_export_writes_audit(client, book):
 
 
 @pytest.mark.asyncio
-async def test_calibre_detection_is_bool(client):
-    """health 接口报告 calibre 可用性（不抛异常）。"""
+async def test_pdf_detection_is_bool(client):
+    """health 接口报告 PDF 依赖（reportlab）可用性（不抛异常）。"""
     data = (await client.get("/api/v1/health")).json()["data"]
-    assert isinstance(data["calibre_available"], bool)
+    assert isinstance(data["pdf_available"], bool)
     assert data["fts5_available"] is True
 
 
@@ -275,13 +291,20 @@ class TestExportPreflight:
         # fixture 章节正文很短（<50 字）→ short_chapters；未定稿 → draft_chapters
         assert "short_chapters" in codes or "empty_chapters" in codes
 
-    async def test_mobi_without_calibre_blocks(self, client, session, novel_id, chapter_id, monkeypatch):
+    async def test_pdf_without_reportlab_blocks(self, client, session, novel_id, chapter_id, monkeypatch):
         import app.services.exporters as exporters
 
-        monkeypatch.setattr(exporters, "calibre_available", lambda: False)
-        result = await run_export_preflight(session, novel_id, "mobi")
+        monkeypatch.setattr(exporters, "pdf_available", lambda: False)
+        result = await run_export_preflight(session, novel_id, "pdf")
         assert result["passed"] is False
-        assert any(c["code"] == "calibre_missing" for c in result["checks"])
+        assert any(c["code"] == "pdf_dependency_missing" for c in result["checks"])
+
+    async def test_pdf_with_reportlab_passes(self, client, session, novel_id, chapter_id, monkeypatch):
+        import app.services.exporters as exporters
+
+        monkeypatch.setattr(exporters, "pdf_available", lambda: True)
+        result = await run_export_preflight(session, novel_id, "pdf")
+        assert not any(c["code"] == "pdf_dependency_missing" for c in result["checks"])
 
     async def test_api_endpoint(self, client, novel_id):
         resp = await client.get(f"/api/v1/novels/{novel_id}/export-preflight", params={"format": "epub"})

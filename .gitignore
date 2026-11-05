@@ -48,6 +48,9 @@ dmypy.json
 .pytype/
 .ruff_cache/
 
+# Demo
+demo/
+
 # Jupyter
 .ipynb_checkpoints
 profile_default/
@@ -109,9 +112,9 @@ desktop.ini
 
 # ---- 临时 / 备份 ----
 *.bak
-*.tmp
+# *.tmp
 *.temp
 *~
 .cache/
-temp/
-tmp/
+# temp/
+# tmp/

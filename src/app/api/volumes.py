@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 卷 / 章 CRUD（手册「六 → 路由树 · 卷章」）。
 
-    ★**无 reorder / move 接口**：v1029 起位置编辑的唯一入口是「插入」——
+    **无 reorder / move 接口**：起位置编辑的唯一入口是「插入」——
     `POST` 带 `ordinal` 即插入到该位置（其后各项自动顺延 +1）。
 """
 
@@ -40,8 +40,8 @@ async def create_volume(
 ) -> dict:
     """新建卷：显式命名（违规 42201）。
 
-    v1029：传 `ordinal` → 插入到该位置（其后各卷顺延 +1）；不传 → 追加到末尾。
-    v1030续：传 `first_chapter_title` → 随卷一并创建第一章（★不支持空卷）。
+    传 `ordinal` → 插入到该位置（其后各卷顺延 +1）；不传 → 追加到末尾。
+    传 `first_chapter_title` → 随卷一并创建第一章（不支持空卷）。
     """
     dto = await volumes.create_volume(
         session,
@@ -67,7 +67,16 @@ async def update_volume(
 
 @router.delete("/volumes/{vol_id}")
 async def delete_volume(vol_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """删除卷：级联删除其下章节文件（前端二次确认）。"""
+    """删除卷：级联删除其下章节文件（前端二次确认）。
+
+    该项目有卷/章/大纲被 AI 编辑中 → 409 / 40903，禁止删除。
+    """
+    from app.core.errors import ContentLockedError
+    from app.services.content_lock import content_locks
+
+    project_id, _vols, _vol = volumes.locate_volume(vol_id)
+    if content_locks.is_project_busy(project_id):
+        raise ContentLockedError(data={"project_id": project_id})
     dto = await volumes.delete_volume(session, vol_id)
     await session.commit()
     return ok(dto)
@@ -90,7 +99,7 @@ async def create_chapter(
 ) -> dict:
     """新建章：显式命名（违规 42201）。
 
-    v1029：传 `ordinal` → 插入到卷内该位置（其后各章顺延 +1）；不传 → 追加到卷末尾。
+    传 `ordinal` → 插入到卷内该位置（其后各章顺延 +1）；不传 → 追加到卷末尾。
     """
     dto = await volumes.create_chapter(
         session, vol_id, title=body.title, content=body.content, ordinal=body.ordinal
@@ -105,7 +114,7 @@ async def update_chapter(
 ) -> dict:
     """改章名 / 状态（draft|finalized）。定稿触发一次修订快照。
 
-    v1029：重命名弹窗同时含卷名，`volume_title` 有变更时重命名该章所属的卷。
+    重命名弹窗同时含卷名，`volume_title` 有变更时重命名该章所属的卷。
     """
     dto = await volumes.update_chapter_meta(
         session,
@@ -120,7 +129,18 @@ async def update_chapter(
 
 @router.delete("/chapters/{chapter_id}")
 async def delete_chapter(chapter_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """删除章文件。★不提供跨卷移动。"""
+    """删除章文件。不提供跨卷移动。
+
+    该章或该项目大纲被 AI 编辑中 → 409 / 40903，禁止删除。
+    """
+    from app.core.errors import ContentLockedError
+    from app.services.content_lock import content_locks
+
+    if content_locks.is_locked(chapter_id):
+        raise ContentLockedError(data={"chapter_id": chapter_id})
+    project_id, _vol_id, _meta, _content = volumes.locate_chapter(chapter_id)
+    if content_locks.is_project_busy(project_id):
+        raise ContentLockedError(data={"project_id": project_id})
     dto = await volumes.delete_chapter(session, chapter_id)
     await session.commit()
     return ok(dto)

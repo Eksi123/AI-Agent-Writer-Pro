@@ -25,11 +25,11 @@ logger = get_logger(__name__)
 class MessageSyncer:
     """把 graph state 的 messages 增量同步到业务库 `messages`（保持树结构）。
 
-    ★按**索引基线**增量同步（不按消息 id 匹配）：graph state 里的消息 id 由 LangGraph 生成，
+    按**索引基线**增量同步（不按消息 id 匹配）：graph state 里的消息 id 由 LangGraph 生成，
     与业务库 uuid 无对应关系；而 state 的 messages 是**追加式**的，故只需记录「已同步到的下标」，
     之后每次 sync 只处理新增部分。
 
-    基线确定（★v1101：checkpoint 跨轮保留历史，基线恒为当前 state 长度）：
+    基线确定：
     - 新消息：基线 = state 长度；本轮用户消息已由 API 层落库，sync 时按正文跳过其副本一次；
     - 恢复：中断前的消息已全部落库 → 基线 = 当前 state 长度，parent = 会话 active_leaf_id。
     """
@@ -38,7 +38,7 @@ class MessageSyncer:
         self.session_id = session_id
         self._index = 0
         self._last_leaf: str | None = None
-        #: ★v1101：本轮 API 已落库的用户消息正文（跳过它在 state 里的副本，仅一次）
+        #: 本轮 API 已落库的用户消息正文（跳过它在 state 里的副本，仅一次）
         self._api_user_text: str | None = None
         #: 流程 S2：跳过下一条 human 消息（内部生成指令不入消息树）
         self.skip_human_once = False
@@ -53,7 +53,7 @@ class MessageSyncer:
     ) -> None:
         """确定同步基线与父节点。
 
-        ★v1101：基线 = **当前 state 长度**（checkpoint 跨轮保留历史）。
+        基线 = **当前 state 长度**（checkpoint 跨轮保留历史）。
         旧实现假设线程全新（`index = 1`），导致同会话第二轮起把整段历史
         当作「新增」重复落库——前端看起来就是「一条消息回了两次」。
         本轮用户消息已由 API 层落库：记住正文，sync 时跳过它在 state 里的副本。
@@ -86,7 +86,7 @@ class MessageSyncer:
             if not new_messages:
                 return
 
-        # ★v1101：中间件注入的 system（前情提要等）与**本轮 API 已落库的用户消息副本**
+        # 中间件注入的 system（前情提要等）与**本轮 API 已落库的用户消息副本**
         # 不入消息树——只推进指针。否则前端会把前情提要渲染成一条「回复」，
         # 重复 user 还会把一轮问答拆成两轮。
         filtered: list[Any] = []

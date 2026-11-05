@@ -23,7 +23,7 @@ from app.agent.tracing.sse.events import sse_bus
 class Emitter:
     run_id: str
     session_id: str
-    max_context: int = 32768
+    max_context: int = 262_144
     reserve_for_output: int = 4096
 
     async def publish(self, event: str, data: dict[str, Any] | None = None) -> None:

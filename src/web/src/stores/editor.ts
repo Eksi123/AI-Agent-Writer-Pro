@@ -2,7 +2,7 @@
  * 编辑器 store：正文乐观锁（base_version）+ 自动保存 + 冲突状态。
  * 契约见手册「六 · 正文写入乐观锁」。
  *
- * ★v1101：AI 编辑锁——AI 修改某章期间用户不得同时修改：
+ * AI 编辑锁——AI 修改某章期间用户不得同时修改：
  * `lockedChapters`（chapterId → runId）由 SSE `content.lock` 事件与
  * `GET /chapters/locks` 轮询维护；锁定期内 `save()` 直接拒绝（手动/自动同拒）。
  */
@@ -28,13 +28,13 @@ export const useEditorStore = defineStore('editor', () => {
   const error = ref<string | null>(null)
 
   /**
-   * v1030：工具栏「保存」icon 触发保存请求。
+   * 工具栏「保存」icon 触发保存请求。
    * 编辑器（正文 / 大纲）监听该自增计数并执行各自的保存，避免跨组件 ref 传递。
    */
   const saveRequestTick = ref(0)
 
   /**
-   * ★v1031：[回退编辑]（类似 Word 的撤销）——保存当前章节的编辑快照，最多 5 次。
+   * [回退编辑]（类似 Word 的撤销）——保存当前章节的编辑快照，最多 5 次。
    * 快照由正文编辑器在「一次连续输入的停顿处」压入（见 TiptapEditor 的防抖记录），
    * 工具栏 icon 点击后自增 `undoEditTick`，编辑器据此弹出最近一份快照还原。
    * 只在章节编辑态有效（大纲编辑器不参与）。
@@ -65,7 +65,39 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   /**
-   * v1031：大纲编辑器的脏状态（正文用 dirty）。
+ * 大纲独立回退栈（与正文互不干扰，同样最多 5 次）。
+   * 快照由 OutlineEditor 在「一次连续输入的停顿处」压入；工具栏[回退编辑]
+   * 在大纲节点点击时自增 `outlineUndoTick`，OutlineEditor 据此还原。
+   */
+  const outlineUndoStack = ref<string[]>([])
+  const outlineUndoTick = ref(0)
+
+  const canUndoOutline = computed(() => outlineUndoStack.value.length > 0)
+
+  function pushOutlineUndoSnapshot(text: string): void {
+    if (outlineUndoStack.value[outlineUndoStack.value.length - 1] === text) return
+    outlineUndoStack.value = [...outlineUndoStack.value, text].slice(-MAX_UNDO)
+  }
+
+  function requestOutlineUndo(): void {
+    if (!outlineUndoStack.value.length) return
+    outlineUndoTick.value += 1
+  }
+
+  function popOutlineUndoSnapshot(): string | null {
+    if (!outlineUndoStack.value.length) return null
+    const snapshot = outlineUndoStack.value[outlineUndoStack.value.length - 1]
+    outlineUndoStack.value = outlineUndoStack.value.slice(0, -1)
+    return snapshot
+  }
+
+  /** 换项目 / 重载大纲时清空大纲回退栈 */
+  function clearOutlineUndo(): void {
+    outlineUndoStack.value = []
+  }
+
+  /**
+ * 大纲编辑器的脏状态（正文用 dirty）。
    * 工具栏保存 icon 据此置灰——没有任何待保存内容时不可点击。
    */
   const dirtyOutline = ref(false)
@@ -80,21 +112,57 @@ export const useEditorStore = defineStore('editor', () => {
 
   const hasConflict = computed(() => conflict.value !== null)
 
-  // ---- ★v1101：AI 编辑锁 ----
+  // ---- AI 编辑锁 ----
   /** chapterId → 持有锁的 run_id */
   const lockedChapters = ref<Record<string, string>>({})
+
+  /** 章节正文加载窗口期（换章/刷新/热重载）→ 内容区显示 loading 蒙版 */
+  const chapterLoading = ref(false)
 
   function isChapterLocked(chapterId: string | null | undefined): boolean {
     return !!chapterId && chapterId in lockedChapters.value
   }
 
+  /** 大纲锁键为 `outline:{projectId}`（Agent 写大纲文件时加锁） */
+  function isOutlineLocked(projectId: string | null | undefined): boolean {
+    return !!projectId && `outline:${projectId}` in lockedChapters.value
+  }
+
+  /** 项目级忙碌（该项目任一章/大纲被 AI 编辑）→ 禁止删除卷/章/项目 */
+  const lockedProjects = ref<Record<string, string>>({})
+  /** 锁键 → 所属项目（用于解锁时重算项目级忙碌） */
+  const lockProjectOf = ref<Record<string, string>>({})
+
+  function isProjectBusy(projectId: string | null | undefined): boolean {
+    return !!projectId && projectId in lockedProjects.value
+  }
+
   /** SSE `content.lock` 事件回调 */
-  function setChapterLock(chapterId: string, runId: string, locked: boolean): void {
-    if (locked) lockedChapters.value = { ...lockedChapters.value, [chapterId]: runId }
-    else {
+  function setChapterLock(chapterId: string, runId: string, locked: boolean, projectId?: string): void {
+    if (locked) {
+      lockedChapters.value = { ...lockedChapters.value, [chapterId]: runId }
+      if (projectId) {
+        lockProjectOf.value = { ...lockProjectOf.value, [chapterId]: projectId }
+        lockedProjects.value = { ...lockedProjects.value, [projectId]: runId }
+      }
+    } else {
       const next = { ...lockedChapters.value }
       delete next[chapterId]
       lockedChapters.value = next
+      const pid = projectId ?? lockProjectOf.value[chapterId]
+      const nextOf = { ...lockProjectOf.value }
+      delete nextOf[chapterId]
+      lockProjectOf.value = nextOf
+      if (pid) {
+        const stillBusy = Object.entries(nextOf).some(
+          ([key, p]) => p === pid && key in next,
+        )
+        if (!stillBusy) {
+          const nextP = { ...lockedProjects.value }
+          delete nextP[pid]
+          lockedProjects.value = nextP
+        }
+      }
     }
   }
 
@@ -103,8 +171,18 @@ export const useEditorStore = defineStore('editor', () => {
     try {
       const list = await contentApi.locks()
       const next: Record<string, string> = {}
-      for (const item of list) next[item.chapter_id] = item.run_id
+      const nextProjects: Record<string, string> = {}
+      const nextOf: Record<string, string> = {}
+      for (const item of list) {
+        next[item.chapter_id] = item.run_id
+        if (item.project_id) {
+          nextProjects[item.project_id] = item.run_id
+          nextOf[item.chapter_id] = item.project_id
+        }
+      }
       lockedChapters.value = next
+      lockedProjects.value = nextProjects
+      lockProjectOf.value = nextOf
     } catch {
       // 对账失败不阻断编辑（后端 PUT 仍有硬校验兜底）
     }
@@ -114,15 +192,21 @@ export const useEditorStore = defineStore('editor', () => {
     chapterId.value = id
     conflict.value = null
     error.value = null
-    const data: ChapterContent = await contentApi.read(id)
-    draft.value = data.content
-    baseVersion.value = data.version
-    title.value = data.title ?? ''
-    lastWriter.value = data.last_writer
-    wordCount.value = data.word_count
-    dirty.value = false
-    // ★v1031：换章即清空回退栈（回退只针对「当前章节」的编辑）
-    undoStack.value = []
+    // 加载窗口期置 loading 蒙版，避免看到上一章内容或空内容
+    chapterLoading.value = true
+    try {
+      const data: ChapterContent = await contentApi.read(id)
+      draft.value = data.content
+      baseVersion.value = data.version
+      title.value = data.title ?? ''
+      lastWriter.value = data.last_writer
+      wordCount.value = data.word_count
+      dirty.value = false
+      // 换章即清空回退栈（回退只针对「当前章节」的编辑）
+      undoStack.value = []
+    } finally {
+      chapterLoading.value = false
+    }
   }
 
   function markDirty(): void {
@@ -132,7 +216,7 @@ export const useEditorStore = defineStore('editor', () => {
   /**
    * 保存正文。
    * @param autosave true 时不产生修订快照（防版本爆炸）
-   * ★v1101：章节被 AI 编辑锁定时直接拒绝（手动与自动保存同拒），不发请求。
+   * 章节被 AI 编辑锁定时直接拒绝（手动与自动保存同拒），不发请求。
    */
   async function save(autosave = false): Promise<boolean> {
     if (!chapterId.value) return false
@@ -238,7 +322,10 @@ export const useEditorStore = defineStore('editor', () => {
     revisions,
     hasConflict,
     lockedChapters,
+    chapterLoading,
     isChapterLocked,
+    isOutlineLocked,
+    isProjectBusy,
     setChapterLock,
     refreshLocks,
     saveRequestTick,
@@ -249,6 +336,12 @@ export const useEditorStore = defineStore('editor', () => {
     pushUndoSnapshot,
     requestUndo,
     popUndoSnapshot,
+    outlineUndoTick,
+    canUndoOutline,
+    pushOutlineUndoSnapshot,
+    requestOutlineUndo,
+    popOutlineUndoSnapshot,
+    clearOutlineUndo,
     openChapter,
     markDirty,
     save,

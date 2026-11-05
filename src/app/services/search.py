@@ -6,8 +6,8 @@
 时间: 2026-10-27
 说明: 检索服务：FTS5（二元切分 + unicode61）主方案，`LIKE` 降级（手册「四、检索」）。
 
-    ★索引侧与查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
-    ★`project_id` 必须参与过滤，否则跨项目串数据。
+    索引侧与查询侧必须用同一个 `bigram_tokenize()`，否则永远查不到。
+    `project_id` 必须参与过滤，否则跨项目串数据。
     数据源：大纲单文件（kind=outline）+ `summaries/`（kind=summary）。
 """
 
@@ -256,7 +256,7 @@ async def rebuild_summaries(session: AsyncSession, project_id: str) -> dict[str,
     """重建章节摘要与派生索引（手册「六 → 路由树 · 摘要」）。
 
     - LLM 摘要：为尚无摘要的章节生成 `summaries/ch-{id}.md`
-      （★v1101：定稿入口移除后不再按 status 过滤；未配置模型时自动跳过，不阻断索引重建）；
+      ；
     - 派生索引：全量重建 `story_fts` 并刷新统计。
     """
     # ① 摘要生成（尽力而为：无模型/失败只记录，不抛）

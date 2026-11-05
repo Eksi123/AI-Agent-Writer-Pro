@@ -4,7 +4,7 @@
 文件名: intent.py
 作者: xionggaoqing
 时间: 2026-11-01
-说明: v1101：流程（四阶段工作流）改为**意图驱动**——不再有「生成本章」按钮，
+说明: 流程（四阶段工作流）改为**意图驱动**——不再有「生成本章」按钮，
     仅当用户消息表达「按大纲某章简介生成/修改正文」的意图时，才把该 run
     标记为固定流程运行（`target_chapter_id` 非空 → chapter_workflow/runner 四阶段编排）。
 
@@ -58,9 +58,24 @@ def resolve_workflow_chapter(
     """意图命中后定位目标章：显式标题提及 > 当前章；都无则 None（走普通对话）。"""
     if not has_workflow_intent(text):
         return None
-    t = (text or "").strip()
+    return resolve_mentioned_chapter(text, chapters) or (active_chapter_id or None)
 
-    # ① 消息里显式写了章标题（完整标题优先， longest-first 防前缀误配）
+
+def resolve_mentioned_chapter(
+    text: str,
+    chapters: list[dict[str, Any]],
+) -> str | None:
+    """定位消息里**显式提到**的章（不做写作意图判定，也不回落当前章）。
+
+    优先级：完整章标题 > 「第X章」序数；都无则 None。
+    大纲按需摘录注入复用本函数——用户只说「参考第三章简介润色这段」时
+    不命中写作意图，但仍应摘录该章大纲而非整篇读取。
+    """
+    t = (text or "").strip()
+    if not t or not chapters:
+        return None
+
+    # ① 消息里显式写了章标题（longest-first 防前缀误配）
     titled = [c for c in chapters if str(c.get("title") or "").strip()]
     titled.sort(key=lambda c: len(str(c.get("title"))), reverse=True)
     for ch in titled:
@@ -77,8 +92,7 @@ def resolve_workflow_chapter(
                 if idx == want:
                     return str(ch["id"])
 
-    # ③ 回落：用户当前正在看/编辑的章
-    return active_chapter_id or None
+    return None
 
 
 _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}

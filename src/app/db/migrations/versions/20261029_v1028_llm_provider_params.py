@@ -1,4 +1,4 @@
-"""v1028: llm_providers 增加 timeout_sec / temperature / max_tokens
+""" llm_providers 增加 timeout_sec / temperature / max_tokens
 
 Revision ID: a1v1028prm
 Revises: 22869e0bf363

@@ -54,7 +54,7 @@ def _json_model(payload: dict[str, Any]) -> Any:
 def _write_outline(project_id: str, content: str) -> None:
     """直接写大纲文件（绕过 API，测试更聚焦流程逻辑）。
 
-    ★写 `novel.yaml.outline_file` 记录的相对路径（S0 经 DB/novel.yaml 寻址大纲）。
+    写 `novel.yaml.outline_file` 记录的相对路径（S0 经 DB/novel.yaml 寻址大纲）。
     """
 
     meta = files.read_novel_meta(project_id)

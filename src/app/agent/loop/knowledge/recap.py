@@ -31,6 +31,9 @@ logger = get_logger(__name__)
 #: 前情提要最多带的章数（近 N 章摘要 + 上一卷末章锚点）
 _RECAP_CHAPTERS = 6
 _RECAP_EXCERPT_LEN = 600
+#: 会话级「已读章节」Chips 上限（防提示词膨胀）
+_PINNED_MAX_CHAPTERS = 3
+_PINNED_EXCERPT_LEN = 300
 
 
 async def build_pinned_chapters(
@@ -45,7 +48,7 @@ async def build_pinned_chapters(
     chapters = await list_chapters_ordered(project_id)
     by_id = {str(m.get("id")): m for m in chapters}
     lines: list[str] = ["## 用户指定的上下文章节"]
-    for cid in chapter_ids[:8]:  # 上限 8 章，防提示词膨胀
+    for cid in chapter_ids[:_PINNED_MAX_CHAPTERS]:
         meta = by_id.get(cid)
         if meta is None:
             continue
@@ -55,12 +58,15 @@ async def build_pinned_chapters(
         lines.append(head)
         summary = _read_summary_text(project_id, cid)
         if summary:
-            lines.append(f"摘要：{summary[:500]}")
+            lines.append(f"摘要：{summary[:_PINNED_EXCERPT_LEN]}")
         else:
             try:
                 _m, content = files.read_chapter(project_id, str(meta.get("volume_id")), cid)
                 text = re.sub(r"\s+", " ", content or "").strip()
-                lines.append(f"节选：{text[:500]}{'…' if len(text) > 500 else ''}")
+                lines.append(
+                    f"节选：{text[:_PINNED_EXCERPT_LEN]}"
+                    f"{'…' if len(text) > _PINNED_EXCERPT_LEN else ''}"
+                )
             except (FileNotFoundError, OSError):
                 continue
     return "\n".join(lines) if len(lines) > 1 else ""

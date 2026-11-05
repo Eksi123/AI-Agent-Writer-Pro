@@ -6,8 +6,8 @@
 时间: 2026-10-27
 说明: 项目 / 卷章 / 大纲 DTO（手册「六 → 路由树 · 项目/卷章/大纲」）。
 
-    ★卷章无 reorder / move 的 DTO：v1029 起位置编辑走「插入」（`ordinal`），仍无拖拽重排。
-    ★`ContentIn` 必带 `base_version`（乐观锁，不符 409/40901）。
+    卷章无 reorder / move 的 DTO：起位置编辑走「插入」（`ordinal`），仍无拖拽重排。
+    `ContentIn` 必带 `base_version`（乐观锁，不符 409/40901）。
 
     响应统一由 `core.response.ok()` 包成 `{code,message,data}`，此处只定义 `data` 部分。
 """
@@ -28,7 +28,7 @@ class NovelCreate(BaseModel):
 
     title: str = Field(max_length=200, description="书名，必填；空名/默认名/纯序号名由服务层返回 42201")
     author_name: str | None = Field(default=None, max_length=100)
-    #: v1030续：题材支持自定义标签（最多 3 个以「、」连接，自定义名 ≤5 字），50 足够
+    #: 题材支持自定义标签（最多 3 个以「、」连接，自定义名 ≤5 字），50 足够
     genre: str | None = Field(default=None, max_length=50)
     synopsis: str | None = None
 
@@ -36,7 +36,7 @@ class NovelCreate(BaseModel):
 class NovelUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     author_name: str | None = Field(default=None, max_length=100)
-    #: v1030续：同 NovelCreate，容纳自定义题材
+    #: 同 NovelCreate，容纳自定义题材
     genre: str | None = Field(default=None, max_length=50)
     synopsis: str | None = None
 
@@ -81,9 +81,9 @@ class ReadingProgressOut(BaseModel):
 class VolumeCreate(BaseModel):
     title: str = Field(max_length=200)
     summary: str = ""
-    #: v1029：插入位置（1..N+1，正整数）；不传则追加到末尾
+    #: 插入位置（1..N+1，正整数）；不传则追加到末尾
     ordinal: int | None = Field(default=None, ge=1, description="插入位置序号；缺省追加末尾")
-    #: v1030续：插入卷时同时创建它的第一章（★不允许产生空卷）
+    #: 插入卷时同时创建它的第一章（不允许产生空卷）
     first_chapter_title: str | None = Field(
         default=None, max_length=200, description="第一章章节名；给出时随卷一并创建（避免空卷）"
     )
@@ -109,14 +109,14 @@ class VolumeOut(BaseModel):
 class ChapterCreate(BaseModel):
     title: str = Field(max_length=200)
     content: str = ""
-    #: v1029：插入位置（1..N+1，正整数）；不传则追加到卷末尾
+    #: 插入位置（1..N+1，正整数）；不传则追加到卷末尾
     ordinal: int | None = Field(default=None, ge=1, description="插入位置序号；缺省追加末尾")
 
 
 class ChapterUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     status: Literal["draft", "finalized"] | None = None
-    #: v1029：重命名弹窗同时给出卷名（默认不变）；变更时重命名该章所属的卷
+    #: 重命名弹窗同时给出卷名（默认不变）；变更时重命名该章所属的卷
     volume_title: str | None = Field(default=None, max_length=200)
 
 
@@ -201,7 +201,7 @@ class OutlineOut(BaseModel):
     filename: str
     content: str
     word_count: int = 0
-    #: v1029：只读差异报告（大纲不再回填 sort_order）；read_only=True 标记
+    #: 只读差异报告（大纲不再回填 sort_order）；read_only=True 标记
     order_synced: bool = False
 
 

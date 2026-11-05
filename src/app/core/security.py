@@ -8,13 +8,13 @@
 
     DB 的 `llm_providers.api_key_env` 仅存环境变量名引用。
 
-    ★v1029：
+    
     - 密钥改存系统级环境变量（见 `core/system_env.py`，用户作用域），`.env` 仅作历史密钥的兼容回落；
     - 密钥环境变量名**没有名称要求限制，可以任意命名**。原「必须以 `_API_KEY`/`_KEY`/`_TOKEN`
       结尾」的白名单已取消；改为只要求是合法的环境变量名，并**拒绝应用自身的配置键**
       （`Settings` 字段名），避免把密钥写坏配置。
 
-    ★测试隔离：`DATA_ROOT` 被显式覆盖（非默认值）时，`.env` 读写重定向到
+    测试隔离：`DATA_ROOT` 被显式覆盖（非默认值）时，`.env` 读写重定向到
     `{DATA_ROOT}/.env`（首次读取时从项目根 `.env` 播种一份），防止测试污染真实 `.env`。
 """
 
@@ -27,10 +27,10 @@ from pathlib import Path
 from app.core.config import PROJECT_ROOT, get_settings
 from app.core.system_env import system_env_get
 
-#: v1029：合法的环境变量名（任意命名，只要 shell 可接受）
+#: 合法的环境变量名（任意命名，只要 shell 可接受）
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-#: 应用自身的配置键：由 `Settings` 字段名派生（★避免与常量清单漂移）
+#: 应用自身的配置键：由 `Settings` 字段名派生（避免与常量清单漂移）
 _RESERVED_CONFIG_KEYS: frozenset[str] = frozenset()
 
 
@@ -67,7 +67,7 @@ def env_file_path() -> Path:
 
 
 def is_valid_secret_key_name(env_name: str) -> bool:
-    """v1029：密钥环境变量名是否可用。
+    """密钥环境变量名是否可用。
 
     规则（宽松，满足「没有名称要求限制，可以任意命名」）：
     ① 是合法的环境变量名（字母/下划线开头，仅含字母数字下划线）；
@@ -81,7 +81,7 @@ def is_valid_secret_key_name(env_name: str) -> bool:
 
 
 def is_whitelisted_key(env_name: str) -> bool:
-    """兼容别名（★v1029 语义已变：不再要求 `_API_KEY`/`_KEY`/`_TOKEN` 后缀）。"""
+    """兼容别名。"""
     return is_valid_secret_key_name(env_name)
 
 
@@ -97,9 +97,9 @@ def mask(key: str | None) -> str:
 def get_api_key(env_name: str) -> tuple[str | None, bool]:
     """读取密钥。返回 `(value, missing)`。
 
-    v1029：密钥存在**系统级环境变量**，查找顺序为
+    密钥存在**系统级环境变量**，查找顺序为
     ① 当前进程环境 → ② 系统级持久化存储（注册表 / `~/.ai-writer-pro/env.json`）
-    → ③ 项目 `.env`（★仅作历史密钥的兼容回落，新密钥不再写这里）。
+    → ③ 项目 `.env`（仅作历史密钥的兼容回落，新密钥不再写这里）。
     """
     value = os.getenv(env_name)
     if value:
@@ -143,7 +143,7 @@ def _unquote(value: str) -> str:
 def configured_provider_keys() -> dict[str, bool]:
     """启动时探测各 Provider 密钥是否已配置（供前端「未配置密钥」警示）。
 
-    ★v1031 续：`.env` 已移除，密钥在系统级环境变量（`core/system_env.py`），
+    `.env` 已移除，密钥在系统级环境变量（`core/system_env.py`），
     这里只查进程环境（启动时系统级存储的值会在首次 `get_api_key` 时回填）。
     """
     names = [

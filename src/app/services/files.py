@@ -86,7 +86,7 @@ def next_volume_sort(volumes: list[dict[str, Any]]) -> int:
 # ---------------------------------------------------------------------------
 
 #: 章节 frontmatter 字段（手册「五、文件存储」）。
-#: ★必须列全：`read_chapter` 按此白名单过滤，漏列的字段会在「读→改→写」时被丢弃。
+#: 必须列全：`read_chapter` 按此白名单过滤，漏列的字段会在「读→改→写」时被丢弃。
 CHAPTER_META_KEYS = (
     "title",
     "sort_order",
@@ -103,7 +103,7 @@ CHAPTER_META_KEYS = (
 def read_chapter(project_id: str, vol_id: str, chapter_id: str) -> tuple[dict[str, Any], str]:
     """返回 `(meta, content)`。文件不存在抛 FileNotFoundError。
 
-    ★返回**完整** frontmatter（不按白名单过滤），保证「读 → 改 → 写」不丢字段。
+    返回**完整** frontmatter（不按白名单过滤），保证「读 → 改 → 写」不丢字段。
     需要定型 DTO 时用 `read_chapter_meta()`。
     """
     path: Path = chapter_file(project_id, vol_id, chapter_id)

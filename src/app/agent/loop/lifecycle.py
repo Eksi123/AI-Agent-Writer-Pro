@@ -114,7 +114,7 @@ async def finalize(
                 sess.updated_at = utcnow()
 
     if not paused:
-        # ★v1101：释放本 run 持有的「AI 编辑锁」并通知前端解锁（暂停态不释放——run 还可能续写）
+        # 释放本 run 持有的「AI 编辑锁」并通知前端解锁（暂停态不释放——run 还可能续写）
         try:
             from app.services.content_lock import content_locks
 

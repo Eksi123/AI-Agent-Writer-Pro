@@ -2,15 +2,15 @@
 /**
  * Tiptap 正文编辑器：Markdown 快捷输入 + 字数统计 + 自动保存 + 选区加入 AI 对话。
  *
- * ★乐观锁：保存携带 base_version，409 时向上抛 conflict 由 ConflictBanner 处理。
+ * 乐观锁：保存携带 base_version，409 时向上抛 conflict 由 ConflictBanner 处理。
  * 自动保存不产生修订快照（autosave=true，防版本爆炸）。
  *
- * ★v1101 精简：写小说不需要富文本排版——移除 B/I/H1/H2/列表 格式组与
+ * 精简：写小说不需要富文本排版——移除 B/I/H1/H2/列表 格式组与
  *   「AI 改写/扩写/缩写/润色」四按钮（及 diff 对话框）。
  *   保留选区悬浮「AI 润色」：把选中文本作为上下文块加入模型对话，
  *   具体怎么改由用户在对话里描述。
  *
- * ★v1101 AI 编辑锁：AI 修改本章期间编辑器只读，保存（手动/自动）被 store 拒绝，
+ * AI 编辑锁：AI 修改本章期间编辑器只读，保存（手动/自动）被 store 拒绝，
  *   工具栏旁由 WorkspaceView 展示灰色提示「AI编辑中，请稍后再试……」。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -19,16 +19,16 @@ import type { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import CharacterCount from '@tiptap/extension-character-count'
-import { ElMessage } from 'element-plus'
 import { useEditorStore } from '@/stores/editor'
 import { useSettingsStore } from '@/stores/settings'
+import { editorJsonToMarkdown, markdownToHtml } from '@/utils/prose'
 import { t } from '@/i18n'
 
 const props = defineProps<{ chapterId: string }>()
 const emit = defineEmits<{
   (e: 'autosaved'): void
   (e: 'conflict'): void
-  /** v1031 / v1030续(6)：选区悬浮[AI润色] → 选中文本作为上下文块加入模型对话 */
+  /** / 选区悬浮[AI润色] → 选中文本作为上下文块加入模型对话 */
   (e: 'polish-selection', payload: {
     label: string
     text: string
@@ -85,7 +85,9 @@ function flushUndoPoint(previousHtml?: string): void {
 }
 
 const editor = useEditor({
-  content: editorStore.draft,
+  // draft 存 Markdown（与服务端一致）；Tiptap 只吃 HTML，载入前先渲染，
+  // 保证编辑模式与阅读模式（markdown-it）显示一致（段落/标题/列表不再塌成一段）
+  content: markdownToHtml(editorStore.draft),
   extensions: [
     StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
     Placeholder.configure({ placeholder: () => t('reader.emptyChapter') }),
@@ -95,7 +97,8 @@ const editor = useEditor({
   onUpdate: ({ editor: ed }) => {
     // 本次更新前的正文（editorStore.draft 此刻还没被覆盖）
     const previous = editorStore.draft
-    editorStore.draft = ed.getHTML()
+    // 回写 Markdown（而非 HTML），保存/冲突 diff/字数统计口径统一
+    editorStore.draft = editorJsonToMarkdown(ed.getJSON() as never)
     recordUndoPoint(previous)
     editorStore.markDirty()
     scheduleAutosave()
@@ -157,7 +160,7 @@ onBeforeUnmount(() => {
 /**
  * 点击悬浮[AI润色]：把选中文本（含所在行范围标签）作为上下文块加入模型对话，
  * 与「添加文件」同形制——后续提问即限定 AI 只润色这些行的内容。
- * v1030续(6)：附带章节 id + 前后文，让大模型知道这段文本在文章中的所在范围再修改。
+ * 附带章节 id + 前后文，让大模型知道这段文本在文章中的所在范围再修改。
  */
 function onPolishClick(): void {
   const ed = editor.value
@@ -201,7 +204,7 @@ function selectionContext(): { before: string; after: string } {
   return { before, after }
 }
 
-// ★v1101：AI 编辑锁 → 编辑器只读（用户编辑过的内容也保存不出去，store 层同样拒绝）
+// AI 编辑锁 → 编辑器只读（用户编辑过的内容也保存不出去，store 层同样拒绝）
 watch(
   () => editorStore.isChapterLocked(props.chapterId),
   (locked) => {
@@ -210,20 +213,38 @@ watch(
   },
 )
 
-// 切换章节时把服务端内容灌入编辑器
+// 切换章节 / 服务端内容更新时把 Markdown 草稿灌入编辑器
+// 依赖 [chapterId, draft]——旧版依赖 baseVersion，两章版本号相同时
+// watch 不再触发，编辑器残留上一章内容（「章节与正文不匹配」的根因）。
+// 修正：draft 变化分两种来源——
+//   · 编辑器自身输入（onUpdate 回写 draft）：内容已同步，**不得**清回退栈，
+//     否则 800ms 防抖里的编辑点每次输入都被丢弃（「没有可回退的编辑」的根因）；
+//   · 外部换章 / 冲突载入 / AI 热重载：编辑器内容与 draft 不一致 → 同步内容并作废回退点。
 watch(
-  () => [props.chapterId, editorStore.baseVersion] as const,
-  () => {
+  () => [props.chapterId, editorStore.draft] as const,
+  ([newChapter], [oldChapter]) => {
     const ed = editor.value
     if (!ed) return
-    if (ed.getHTML() !== editorStore.draft) {
-      ed.commands.setContent(editorStore.draft, false)
+    const currentMd = editorJsonToMarkdown(ed.getJSON() as never)
+    const external = currentMd !== editorStore.draft
+
+    if (newChapter !== oldChapter) {
+      // 换章：同步内容 + 回退栈作废（store.openChapter 已清栈，这里清未压栈的编辑点）
+      if (external) ed.commands.setContent(markdownToHtml(editorStore.draft), false)
+      ed.setEditable(!editorStore.isChapterLocked(props.chapterId))
+      savedRange.value = null
+      selectedText.value = ''
+      polishBtn.value.visible = false
+      clearUndoTimer()
+      pendingSnapshot = null
+      return
     }
-    ed.setEditable(!editorStore.isChapterLocked(props.chapterId))
-    savedRange.value = null
-    selectedText.value = ''
-    polishBtn.value.visible = false
-    // 换章/重载后回退栈与未压入的编辑点都作废（回退只针对当前章节）
+
+    // 同章内：编辑器自身输入引起的 draft 变化 → 什么都不做（保留回退防抖）
+    if (!external) return
+
+    // 同章内外部重载：同步内容 + 作废未压栈编辑点
+    ed.commands.setContent(markdownToHtml(editorStore.draft), false)
     clearUndoTimer()
     pendingSnapshot = null
   },
@@ -255,7 +276,7 @@ function scheduleAutosave(): void {
 }
 
 async function doAutosave(): Promise<void> {
-  // ★v1101：AI 编辑中不自动保存（store.save 内部同样拒绝，双保险）
+  // AI 编辑中不自动保存（store.save 内部同样拒绝，双保险）
   if (!editorStore.dirty || editorStore.saving) return
   if (editorStore.isChapterLocked(props.chapterId)) return
   const okSaved = await editorStore.save(true) // autosave=true：不产生快照
@@ -266,14 +287,14 @@ async function doAutosave(): Promise<void> {
 /** 手动保存（Ctrl+S）：产生修订快照 */
 async function saveNow(): Promise<void> {
   clearTimer()
-  // ★v1101：AI 编辑中手动保存同样被拒（提示由工具栏灰色文案承载）
+  // AI 编辑中手动保存同样被拒（提示由工具栏灰色文案承载）
   if (editorStore.isChapterLocked(props.chapterId)) return
   const okSaved = await editorStore.save(false)
   if (!okSaved && editorStore.hasConflict) emit('conflict')
   else if (okSaved) emit('autosaved')
 }
 
-/** v1030：工具栏[保存] icon → editor store 保存请求 → 立即保存 */
+/** 工具栏[保存] icon → editor store 保存请求 → 立即保存 */
 watch(
   () => editorStore.saveRequestTick,
   () => void saveNow(),
@@ -292,11 +313,11 @@ watch(
     flushUndoPoint()
     const snapshot = editorStore.popUndoSnapshot()
     if (snapshot === null) return
-    ed.commands.setContent(snapshot, false)
+    ed.commands.setContent(markdownToHtml(snapshot), false)
     editorStore.draft = snapshot
     editorStore.markDirty()
     scheduleAutosave()
-    ElMessage.success(t('editor.undoDone'))
+    // 回退不再弹 toast（工具栏状态即可感知）
   },
 )
 

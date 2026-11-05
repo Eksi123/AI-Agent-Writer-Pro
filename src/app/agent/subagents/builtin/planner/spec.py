@@ -4,7 +4,7 @@
 文件名: spec.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: Planner 子代理出厂定义（架构优化 v1102）。
+说明: Planner 子代理出厂定义。
 
     职责：题材定位、三级大纲、分卷节奏、伏笔布局。
     `system_prompt` 由 builtin/__init__.py 从同目录 `prompt.md` 读入，此处不内联。

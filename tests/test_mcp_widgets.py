@@ -169,7 +169,7 @@ class TestWeatherService:
         assert data["days"][1]["temp_max"] == 20
 
     async def test_current_weather_includes_aqi(self, fake_http):
-        """v1028：天气数据带空气质量；★v1101：取 european_aqi（中国 AQI 口径）。"""
+        """天气数据带空气质量；取 european_aqi（中国 AQI 口径）。"""
         fake_http.registry["air-quality-api"] = {
             "current": {"european_aqi": 42, "pm2_5": 12.5, "pm10": 20.0, "time": "t"}
         }
@@ -181,7 +181,7 @@ class TestWeatherService:
         assert data["aqi_level"] == "优"
 
     async def test_aqi_failure_does_not_break_weather(self, fake_http):
-        """v1028：空气质量接口异常时天气主数据照常返回（aqi 为空）。"""
+        """空气质量接口异常时天气主数据照常返回（aqi 为空）。"""
 
         fake_http.registry["air-quality-api"] = httpx.ConnectError("AQI 不可达")
         fake_http.registry["api.open-meteo.com"] = {
@@ -207,7 +207,7 @@ class TestWeatherService:
         assert weather.describe_weathercode(12345)[0].startswith("代码")
 
     def test_wind_level_scale(self):
-        """v1029：组件风速以蒲福风力「级」为单位。"""
+        """组件风速以蒲福风力「级」为单位。"""
         assert weather.wind_level(None) is None
         assert weather.wind_level(0.5) == 0
         assert weather.wind_level(8.2) == 2
@@ -215,7 +215,7 @@ class TestWeatherService:
         assert weather.wind_level(130) == 12
 
     async def test_current_weather_includes_wind_level(self, fake_http):
-        """v1029：天气数据带风力等级字段。"""
+        """天气数据带风力等级字段。"""
         fake_http.registry["air-quality-api"] = {"current": {"european_aqi": 30, "time": "t"}}
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 20, "weather_code": 0, "wind_speed_10m": 8.2, "time": "t"}
@@ -224,7 +224,7 @@ class TestWeatherService:
         assert data["wind_level"] == 2
 
     async def test_reverse_geocode_builds_address(self, fake_http):
-        """v1029：反向地理编码给出「具体地址」（跳过国家、去掉与城市重复的片段）。"""
+        """反向地理编码给出「具体地址」（跳过国家、去掉与城市重复的片段）。"""
         fake_http.registry["bigdatacloud"] = {
             "city": "杭州市",
             "locality": "西湖区",
@@ -245,10 +245,10 @@ class TestWeatherService:
         assert "中国" not in result["address"]
 
     async def test_client_follows_redirects(self):
-        """★回归：BigDataCloud 已改为 307 跳转到 api-bdc.io。
+        """回归：BigDataCloud 已改为 307 跳转到 api-bdc.io。
 
         httpx 默认**不**跟随重定向，若 `_client()` 丢了 `follow_redirects=True`，
-        `raise_for_status()` 会因 3xx 抛错 → 「具体地址」永远为空（v1029 需求 1.2 静默失效）。
+        `raise_for_status()` 会因 3xx 抛错 → 「具体地址」永远为空。
         """
         client = weather._client()
         try:
@@ -257,7 +257,7 @@ class TestWeatherService:
             await client.aclose()
 
     async def test_current_weather_by_city_has_address(self, fake_http):
-        """v1029：城市名路径也要有「具体地址」（反向地理编码 geocode 出的坐标）。"""
+        """城市名路径也要有「具体地址」（反向地理编码 geocode 出的坐标）。"""
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "杭州", "admin1": "浙江省", "latitude": 30.25, "longitude": 120.17}]
         }
@@ -492,7 +492,7 @@ class TestWidgetsApi:
         assert data["city"] == "定位城"
 
     async def test_weather_by_coords_carries_address(self, client, fake_http):
-        """v1029：组件天气数据带反向地理编码得到的具体地址。"""
+        """组件天气数据带反向地理编码得到的具体地址。"""
         fake_http.registry["bigdatacloud"] = {"city": "定位城", "principalSubdivision": "某省", "locality": "某区"}
         fake_http.registry["api.open-meteo.com"] = {
             "current": {"temperature_2m": 18, "weather_code": 0, "wind_speed_10m": 15, "time": "t"}
@@ -504,7 +504,7 @@ class TestWidgetsApi:
         assert data["wind_level"] == 3
 
     async def test_weather_falls_back_to_settings_city(self, client, fake_http):
-        """无坐标无城市 → 回落通用设置的回落城市；★v1101：source=fallback_city。"""
+        """无坐标无城市 → 回落通用设置的回落城市；source=fallback_city。"""
         await client.put("/api/v1/settings", json={"city": "回落市"})
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "回落市", "latitude": 1, "longitude": 2, "timezone": "auto"}]
@@ -517,7 +517,7 @@ class TestWidgetsApi:
         assert data["source"] == "fallback_city"
 
     async def test_weather_source_city_and_located(self, client, fake_http):
-        """★v1101：显式 city → source=city；带坐标 → source=located。"""
+        """显式 city → source=city；带坐标 → source=located。"""
         fake_http.registry["geocoding-api"] = {
             "results": [{"name": "杭州", "latitude": 30.25, "longitude": 120.17, "timezone": "auto"}]
         }

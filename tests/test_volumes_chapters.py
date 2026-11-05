@@ -6,7 +6,7 @@
 时间: 2026-10-27
 说明: 卷/章 CRUD 与顺序契约（手册「一」铁律 10 / 「三、(3)【卷章】」）。
 
-    ★核心断言：
+    核心断言：
     - 新建一律追加到末尾（sort_order = max+1）；
     - **无任何重排接口**（reorder / move 路由不存在，返回 404/405）；
     - 章不可跨卷移动；
@@ -45,7 +45,7 @@ async def test_create_volume_appends_to_end(client, novel_id):
 
 @pytest.mark.asyncio
 async def test_create_volume_rejects_invalid_name(client, novel_id):
-    """v1029：卷名与书名同规则 —— 只拒绝空名 / 全阿拉伯数字 / 含特殊字符。"""
+    """卷名与书名同规则 —— 只拒绝空名 / 全阿拉伯数字 / 含特殊字符。"""
     for bad in ("", "   ", "12", "#星海", "星海$拾荒"):
         resp = await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": bad})
         assert resp.status_code == 422, f"{bad!r} -> {resp.status_code}"
@@ -128,7 +128,7 @@ async def test_create_chapter_appends_to_volume_end(client, novel_id, volume_id)
 
 @pytest.mark.asyncio
 async def test_create_chapter_rejects_invalid_name(client, volume_id):
-    """v1029：章名与书名同规则 —— 只拒绝空名 / 全阿拉伯数字 / 含特殊字符。"""
+    """章名与书名同规则 —— 只拒绝空名 / 全阿拉伯数字 / 含特殊字符。"""
     for bad in ("", "   ", "12", "#星海", "星海%拾荒"):
         resp = await client.post(f"/api/v1/volumes/{volume_id}/chapters", json={"title": bad})
         assert resp.status_code == 422, f"{bad!r} -> {resp.status_code}"
@@ -175,7 +175,7 @@ async def test_delete_chapter(client, novel_id, volume_id, chapter_id):
     assert resp.json()["data"]["deleted"] is True
     assert not (ws / "chapters" / f"v{volume_id}" / f"c{chapter_id}.md").exists()
 
-    # ★v1029：该卷下所有章节删完 → 卷一并删除
+    # 该卷下所有章节删完 → 卷一并删除
     assert resp.json()["data"]["volume_deleted"] is True
     vols = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
     assert vols == []
@@ -200,7 +200,7 @@ async def test_delete_chapter_keeps_volume_with_siblings(client, novel_id, volum
 
 @pytest.mark.asyncio
 async def test_delete_last_chapter_removes_volume_and_renumbers(client, novel_id, volume_id, chapter_id):
-    """v1029：删空某卷 → 卷消失，其余卷重新连续编号（1..N）。"""
+    """删空某卷 → 卷消失，其余卷重新连续编号（1..N）。"""
     await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": "星港夜航"})
     vols = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"]
     second = next(v for v in vols if v["title"] == "星港夜航")
@@ -217,7 +217,7 @@ async def test_delete_last_chapter_removes_volume_and_renumbers(client, novel_id
 
 @pytest.mark.asyncio
 async def test_create_volume_with_first_chapter_title(client, novel_id):
-    """v1030续：插入卷时带上第一章章节名 → 卷与它的第一章一并创建（★不允许空卷）。"""
+    """插入卷时带上第一章章节名 → 卷与它的第一章一并创建（不允许空卷）。"""
     resp = await client.post(
         f"/api/v1/novels/{novel_id}/volumes",
         json={"title": "风起", "ordinal": 1, "first_chapter_title": "第一章 拾荒"},
@@ -235,7 +235,7 @@ async def test_create_volume_with_first_chapter_title(client, novel_id):
 
 @pytest.mark.asyncio
 async def test_create_volume_with_ordinal_inserts_and_shifts(client, novel_id, volume_id):
-    """v1029：带 ordinal 建卷 = 往前插入，其后各卷顺延 +1。"""
+    """带 ordinal 建卷 = 往前插入，其后各卷顺延 +1。"""
     await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": "第二站"})
     await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": "第三站"})
 
@@ -252,7 +252,7 @@ async def test_create_volume_with_ordinal_inserts_and_shifts(client, novel_id, v
 
 @pytest.mark.asyncio
 async def test_create_chapter_with_ordinal_inserts_and_shifts(client, novel_id, volume_id, chapter_id):
-    """v1029：带 ordinal 建章 = 往前插入章节，其后各章顺延 +1。"""
+    """带 ordinal 建章 = 往前插入章节，其后各章顺延 +1。"""
     await client.post(f"/api/v1/volumes/{volume_id}/chapters", json={"title": "第二章 钟声"})
 
     resp = await client.post(
@@ -270,7 +270,7 @@ async def test_create_chapter_with_ordinal_inserts_and_shifts(client, novel_id, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [0, -1, 99])
 async def test_create_with_bad_ordinal_rejected(client, novel_id, volume_id, bad):
-    """v1029：序号必须是正整数且不超出 1..N+1。"""
+    """序号必须是正整数且不超出 1..N+1。"""
     resp = await client.post(
         f"/api/v1/novels/{novel_id}/volumes", json={"title": "非法序号卷", "ordinal": bad}
     )
@@ -284,7 +284,7 @@ async def test_create_with_bad_ordinal_rejected(client, novel_id, volume_id, bad
 
 @pytest.mark.asyncio
 async def test_rename_chapter_with_volume_title(client, novel_id, volume_id, chapter_id):
-    """v1029：重命名弹窗同时改章名与所属卷名（章仍留在原卷）。"""
+    """重命名弹窗同时改章名与所属卷名（章仍留在原卷）。"""
     resp = await client.patch(
         f"/api/v1/chapters/{chapter_id}",
         json={"title": "拾荒少年的黎明", "volume_title": "荒原初醒（修订）"},
@@ -299,7 +299,7 @@ async def test_rename_chapter_with_volume_title(client, novel_id, volume_id, cha
 
 @pytest.mark.asyncio
 async def test_rename_chapter_keeps_volume_when_unchanged(client, novel_id, volume_id, chapter_id):
-    """v1029：卷名默认填当前卷名（不修改）→ 卷名保持原样。"""
+    """卷名默认填当前卷名（不修改）→ 卷名保持原样。"""
     before = (await client.get(f"/api/v1/novels/{novel_id}/volumes")).json()["data"][0]
 
     resp = await client.patch(
@@ -320,7 +320,7 @@ async def test_missing_chapter_404(client):
 
 
 # ---------------------------------------------------------------------------
-# ★铁律 10：无手工重排 / 无跨卷移动
+# 铁律 10：无手工重排 / 无跨卷移动
 # ---------------------------------------------------------------------------
 
 
@@ -339,7 +339,7 @@ async def test_missing_chapter_404(client):
     ],
 )
 async def test_no_reorder_or_move_routes(client, novel_id, volume_id, chapter_id, method, path):
-    """★断言路由不存在：卷章顺序只能由大纲派生，不提供任何手工重排入口。"""
+    """断言路由不存在：卷章顺序只能由大纲派生，不提供任何手工重排入口。"""
     url = path.format(novel_id=novel_id, volume_id=volume_id, chapter_id=chapter_id)
     resp = await getattr(client, method)(url, json={"ids": [chapter_id], "sort_order": 1})
     assert resp.status_code in (404, 405), f"{method.upper()} {url} 不应存在，实际 {resp.status_code}"

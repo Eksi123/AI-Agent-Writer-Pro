@@ -4,7 +4,7 @@
 文件名: __init__.py
 作者: xionggaoqing
 时间: 2026-11-02
-说明: Agent 运行安全 Harness（架构优化 v1102）。
+说明: Agent 运行安全 Harness。
 
     收纳所有**安全类**措施（Agent 运行必备流程与 workflows 写作流程不在此列）：
     - `sandbox/`：CompositeBackend 虚拟路径路由 + 8 条有序 permissions + 虚拟路径解析；

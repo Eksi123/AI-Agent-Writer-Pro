@@ -134,7 +134,7 @@ class TestPinnedChapters:
         assert skill_names == set()
 
     async def test_builtin_web_search_resolves_as_session_skill(self, client, novel_id):
-        """v1102：`builtin:web_search` 为会话级内置写作技能，解析出 `web_search`。"""
+        """`builtin:web_search` 为会话级内置写作技能，解析出 `web_search`。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
         await client.patch(
             f"/api/v1/agent/sessions/{sid}/context",
@@ -149,7 +149,7 @@ class TestProjectUsage:
     """项目级用量统计"""
 
     async def test_usage_counts_runs_not_messages(self, client, novel_id):
-        """★v1029：token 按 `agent_runs` 汇总，子代理（独立上下文，不进消息树）的用量也算进来。"""
+        """token 按 `agent_runs` 汇总，子代理（独立上下文，不进消息树）的用量也算进来。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
 
         async with session_scope() as db:
@@ -262,7 +262,7 @@ class TestSessionUsage:
             assert (await session_usage(db, sid))["tokens_in"] == 0
 
     async def test_returns_most_recent_run_not_sum(self, client, novel_id):
-        """★取**最后一次** run 的 tokens_in，而非历史累加（累加会严重高估占用）。"""
+        """取**最后一次** run 的 tokens_in，而非历史累加（累加会严重高估占用）。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
 
         await self._add_run(sid, novel_id, "run-sess-new", tokens_in=5000, started_at="2026-10-29T12:00:00.000Z")

@@ -4,7 +4,7 @@
 文件名: content_lock.py
 作者: xionggaoqing
 时间: 2026-11-01
-说明: 章节正文「AI 编辑锁」（v1101）。
+说明: 章节正文「AI 编辑锁」。
 
     AI（流程生成 / Agent 写正文）修改某章期间，用户不得同时修改该章：
     - `PUT /chapters/{id}/content` 在锁定期内一律 409 / 40903（手动与自动保存同拒）；
@@ -81,6 +81,13 @@ class ContentLockRegistry:
 
     def lock_of(self, chapter_id: str) -> ContentLock | None:
         return self._locks.get(chapter_id)
+
+    def keys_for_project(self, project_id: str) -> list[str]:
+        """某项目下全部被锁资源键（章 id / `outline:{pid}`），供删除类操作拦截。"""
+        return [cid for cid, lk in self._locks.items() if lk.project_id == project_id]
+
+    def is_project_busy(self, project_id: str) -> bool:
+        return bool(self.keys_for_project(project_id))
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [

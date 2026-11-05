@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * AI 设置页（v1028，原「AI 工具」）：大模型 / 写作子代理 / 写作技能 三个入口。
+ * AI 设置页：大模型 / 写作子代理 / 写作技能 三个入口。
  *
- * v1028 变更：
+ * 变更：
  * - 页面名「AI 工具」→「AI 设置」；删除右上角「重新配置」与「当前默认模型」展示；
  * - 删除 MCP 服务页签（内置天气 MCP 仍由后端自动装配，无需 UI 管理）；
  * - 三个入口之间留出间隔，整体美化。
@@ -35,7 +35,7 @@ function back(): void {
     </div>
 
     <div class="body scroll-y">
-      <!-- v1028：三个入口隔开一点（卡片式分组） -->
+      <!-- 三个入口隔开一点（卡片式分组） -->
       <el-tabs v-model="activeTab" class="settings-tabs">
         <el-tab-pane :label="t('aiTools.tabLlm')" name="llm">
           <section class="pane-card">
@@ -95,7 +95,7 @@ function back(): void {
   max-width: 900px;
 }
 
-/* v1028：三个入口隔开一点 */
+/* 三个入口隔开一点 */
 .settings-tabs :deep(.el-tabs__item) {
   padding: 0 22px;
   font-size: 14px;

@@ -1,5 +1,5 @@
 /**
- * Agent 运行报错的中文提示（v1030续 需求「Agent运行报错」）。
+ * Agent 运行报错的中文提示。
  *
  * 大模型或 Agent 在运行中出错时（连接不通、API 失效、额度不足等），
  * 需要给用户**中文提示 + 应该怎么做**，界面以灰色（异常不可用）呈现。
@@ -71,7 +71,7 @@ const CODE_RULES: Partial<Record<number, AgentErrorInfo>> = {
   },
   [ErrorCode.DEPENDENCY_UNAVAILABLE]: {
     title: '依赖服务不可用',
-    advice: '请确认相关外部服务已启动/已安装（如 MCP 服务、calibre），然后重试。',
+    advice: '请确认相关外部服务已启动/已安装（如 MCP 服务、reportlab 依赖），然后重试。',
   },
   [ErrorCode.STREAM_BUFFER_LOST]: {
     title: '实时消息流已断开，回复可能不完整',
@@ -112,7 +112,7 @@ const CODE_RULES: Partial<Record<number, AgentErrorInfo>> = {
  * @param code 后端错误码（可为 null）
  * @param message 后端原始错误文案（可为空）
  *
- * ★v1031：会话里只给**简短中文**提示——原始文案是英文（或未识别的外文）时不再拼接展示，
+ * 会话里只给**简短中文**提示——原始文案是英文（或未识别的外文）时不再拼接展示，
  * 避免把大模型 / 三方库的英文异常直接抛给用户。
  */
 export function describeAgentError(code?: number | null, message?: string | null): AgentErrorInfo {
@@ -138,7 +138,7 @@ function hasChinese(text: string): boolean {
 
 /**
  * 保留后端原始文案作为补充细节，便于排查。
- * ★v1031：只在原文是**中文且足够短**时拼接；英文原文丢弃（提示仍为纯中文）。
+ * 只在原文是**中文且足够短**时拼接；英文原文丢弃（提示仍为纯中文）。
  */
 function withDetail(info: AgentErrorInfo, raw: string): AgentErrorInfo {
   if (!raw || info.title.includes(raw)) return info

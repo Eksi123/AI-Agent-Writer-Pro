@@ -5,13 +5,13 @@
 作者: xionggaoqing
 时间: 2026-10-27
 说明: `FileChangeNotifyMiddleware`：`awrap_tool_call`（工具成功后）发 SSE `file.changed`
-    并触发派生索引同步（★v1029：大纲是参考资料，不再回填卷章 sort_order）。
+    并触发派生索引同步。
 
     虚拟路径形如 `/projects/{pid}/chapters/v{vol}/c{ch}.md`，前端据此热更新正文/目录树。
     路径分类 `classify_change` 在 `harness/sandbox/virtual_path.py`（沙箱域语义，
     与 harness/lock 的编辑锁共用）。
 
-    ★v1102：`ContentLockMiddleware` 已迁至 `harness/lock/content_lock.py`（安全措施归 harness）。
+    `ContentLockMiddleware` 已迁至 `harness/lock/content_lock.py`（安全措施归 harness）。
 """
 
 from __future__ import annotations
@@ -82,10 +82,14 @@ class FileChangeNotifyMiddleware(AgentMiddleware):
 
             async with session_scope() as db:
                 if change.get("is_outline"):
-                    # ★v1029：大纲是参考资料，不再回填卷章 sort_order；只重建检索索引
+                    # 大纲是参考资料，不再回填卷章 sort_order；只重建检索索引
                     await search_service.reindex_project(db, project_id)
                     await novels_service.refresh_project_index(db, project_id)
                 elif change.get("chapter_id"):
+                  # Agent 直写章节文件可能绕过卷登记 → 自愈登记孤儿卷，目录即时可见
+                    from app.services import volumes as volumes_service
+
+                    volumes_service.register_orphan_volumes(project_id)
                     await novels_service.refresh_project_index(db, project_id)
                     await search_service.reindex_project(db, project_id)
                 else:

@@ -34,6 +34,7 @@ _DEFAULTS: dict[str, Any] = {
     "city": "北京",
     "widget_enabled_json": None,
     "pet_idle_minutes": 30,
+    "export_dir": None,
 }
 
 #: 对外暴露的字段（widget_enabled_json 暂不开放编辑，M6 再接）
@@ -47,6 +48,7 @@ _PUBLIC_FIELDS = (
     "autosave_interval_sec",
     "city",
     "pet_idle_minutes",
+    "export_dir",
 )
 
 
@@ -92,7 +94,7 @@ async def put_settings(body: SettingsIn, session: AsyncSession = Depends(get_ses
 
 @router.post("/settings/reset")
 async def reset_settings(session: AsyncSession = Depends(get_session)) -> dict:
-    """恢复默认设置（v1028：保存按钮旁的「恢复默认设置」）。"""
+    """恢复默认设置。"""
     row = await _get_or_create(session)
     changes: dict[str, Any] = {}
     for field in _PUBLIC_FIELDS:

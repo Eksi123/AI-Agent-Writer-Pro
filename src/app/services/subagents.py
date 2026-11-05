@@ -85,7 +85,7 @@ def _loads_list(raw: str | None) -> list[str]:
 async def seed_builtins(session: AsyncSession) -> int:
     """播种内置子代理（幂等：已存在的按 name 跳过，不覆盖用户改动）。
 
-    ★v1102 自愈清退：is_builtin 但名字已不在出厂目录的行（如旧 editor /
+    自愈清退：is_builtin 但名字已不在出厂目录的行（如旧 editor /
     continuity-checker / researcher）直接删除——正常路径由 alembic 迁移
     `a1v1102sub` 清退，这里兜住迁移未跑到的场景（如恢复旧库备份）。
     """
