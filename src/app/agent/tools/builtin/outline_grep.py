@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-模块: app.agent.tools.builtin.outline_recall
-文件名: outline_recall.py
+模块: app.agent.tools.builtin.outline_grep
+文件名: outline_grep.py
 作者: xionggaoqing
 时间: 2026-11-05
-说明: Agent 内置工具 `outline_recall`：按需摘录大纲（渐进式披露）。
+说明: Agent 内置工具 `outline_grep`：按需摘录大纲（渐进式披露）。
 
     按需获取原则：AI 不整篇 `read_file` 大纲，而是先精确摘录目标章小节；
     定位失败时回落 FTS 关键词检索，返回命中片段。摘录上限 1200 字，
@@ -28,8 +28,8 @@ from app.db.session import session_scope
 logger = get_logger(__name__)
 
 
-@tool("outline_recall", parse_docstring=True)
-async def outline_recall(
+@tool("outline_grep", parse_docstring=True)
+async def outline_grep(
     runtime: ToolRuntime,
     volume_title: str = "",
     chapter_title: str = "",
@@ -125,8 +125,8 @@ async def outline_recall(
                 ensure_ascii=False,
             )
     except Exception as exc:  # 兜底：任何异常都给明确错误，不静默空结果
-        logger.error("outline_recall_failed", project_id=project_id, error=str(exc))
+        logger.error("outline_grep_failed", project_id=project_id, error=str(exc))
         return json.dumps({"found": False, "error": f"大纲摘录失败：{exc}"}, ensure_ascii=False)
 
 
-__all__ = ["outline_recall"]
+__all__ = ["outline_grep"]

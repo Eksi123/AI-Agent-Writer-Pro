@@ -8,10 +8,12 @@
 
     覆盖：
     - 读取授权（read_grant 注册表 + 显式读取判定 + ReadScopeGuard 四档）；
-    - 大纲按需摘录（services.outline_recall 定位/回落 + outline_recall 工具）；
+    - 大纲按需摘录（services.outline_recall 定位/回落 + outline_grep 工具）；
     - 前情提要按需注入（recap 默认不注入 + outline_ctx 摘录注入）；
     - 添加文件指针化（attachments.rewrite_hidden_context / prune）；
-    - 对话历史瘦身（read_file 大结果截断）与压缩阈值（窗口 80%）；
+    - 对话历史瘦身（read_file 大结果截断）与压缩阈值（窗口 50%）；
+    - 浪费型循环熔断（WastefulLoopGuard 重复读/写检测 + steer 注入）；
+    - 工具消息配对自愈（PairingRepair 交换/丢失/重复错位修复）；
     - 提示词精简（铁律条数 / 梗概截断 / recaller 子代理）。
 """
 
@@ -258,7 +260,7 @@ class TestReadScopeGuardTiers:
         run_manager._cleanup("r1")
 
     async def test_tier4_reject_returns_tool_message(self, monkeypatch, session):
-        """未授权且用户拒绝 → 返回 ToolMessage 指引改用 outline_recall。"""
+        """未授权且用户拒绝 → 返回 ToolMessage 指引改用 outline_grep。"""
         from app.agent.loop.runner import run_manager
         from app.agent.harness.guard import read_scope as read_scope_mod
 
@@ -290,7 +292,7 @@ class TestReadScopeGuardTiers:
 
         assert isinstance(result, ToolMessage)
         assert "未允许读取" in result.content
-        assert "outline_recall" in result.content
+        assert "outline_grep" in result.content
         assert captured["payload"]["kind"] == read_scope_mod.INTERRUPT_KIND
         assert captured["payload"]["risk"] == "read_scope"
         assert set(captured["payload"]["decisions"]) == {"approve", "approve_session", "reject"}
@@ -474,27 +476,27 @@ class TestOutlineRecallService:
 
 
 class TestOutlineRecallTool:
-    """Agent 工具 `outline_recall`：入参 schema 不含 runtime，返回 JSON。"""
+    """Agent 工具 `outline_grep`：入参 schema 不含 runtime，返回 JSON。"""
 
     def test_schema_excludes_runtime(self):
-        from app.agent.tools.builtin.outline_recall import outline_recall
+        from app.agent.tools.builtin.outline_grep import outline_grep
 
-        assert "runtime" not in outline_recall.args
-        assert set(outline_recall.args) >= {"chapter_title", "query"}
+        assert "runtime" not in outline_grep.args
+        assert set(outline_grep.args) >= {"chapter_title", "query"}
 
     def test_registered_in_build_tools(self):
         from app.agent.tools.registry import build_tools
 
         names = {getattr(t, "name", "") for t in build_tools()}
-        assert "outline_recall" in names
+        assert "outline_grep" in names
         assert "web_search" in names
 
     async def test_tool_returns_brief(self, novel_id):
-        from app.agent.tools.builtin.outline_recall import outline_recall
+        from app.agent.tools.builtin.outline_grep import outline_grep
 
         _write_outline(novel_id, _OUTLINE)
         runtime = SimpleNamespace(context=SimpleNamespace(project_id=novel_id))
-        raw = await outline_recall.coroutine(
+        raw = await outline_grep.coroutine(
             runtime=runtime, volume_title="第一卷 荒原初醒", chapter_title="第一章 拾荒少年的清晨"
         )
         data = json.loads(raw)
@@ -502,28 +504,28 @@ class TestOutlineRecallTool:
         assert "星图碎片" in data["brief"]
 
     async def test_tool_search_fallback(self, novel_id):
-        from app.agent.tools.builtin.outline_recall import outline_recall
+        from app.agent.tools.builtin.outline_grep import outline_grep
 
         _write_outline(novel_id, _OUTLINE)
         runtime = SimpleNamespace(context=SimpleNamespace(project_id=novel_id))
         data = json.loads(
-            await outline_recall.coroutine(runtime=runtime, chapter_title="第九十九章 无此章")
+            await outline_grep.coroutine(runtime=runtime, chapter_title="第九十九章 无此章")
         )
         assert data["found"] is False
         assert "hint" in data
 
     async def test_tool_requires_some_argument(self, novel_id):
-        from app.agent.tools.builtin.outline_recall import outline_recall
+        from app.agent.tools.builtin.outline_grep import outline_grep
 
         runtime = SimpleNamespace(context=SimpleNamespace(project_id=novel_id))
-        data = json.loads(await outline_recall.coroutine(runtime=runtime))
+        data = json.loads(await outline_grep.coroutine(runtime=runtime))
         assert data["found"] is False
         assert "chapter_title" in data["hint"]
 
     async def test_tool_without_project_context(self):
-        from app.agent.tools.builtin.outline_recall import outline_recall
+        from app.agent.tools.builtin.outline_grep import outline_grep
 
-        data = json.loads(await outline_recall.coroutine(runtime=SimpleNamespace(context=None)))
+        data = json.loads(await outline_grep.coroutine(runtime=SimpleNamespace(context=None)))
         assert data["found"] is False
         assert "项目上下文" in data["error"]
 
@@ -639,7 +641,7 @@ class TestOutlineCtxInjection:
         text = await provider(SimpleNamespace(run_id="run-ctx"))
         assert "目标章大纲摘录" in text
         assert "星图碎片" in text
-        assert "outline_recall" in text
+        assert "outline_grep" in text
         run_manager._cleanup("run-ctx")
 
     async def test_no_injection_without_chapter_mention(self, session, novel_id, chapter_id):
@@ -991,8 +993,8 @@ class TestCompressionThreshold:
 class TestPromptSlimming:
     """主提示词精简 + 梗概截断 + recaller 子代理。"""
 
-    def test_iron_rules_are_six(self):
-        """铁律 10 条合并为 6 条，且硬约束一条不少。"""
+    def test_iron_rules_are_eight(self):
+        """铁律 8 条（含 2026-11-05 新增的截断续写/禁止重复全量读取），硬约束一条不少。"""
         import re
 
         from app.agent.loop.prompts import render
@@ -1008,10 +1010,13 @@ class TestPromptSlimming:
             extra_instructions="",
         )
         rules = re.findall(r"(?m)^\d+\.\s+\*\*", prompt)
-        assert len(rules) == 6, f"铁律应为 6 条，实际 {len(rules)}"
+        assert len(rules) == 8, f"铁律应为 8 条，实际 {len(rules)}"
         # 关键硬约束仍在
-        for required in ("备注", "outline_recall", "recaller", "任务没做完不要收尾", "不要新建/重命名章节文件"):
+        for required in ("备注", "outline_grep", "recaller", "任务没做完不要收尾", "不要新建/重命名章节文件"):
             assert required in prompt, f"缺少硬约束：{required}"
+        # 新增反浪费硬约束
+        for required in ("续写", "重复全量读取"):
+            assert required in prompt, f"缺少反浪费约束：{required}"
         # 旧的「先 read_file 大纲」指令已移除（改为按需摘录）
         assert "先 `read_file` 大纲" not in prompt
 
@@ -1026,7 +1031,7 @@ class TestPromptSlimming:
         assert "recaller" in builtin_subagent_names()
         spec = BUILTIN_SUBAGENTS["recaller"]
         assert spec["mode"] == "isolated"
-        assert set(spec["tools"]) == {"read_file", "grep", "glob", "outline_recall"}
+        assert set(spec["tools"]) == {"read_file", "grep", "glob", "outline_grep"}
         assert spec["system_prompt"]
         assert "摘要" in spec["system_prompt"]
 
@@ -1038,13 +1043,13 @@ class TestPromptSlimming:
             assert len(spec["description"]) <= 60, f"{name} 描述过长：{len(spec['description'])} 字"
 
     def test_extra_tool_alias_resolves(self):
-        """outline_recall 作为非文件工具下发给子代理。"""
+        """outline_grep 作为非文件工具下发给子代理。"""
         from app.agent.loop.builder import _resolve_selected_tools
 
-        resolved = _resolve_selected_tools(["read_file", "grep", "outline_recall"])
+        resolved = _resolve_selected_tools(["read_file", "grep", "outline_grep"])
         assert resolved["selected"] is True
         assert set(resolved["fs"]) == {"read_file", "grep"}
-        assert [getattr(t, "name", "") for t in resolved["extra"]] == ["outline_recall"]
+        assert [getattr(t, "name", "") for t in resolved["extra"]] == ["outline_grep"]
 
     def test_read_scope_guard_before_workspace_guard(self):
         """中间件顺序：读取授权守卫在 WorkspaceGuard 之前。"""
@@ -1058,3 +1063,243 @@ class TestPromptSlimming:
         )
         names = [getattr(m, "name", type(m).__name__) for m in stack]
         assert names.index("ReadScopeGuard") < names.index("WorkspaceGuard")
+
+    def test_pairing_and_wasteful_guard_order(self):
+        """中间件顺序：PairingRepair → WastefulLoopGuard → SteerInjection。"""
+        from app.agent.loop.builder import build_middleware_stack
+
+        stack = build_middleware_stack(
+            primary_model=ScriptedFakeChatModel(responses=[]),
+            alternate_models=[],
+            recap_provider=None,
+            outline_ctx_provider=None,
+        )
+        names = [getattr(m, "name", type(m).__name__) for m in stack]
+        assert names.index("PairingRepair") < names.index("WastefulLoopGuard")
+        assert names.index("WastefulLoopGuard") < names.index("SteerInjection")
+
+
+class _FakeSumHelper:
+    def __init__(self, tokens: int) -> None:
+        self._trigger_clauses = [{"tokens": tokens}]
+
+
+class _FakeSummarization:
+    def __init__(self, tokens: int) -> None:
+        self._lc_helper = _FakeSumHelper(tokens)
+
+
+class TestContextWindowSync:
+    """窗口中途改小 → 下一次模型调用前重算压缩阈值（剩余 <20% 触发）。"""
+
+    async def test_threshold_rewritten_after_window_shrinks(self):
+        from app.agent.loop.middleware.window_sync import ContextWindowSyncMiddleware
+
+        mw_sum = _FakeSummarization(80_000)  # 旧窗口 100K × 0.8
+        mw = ContextWindowSyncMiddleware(mw_sum, window_provider=self._provider(50_000))
+        runtime = SimpleNamespace(context=SimpleNamespace(model_ref="p:m"))
+        assert await mw.abefore_model({}, runtime) is None
+        assert mw_sum._lc_helper._trigger_clauses[0]["tokens"] == 40_000  # 50K × 0.8
+
+    async def test_noop_when_threshold_matches(self):
+        from app.agent.loop.middleware.window_sync import ContextWindowSyncMiddleware
+
+        mw_sum = _FakeSummarization(80_000)
+        calls: list[str] = []
+
+        async def provider(_ref: str) -> int | None:
+            calls.append(_ref)
+            return 100_000
+
+        mw = ContextWindowSyncMiddleware(mw_sum, window_provider=provider)
+        runtime = SimpleNamespace(context=SimpleNamespace(model_ref="p:m"))
+        await mw.abefore_model({}, runtime)
+        assert mw_sum._lc_helper._trigger_clauses[0]["tokens"] == 80_000
+        # TTL 内第二次调用不重复查库
+        await mw.abefore_model({}, runtime)
+        assert len(calls) == 1
+
+    async def test_no_model_ref_noop(self):
+        from app.agent.loop.middleware.window_sync import ContextWindowSyncMiddleware
+
+        mw_sum = _FakeSummarization(80_000)
+        mw = ContextWindowSyncMiddleware(mw_sum, window_provider=self._provider(50_000))
+        assert await mw.abefore_model({}, SimpleNamespace(context=None)) is None
+        assert mw_sum._lc_helper._trigger_clauses[0]["tokens"] == 80_000
+
+    async def test_provider_failure_keeps_old_threshold(self):
+        from app.agent.loop.middleware.window_sync import ContextWindowSyncMiddleware
+
+        mw_sum = _FakeSummarization(80_000)
+
+        async def failing(_ref: str) -> int | None:
+            raise RuntimeError("db down")
+
+        mw = ContextWindowSyncMiddleware(mw_sum, window_provider=failing)
+        runtime = SimpleNamespace(context=SimpleNamespace(model_ref="p:m"))
+        assert await mw.abefore_model({}, runtime) is None
+        assert mw_sum._lc_helper._trigger_clauses[0]["tokens"] == 80_000
+
+    @staticmethod
+    def _provider(window: int):
+        async def provider(_ref: str) -> int | None:
+            return window
+
+        return provider
+
+
+class TestUsageEventDualGauge:
+    """usage 事件双口径：单次调用（主/子代理标记）+ run 级累计。"""
+
+    async def test_run_totals_accumulate_with_subagent_flag(self):
+        from app.agent.loop.streaming import _handle_message_chunk
+
+        published: list[tuple[str, dict]] = []
+
+        class _Emitter:
+            async def publish(self, event: str, data: dict) -> None:
+                published.append((event, data))
+
+        totals = [0, 0]
+        msg1 = AIMessage(
+            content="a",
+            usage_metadata={"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+        )
+        msg2 = AIMessage(
+            content="b",
+            usage_metadata={"input_tokens": 50, "output_tokens": 5, "total_tokens": 55},
+        )
+
+        got1 = await _handle_message_chunk("r", "s", (), (msg1, {}), _Emitter(), totals)
+        got2 = await _handle_message_chunk("r", "s", ("sub", "tools"), (msg2, {}), _Emitter(), totals)
+
+        assert got1 == (100, 10) and got2 == (50, 5)
+        assert totals == [150, 15]
+        usages = [d for ev, d in published if ev == "usage"]
+        assert len(usages) == 2
+        # 主 Agent：无子代理标记，run 累计=本次
+        assert usages[0]["subagent"] is False
+        assert usages[0]["run_tokens_in"] == 100
+        # 子代理：标记为 True，run 累计含主+子
+        assert usages[1]["subagent"] is True
+        assert usages[1]["tokens_in"] == 50
+        assert usages[1]["run_tokens_in"] == 150
+
+
+class TestWastefulLoopGuard:
+    """浪费型循环熔断：重复读/写检测 + steer 纠正注入。"""
+
+    def _messages(self, calls: list[tuple[str, str]]) -> list[AIMessage]:
+        return [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": n, "args": {"file_path": p}, "id": f"id-{i}"} for i, (n, p) in enumerate(calls)],
+            )
+        ]
+
+    def test_detects_repeated_reads(self):
+        from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
+
+        mw = WastefulLoopGuardMiddleware()
+        msgs = self._messages([("read_file", "/a.md")] * 3)
+        kind, count = mw.count_repeats(msgs)
+        assert kind == "read" and count == 3
+
+    def test_detects_repeated_writes(self):
+        from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
+
+        mw = WastefulLoopGuardMiddleware()
+        msgs = self._messages([("write_file", "/o.md"), ("edit_file", "/o.md"), ("write_file", "/o.md")])
+        kind, count = mw.count_repeats(msgs)
+        assert kind == "write" and count == 3
+
+    def test_no_repeat_below_limit(self):
+        from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
+
+        mw = WastefulLoopGuardMiddleware()
+        msgs = self._messages([("read_file", "/a.md"), ("read_file", "/b.md")])
+        assert mw.count_repeats(msgs) == ("", 0)
+
+    async def test_pushes_steer_on_repeat(self):
+        from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
+
+        pushed: list[tuple[str, str]] = []
+        mw = WastefulLoopGuardMiddleware(steer_sink=lambda rid, text: pushed.append((rid, text)))
+        state = {"messages": self._messages([("read_file", "/a.md")] * 3)}
+        runtime = SimpleNamespace(context=SimpleNamespace(run_id="r1"))
+        assert await mw.abefore_model(state, runtime) is None  # 不直接改 state
+        assert len(pushed) == 1 and pushed[0][0] == "r1"
+        assert "read_file" in pushed[0][1]
+
+    async def test_no_steer_without_repeat(self):
+        from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
+
+        pushed: list[tuple[str, str]] = []
+        mw = WastefulLoopGuardMiddleware(steer_sink=lambda rid, text: pushed.append((rid, text)))
+        state = {"messages": self._messages([("read_file", "/a.md")])}
+        runtime = SimpleNamespace(context=SimpleNamespace(run_id="r1"))
+        await mw.abefore_model(state, runtime)
+        assert pushed == []
+
+
+class TestPairingRepair:
+    """工具消息配对自愈：交换/丢失/重复错位修复。"""
+
+    def _ai(self, ids: list[str]) -> AIMessage:
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": f"t{i}", "args": {}, "id": i} for i in ids],
+        )
+
+    def test_correct_pairing_no_repairs(self):
+        from app.agent.loop.middleware.pairing_repair import compute_repairs
+
+        ai = self._ai(["a", "b"])
+        tools = [ToolMessage(content="ra", tool_call_id="a"), ToolMessage(content="rb", tool_call_id="b")]
+        assert compute_repairs(ai, tools) == []
+
+    def test_swap_repaired(self):
+        from app.agent.loop.middleware.pairing_repair import compute_repairs
+
+        ai = self._ai(["a", "b"])
+        tools = [ToolMessage(content="rb", tool_call_id="b"), ToolMessage(content="ra", tool_call_id="a")]
+        repairs = compute_repairs(ai, tools)
+        assert len(repairs) == 2
+        assert {r.tool_call_id: r.content for r in repairs} == {"a": "ra", "b": "rb"}
+
+    def test_duplicate_lost_placeholder(self):
+        """实测形态：attachments 结果丢失、outline 结果重复成对 → 占位修复。"""
+        from app.agent.loop.middleware.pairing_repair import compute_repairs
+
+        ai = self._ai(["att", "out"])
+        tools = [
+            ToolMessage(content="outline内容", tool_call_id="out"),
+            ToolMessage(content="outline内容", tool_call_id="out"),
+        ]
+        repairs = compute_repairs(ai, tools)
+        assert len(repairs) == 1
+        assert repairs[0].tool_call_id == "att"
+        assert "丢失" in repairs[0].content
+
+    async def test_middleware_returns_repairs(self):
+        from app.agent.loop.middleware.pairing_repair import PairingRepairMiddleware
+
+        mw = PairingRepairMiddleware()
+        ai = self._ai(["a", "b"])
+        state = {
+            "messages": [
+                ai,
+                ToolMessage(content="rb", tool_call_id="b", id="m1"),
+                ToolMessage(content="ra", tool_call_id="a", id="m2"),
+            ]
+        }
+        out = await mw.abefore_model(state, SimpleNamespace())
+        assert out is not None and len(out["messages"]) == 2
+
+    async def test_middleware_noop_when_ok(self):
+        from app.agent.loop.middleware.pairing_repair import PairingRepairMiddleware
+
+        mw = PairingRepairMiddleware()
+        ai = self._ai(["a"])
+        state = {"messages": [ai, ToolMessage(content="ra", tool_call_id="a", id="m1")]}
+        assert await mw.abefore_model(state, SimpleNamespace()) is None

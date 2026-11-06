@@ -17,6 +17,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
+
 from app.agent.harness.approval.write_approval import INTERRUPT_KIND
 from app.agent.loop.context import AgentContext
 from app.agent.tracing.messages.message_sync import MessageSyncer
@@ -63,6 +65,8 @@ async def stream_graph(
     result = StreamResult()
     await syncer.init_baseline(graph, config, user_message_id=user_message_id, resumed=resumed)
     active_subagents: set[str] = set()
+    #: run 级 token 累计（含子代理）——usage 事件随带，供前端头部实时统计
+    run_totals: list[int] = [0, 0]
 
     async for chunk in graph.astream(
         stream_input, config=config, stream_mode=_STREAM_MODES, subgraphs=True, context=context,
@@ -82,7 +86,7 @@ async def stream_graph(
                 await sse_bus.publish(run_id, session_id, "subagent.start", {"subagent_name": sub_name})
 
         if mode == "messages":
-            usage = await _handle_message_chunk(run_id, session_id, namespace, payload, emitter)
+            usage = await _handle_message_chunk(run_id, session_id, namespace, payload, emitter, run_totals)
             result.tokens_in += usage[0]
             result.tokens_out += usage[1]
         elif mode == "updates":
@@ -110,9 +114,21 @@ async def stream_graph(
 
 
 async def _handle_message_chunk(
-    run_id: str, session_id: str, namespace: tuple, payload: Any, emitter: Emitter
+    run_id: str,
+    session_id: str,
+    namespace: tuple,
+    payload: Any,
+    emitter: Emitter,
+    run_totals: list[int],
 ) -> tuple[int, int]:
-    """`stream_mode="messages"` → message.delta / subagent.delta / usage。返回 (tokens_in, tokens_out)。"""
+    """`stream_mode="messages"` → message.delta / subagent.delta / usage。返回 (tokens_in, tokens_out)。
+
+    usage 事件携带两组口径：
+    - `tokens_in/out`：**本次模型调用**（主 Agent 或子代理，`subagent` 标明）——
+      前端「单会话上下文比例」只用主 Agent 的单次调用值；
+    - `run_tokens_in/out`：**本 run 累计**（含子代理）——前端头部「全部会话消耗」
+      的实时部分。
+    """
     try:
         message, _meta = payload
     except (TypeError, ValueError):
@@ -141,11 +157,16 @@ async def _handle_message_chunk(
     if usage:
         tokens_in = int(usage.get("input_tokens") or 0)
         tokens_out = int(usage.get("output_tokens") or 0)
+        run_totals[0] += tokens_in
+        run_totals[1] += tokens_out
         await emitter.publish(
             "usage",
             {
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,
+                "run_tokens_in": run_totals[0],
+                "run_tokens_out": run_totals[1],
+                "subagent": is_subagent,
                 "model": getattr(message, "response_metadata", {}).get("model_name")
                 if isinstance(getattr(message, "response_metadata", None), dict)
                 else None,
@@ -302,21 +323,45 @@ async def _persist_and_emit_interrupt(
         }
 
     async with session_scope() as db:
-        db.add(
-            AgentInterrupt(
-                id=interrupt_id,
-                run_id=run_id,
-                session_id=session_id,
-                type=itype,
-                tool_name=tool_name,
-                payload_json=json.dumps(
-                    {**value, "langgraph_interrupt_id": getattr(intr, "id", None)},
-                    ensure_ascii=False,
-                    default=str,
-                )[:20000],
-                created_at=utcnow(),
+        # 幂等：中间件（WriteApproval/ReadScopeGuard）或流程 runner 可能已先建未决行
+        # 并发过事件；此处按 (run_id, type, tool_call_id/consult_kind) 复用，
+        # 避免同一中断出现两条未决行（前端弹两张卡、批准一张另一张永挂）。
+        match_key = str(value.get("tool_call_id") or value.get("consult_kind") or "")
+        existing_id: str | None = None
+        if match_key:
+            rows = (
+                await db.execute(
+                    select(AgentInterrupt).where(
+                        AgentInterrupt.run_id == run_id,
+                        AgentInterrupt.type == itype,
+                        AgentInterrupt.decision.is_(None),
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                try:
+                    prior = json.loads(row.payload_json or "{}")
+                except ValueError:
+                    continue
+                if str(prior.get("tool_call_id") or prior.get("consult_kind") or "") == match_key:
+                    existing_id = row.id
+                    break
+        if existing_id is None:
+            db.add(
+                AgentInterrupt(
+                    id=interrupt_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                    type=itype,
+                    tool_name=tool_name,
+                    payload_json=json.dumps(
+                        {**value, "langgraph_interrupt_id": getattr(intr, "id", None)},
+                        ensure_ascii=False,
+                        default=str,
+                    )[:20000],
+                    created_at=utcnow(),
+                )
             )
-        )
         run = await db.get(AgentRun, run_id)
         if run is not None:
             run.status = "awaiting_consult" if itype == "consult" else "awaiting_approval"
@@ -325,7 +370,8 @@ async def _persist_and_emit_interrupt(
             sess.status = "awaiting_consult" if itype == "consult" else "awaiting_approval"
             sess.updated_at = utcnow()
 
-    await emitter.publish(emit_event, emit_data)
+    if existing_id is None:
+        await emitter.publish(emit_event, emit_data)
 
 
 async def interrupt_status(run_id: str) -> str:

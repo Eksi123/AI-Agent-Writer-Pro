@@ -136,7 +136,7 @@ def make_outline_ctx_provider(project_id: str) -> Any:
 
     定位链：写作意图 / 显式提及章名 → `outline_recall.chapter_brief` 精确摘录
     「简介 + 衔接要点」（≤1200 字）。任一环缺失则返回空串（不注入），
-    由主 Agent 自行按需调用 `outline_recall` 工具查询。
+    由主 Agent 自行按需调用 `outline_grep` 工具查询。
     固定流程运行（S0–S3）的生成提示词已带章简介，故由调用方决定是否装配本 provider。
     """
 
@@ -181,7 +181,7 @@ def make_outline_ctx_provider(project_id: str) -> Any:
         return (
             "## 目标章大纲摘录\n"
             f"{brief}\n\n"
-            "（需要其它卷章的简介/设定，调用 `outline_recall` 工具按需查询，"
+            "（需要其它卷章的简介/设定，调用 `outline_grep` 工具按需查询，"
             "不要 read_file 整篇大纲。）"
         )
 

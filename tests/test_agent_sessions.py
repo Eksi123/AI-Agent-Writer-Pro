@@ -26,7 +26,7 @@ from app.agent.loop.knowledge import build_pinned_chapters
 from app.agent.loop.llm.factory import register_model_override
 from app.agent.loop.resolve import make_recap_provider, session_context_of
 from app.core.paths import session_skills_dir
-from app.db.models import AgentRun
+from app.db.models import AgentRun, Message
 from app.db.session import session_scope
 from app.services.agent import project_usage, session_usage
 from app.services.skills import materialize_session_skills
@@ -232,7 +232,7 @@ class TestProjectUsage:
 
 
 class TestSessionUsage:
-    """会话级用量统计（取最近一次 run 的输入 token）"""
+    """会话级用量统计（取最近一次模型调用的输入 token）"""
 
     @staticmethod
     async def _add_run(session_id: str, project_id: str, run_id: str, *, tokens_in: int, started_at: str):
@@ -250,6 +250,22 @@ class TestSessionUsage:
             )
             await db.commit()
 
+    @staticmethod
+    async def _add_assistant_msg(session_id: str, msg_id: str, *, tokens_in: int, created_at: str):
+        async with session_scope() as db:
+            db.add(
+                Message(
+                    id=msg_id,
+                    session_id=session_id,
+                    role="assistant",
+                    content_json="x",
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_in // 2,
+                    created_at=created_at,
+                )
+            )
+            await db.commit()
+
     async def test_no_runs_returns_zero(self, client, novel_id):
         """全新会话没有任何 run → 占用 0（前端显示剩余 100%）。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
@@ -261,27 +277,28 @@ class TestSessionUsage:
         async with session_scope() as db:
             assert (await session_usage(db, sid))["tokens_in"] == 0
 
-    async def test_returns_most_recent_run_not_sum(self, client, novel_id):
-        """取**最后一次** run 的 tokens_in，而非历史累加（累加会严重高估占用）。"""
+    async def test_returns_last_model_call_not_run_sum(self, client, novel_id):
+        """取**最后一次模型调用**的输入 token，而非 run 累加值（累加会虚高超过窗口）。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
 
-        await self._add_run(sid, novel_id, "run-sess-new", tokens_in=5000, started_at="2026-10-29T12:00:00.000Z")
-        await self._add_run(sid, novel_id, "run-sess-old", tokens_in=1000, started_at="2026-10-29T09:00:00.000Z")
-        await self._add_run(sid, novel_id, "run-sess-mid", tokens_in=3000, started_at="2026-10-29T10:30:00.000Z")
+        # run 累加 700K（长 run 多次调用重发历史），但最后一次调用实际只占 90K
+        await self._add_run(sid, novel_id, "run-ctx-sum", tokens_in=700_000, started_at="2026-10-29T12:00:00.000Z")
+        await self._add_assistant_msg(sid, "m-ctx-1", tokens_in=80_000, created_at="2026-10-29T12:00:10.000Z")
+        await self._add_assistant_msg(sid, "m-ctx-2", tokens_in=90_000, created_at="2026-10-29T12:01:10.000Z")
 
         async with session_scope() as db:
             usage = await session_usage(db, sid)
 
-        assert usage["tokens_in"] == 5000  # 不是 9000（求和）
-        assert usage["tokens_out"] == 2500
+        assert usage["tokens_in"] == 90_000  # 不是 700_000（run 累加）也不是 170_000（消息求和）
+        assert usage["tokens_out"] == 45_000
 
     async def test_scoped_to_session(self, client, novel_id):
-        """按会话隔离：同项目其它会话的 run 不计入。"""
+        """按会话隔离：同项目其它会话的消息不计入。"""
         sid = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
         other = (await client.post("/api/v1/agent/sessions", json={"novel_id": novel_id})).json()["data"]["id"]
 
-        await self._add_run(sid, novel_id, "run-scope-mine", tokens_in=200, started_at="2026-10-29T08:00:00.000Z")
-        await self._add_run(other, novel_id, "run-scope-theirs", tokens_in=9999, started_at="2026-10-29T09:00:00.000Z")
+        await self._add_assistant_msg(sid, "m-scope-mine", tokens_in=200, created_at="2026-10-29T08:00:00.000Z")
+        await self._add_assistant_msg(other, "m-scope-theirs", tokens_in=9999, created_at="2026-10-29T09:00:00.000Z")
 
         async with session_scope() as db:
             assert (await session_usage(db, sid))["tokens_in"] == 200

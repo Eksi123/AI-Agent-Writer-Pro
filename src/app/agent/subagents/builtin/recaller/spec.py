@@ -22,7 +22,7 @@ SPEC: dict[str, Any] = {
     "description": "回顾者：提取前情提要、人物状态与伏笔线索，只回传摘要。要回顾已写内容时委派。",
     "skills": [],
     #: 只读回顾：摘要/正文检索 + 大纲按需摘录，不给写工具
-    "tools": ["read_file", "grep", "glob", "outline_recall"],
+    "tools": ["read_file", "grep", "glob", "outline_grep"],
     "workflows": [],
     "mode": "isolated",
 }

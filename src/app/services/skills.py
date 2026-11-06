@@ -168,7 +168,7 @@ BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "grep", "label": "grep"},
     {"tool": "glob", "label": "glob"},
     #: 大纲按需摘录（自研 registry 工具，与 web_search 同类）
-    {"tool": "outline_recall", "label": "outline_recall"},
+    {"tool": "outline_grep", "label": "outline_grep"},
     {"tool": "web_search", "label": "web_search"},
 ]
 

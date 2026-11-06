@@ -272,6 +272,8 @@ export const zh = {
     temperature: 'Temperature',
     maxTokens: 'Max Token',
     tempRangeHint: '取值范围 {range}（不包括 0）',
+    /** 数值参数通用范围提示（Max Token / Context Length 输入框右侧） */
+    valueRangeHint: '取值范围 {range}',
     /** Context Length 必填参数（单位 K，默认 1024K）+ 四项参数悬浮解释 */
     contextLength: 'Context Length',
     /** 名称左侧提示 icon 点击后的说明 */

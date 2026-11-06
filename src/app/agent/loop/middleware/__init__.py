@@ -7,8 +7,9 @@
 说明: 自定义中间件（手册「二、(2)」表，挂载点用真实 API）。
 
 装配顺序：WriteApproval → ModelRetry → ModelSwitchOnFailure（连续失败才切换）
-→ ModelCallLimit → TodoList → RecapInjection → HiddenContext
-→ SteerInjection → ReadScopeGuard → WorkspaceGuard → FileChangeNotify → ContentLock。
+→ ModelCallLimit → TodoList → RecapInjection → HiddenContext → PairingRepair
+→ WastefulLoopGuard → SteerInjection → ReadScopeGuard → WorkspaceGuard
+→ FileChangeNotify → ContentLock。
 
     （架构优化）：安全类中间件已迁至 harness——
     `WriteApprovalMiddleware`（harness/approval）、`WorkspaceGuardMiddleware`（harness/guard）、
@@ -24,8 +25,10 @@ from app.agent.harness.lock.content_lock import ContentLockMiddleware
 from app.agent.loop.middleware.file_change import FileChangeNotifyMiddleware
 from app.agent.loop.middleware.hidden_context import HiddenContextInjectionMiddleware
 from app.agent.loop.middleware.overflow_guard import ContextOverflowGuardMiddleware
+from app.agent.loop.middleware.pairing_repair import PairingRepairMiddleware
 from app.agent.loop.middleware.recap import RecapInjectionMiddleware
 from app.agent.loop.middleware.steer import SteerInjectionMiddleware
+from app.agent.loop.middleware.window_sync import ContextWindowSyncMiddleware
 
 __all__ = [
     "RecapInjectionMiddleware",
@@ -37,4 +40,6 @@ __all__ = [
     "WriteApprovalMiddleware",
     "ContextOverflowGuardMiddleware",
     "ReadScopeGuardMiddleware",
+    "PairingRepairMiddleware",
+    "ContextWindowSyncMiddleware",
 ]

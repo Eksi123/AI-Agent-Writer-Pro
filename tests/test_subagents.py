@@ -77,7 +77,7 @@ class TestSubagents:
         assert set(specs["reviewer"]["tools"]) == {"read_file", "ls", "grep", "glob"}
         # 回顾者只读 + 大纲按需摘录（不写文件）
         assert set(specs["recaller"]["tools"]) == {
-            "read_file", "grep", "glob", "outline_recall",
+            "read_file", "grep", "glob", "outline_grep",
         }
         assert "write_file" not in specs["recaller"]["tools"]
         # 检索者只有 web_search
@@ -103,6 +103,59 @@ class TestSubagents:
         )
         writer = next(a for a in agents if a["name"] == "writer")
         assert writer["model"] is sentinel
+
+    def test_every_subagent_has_scrub_middleware(self):
+        """用完即销毁：每个子代理都挂 SubagentContextScrubMiddleware。"""
+        from app.agent.subagents.scrub import SubagentContextScrubMiddleware
+
+        for a in build_subagents():
+            names = [type(m).__name__ for m in a.get("middleware") or []]
+            assert "SubagentContextScrubMiddleware" in names, a["name"]
+        assert SubagentContextScrubMiddleware().name == "SubagentContextScrub"
+
+
+class TestSubagentContextScrub:
+    """子代理结束时销毁中间上下文，只留最终结论。"""
+
+    @staticmethod
+    def _messages():
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        return [
+            HumanMessage(content="任务"),
+            AIMessage(content="", tool_calls=[{"name": "read_file", "args": {}, "id": "c1"}]),
+            ToolMessage(content="正文内容" * 100, tool_call_id="c1"),
+            AIMessage(content="最终结论：三处伏笔已回收。"),
+        ]
+
+    async def test_scrub_keeps_only_final_conclusion(self):
+        from app.agent.subagents.scrub import SubagentContextScrubMiddleware
+
+        mw = SubagentContextScrubMiddleware()
+        out = await mw.aafter_agent({"messages": self._messages()}, None)
+        assert out is not None
+        msgs = out["messages"]
+        assert len(msgs) == 2  # RemoveMessage(全清) + 结论
+        assert msgs[1].content == "最终结论：三处伏笔已回收。"
+
+    async def test_scrub_noop_single_message(self):
+        from app.agent.subagents.scrub import SubagentContextScrubMiddleware
+
+        from langchain_core.messages import AIMessage
+
+        mw = SubagentContextScrubMiddleware()
+        assert await mw.aafter_agent({"messages": [AIMessage(content="结论")]}, None) is None
+        assert await mw.aafter_agent({"messages": []}, None) is None
+
+    def test_final_conclusion_skips_empty_tail(self):
+        """末尾空 AIMessage（end_turn）不挡结论提取。"""
+        from langchain_core.messages import AIMessage
+
+        from app.agent.subagents.scrub import final_conclusion_of
+
+        msgs = [AIMessage(content="真结论"), AIMessage(content="")]
+        assert final_conclusion_of(msgs).content == "真结论"
+        assert final_conclusion_of([]) is None
 
 
 # ---------------------------------------------------------------------------

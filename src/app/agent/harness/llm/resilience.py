@@ -103,8 +103,14 @@ def build_resilience_middleware(
     """装配 重试 → 连续失败切换 → 限次 三段中间件（顺序固定）。"""
     stack: list[Any] = []
 
-    # ① 重试：仅对超时 / 429 / 5xx / 连接错误重试（默认 retry_on 即覆盖这些）
+    # ① 重试：仅对超时 / 429 / 5xx / 连接错误重试（指数退避 + 抖动）。
+    # on_failure 必须 "raise"：默认 "return_message" 会把「重试耗尽」的错误文本
+    # 伪装成一条 AIMessage 回复——run 被标记 completed、错误文本当 AI 答案展示给用户。
     try:
+        stack.append(
+            ModelRetryMiddleware(max_retries=2, backoff_factor=2.0, jitter=True, on_failure="error")
+        )
+    except TypeError:  # 旧版本无 on_failure 参数
         stack.append(ModelRetryMiddleware(max_retries=2, backoff_factor=2.0, jitter=True))
     except Exception as exc:  # pragma: no cover - 参数兼容性兜底
         logger.warning("model_retry_mw_fallback", error=str(exc))

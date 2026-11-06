@@ -40,6 +40,8 @@ class ScriptedFakeChatModel(BaseChatModel):
     #: 抛异常的轮次（1-based）；用于测试重试与降级
     fail_on_call: int | None = None
     fail_error: str = "simulated provider failure"
+    #: 每条 AIMessage 附带的 usage（真实 provider 均返回；usage 事件/落库依赖它）
+    usage: dict[str, int] = {"input_tokens": 100, "output_tokens": 20}
 
     @property
     def _llm_type(self) -> str:
@@ -67,7 +69,17 @@ class ScriptedFakeChatModel(BaseChatModel):
         if not self.responses:
             return AIMessage(content="(假模型无脚本)")
         idx = min(self.cursor - 1, len(self.responses) - 1)
-        return self.responses[idx]
+        message = self.responses[idx]
+        if isinstance(message, AIMessage) and message.usage_metadata is None:
+            message.usage_metadata = self._usage_metadata()
+        return message
+
+    def _usage_metadata(self) -> dict[str, int]:
+        return {
+            "input_tokens": self.usage["input_tokens"],
+            "output_tokens": self.usage["output_tokens"],
+            "total_tokens": self.usage["input_tokens"] + self.usage["output_tokens"],
+        }
 
     def _generate(
         self,
@@ -121,6 +133,7 @@ class ScriptedFakeChatModel(BaseChatModel):
         content = message.content
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
         tool_calls = list(getattr(message, "tool_calls", None) or [])
+        chunks: list[ChatGenerationChunk] = []
 
         if not text and not tool_calls:
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
@@ -133,24 +146,32 @@ class ScriptedFakeChatModel(BaseChatModel):
             for part in parts:
                 if not part:
                     continue
-                yield ChatGenerationChunk(message=AIMessageChunk(content=part))
+                chunks.append(ChatGenerationChunk(message=AIMessageChunk(content=part)))
 
         if tool_calls:
-            yield ChatGenerationChunk(
-                message=AIMessageChunk(
-                    content="",
-                    tool_call_chunks=[
-                        {
-                            "name": tc.get("name"),
-                            "args": json.dumps(tc.get("args") or {}, ensure_ascii=False),
-                            "id": tc.get("id"),
-                            "index": i,
-                            "type": "tool_call_chunk",
-                        }
-                        for i, tc in enumerate(tool_calls)
-                    ],
+            chunks.append(
+                ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            {
+                                "name": tc.get("name"),
+                                "args": json.dumps(tc.get("args") or {}, ensure_ascii=False),
+                                "id": tc.get("id"),
+                                "index": i,
+                                "type": "tool_call_chunk",
+                            }
+                            for i, tc in enumerate(tool_calls)
+                        ],
+                    )
                 )
             )
+
+        # usage 挂在末块（与真实 provider 流式行为一致：末块带 usage_metadata）
+        usage = getattr(message, "usage_metadata", None)
+        if usage and chunks:
+            chunks[-1].message.usage_metadata = usage
+        yield from chunks
 
 
 def ai_text(text: str) -> AIMessage:

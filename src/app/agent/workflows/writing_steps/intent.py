@@ -103,10 +103,10 @@ def _ordinal_of(raw: str) -> int | None:
     raw = raw.strip()
     if raw.isdigit():
         return int(raw)
-    if len(raw) == 1:
-        return _CN_DIGITS.get(raw)
     if raw == "十":
         return 10
+    if len(raw) == 1:
+        return _CN_DIGITS.get(raw)
     if raw.startswith("十"):
         rest = raw[1:]
         if not rest:

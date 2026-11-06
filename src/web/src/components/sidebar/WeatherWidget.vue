@@ -98,7 +98,7 @@ function geolocate(): Promise<{ lat: number; lon: number } | null> {
       locating.value = false
       locateDenied.value = true
       resolve(null)
-    }, 6000)
+    }, 15000)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         clearTimeout(t)
@@ -112,7 +112,7 @@ function geolocate(): Promise<{ lat: number; lon: number } | null> {
         locateDenied.value = true
         resolve(null)
       },
-      { timeout: 5000, maximumAge: 10 * 60 * 1000 },
+      { timeout: 15000, maximumAge: 10 * 60 * 1000, enableHighAccuracy: true },
     )
   })
 }

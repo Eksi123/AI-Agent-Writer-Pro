@@ -157,7 +157,7 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
             return await handler(request)
         return ToolMessage(
             content=(
-                f"用户未允许读取该内容（{reason}）。请改用 outline_recall 工具获取大纲摘录，"
+                f"用户未允许读取该内容（{reason}）。请改用 outline_grep 工具获取大纲摘录，"
                 "或直接在回答里询问用户是否需要读取相关章节。"
             ),
             tool_call_id=tool_call_id,

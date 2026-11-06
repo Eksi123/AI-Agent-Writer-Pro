@@ -64,6 +64,8 @@ function paramParts(p: LlmProviderDto): string[] {
 const dialogVisible = ref(false)
 const saving = ref(false)
 const editing = ref<LlmProviderDto | null>(null)
+/** 编辑时后端返回的掩码值（如 `sk-****abcd`），用于判断用户是否修改了密钥 */
+const originalMaskedKey = ref('')
 
 const form = reactive({
   name: '',
@@ -120,7 +122,9 @@ function openDialog(p?: LlmProviderDto): void {
   form.type = normalizeProtocol(p?.type ?? 'openai_compatible')
   form.base_url = p?.base_url ?? ''
   form.api_key_env = p?.api_key_env ?? ''
-  form.api_key_value = ''
+  // 编辑时回填掩码（后端不返回明文，只返回脱敏后的值如 `sk-****abcd`）
+  form.api_key_value = p?.api_key_masked ?? ''
+  originalMaskedKey.value = p?.api_key_masked ?? ''
   form.timeout_sec = p?.timeout_sec ?? 30
   form.temperature = p?.temperature ?? 1.0
   // Max Token 回填（token → K；旧数据缺省 32K）
@@ -154,7 +158,14 @@ async function save(): Promise<void> {
       type: form.type,
       base_url: form.base_url.trim() || undefined,
       api_key_env: form.api_key_env.trim(),
-      api_key_value: form.api_key_value || undefined,
+      // 编辑时：密钥未修改（仍为掩码）则不发送，避免把掩码当真实密钥写入
+      api_key_value:
+        editing.value && form.api_key_value === originalMaskedKey.value
+          ? undefined
+          : form.api_key_value || undefined,
+      // 编辑时：用户清空了密钥字段 → 清除密钥
+      clear_api_key:
+        editing.value && !form.api_key_value && originalMaskedKey.value ? true : undefined,
       timeout_sec: form.timeout_sec,
       temperature: Number(form.temperature),
       max_tokens: form.max_tokens_k * 1024,
@@ -191,7 +202,9 @@ async function save(): Promise<void> {
       })
     }
 
-    if (form.api_key_value) await llmApi.reloadConfig()
+    // 密钥实际被修改时才触发后端重载配置
+    const keyChanged = form.api_key_value && form.api_key_value !== originalMaskedKey.value
+    if (keyChanged) await llmApi.reloadConfig()
 
     ElMessage.success(t('aiTools.savedProvider'))
     dialogVisible.value = false
@@ -352,9 +365,10 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
               <span class="label-tip">{{ t('aiTools.maxTokens') }}</span>
             </el-tooltip>
           </template>
-          <!-- Max Token 以 K 为单位（默认 32K，最多 128K） -->
+          <!-- Max Token 以 K 为单位（默认 32K，最多 128K）；右侧标明取值范围 -->
           <el-input v-model.number="form.max_tokens_k" class="num" type="number" :min="1" :max="128" />
           <span class="unit muted">K</span>
+          <span class="hint muted">{{ t('aiTools.valueRangeHint', { range: '1 ~ 128 K' }) }}</span>
         </el-form-item>
 
         <!-- Context Length 必填（单位 K，默认 1024K）；悬浮展示简短解释 -->
@@ -366,6 +380,7 @@ async function removeProvider(p: LlmProviderDto): Promise<void> {
           </template>
           <el-input v-model.number="form.context_length_k" class="num" type="number" :min="100" :max="1024" />
           <span class="unit muted">K</span>
+          <span class="hint muted">{{ t('aiTools.valueRangeHint', { range: '100 ~ 1024 K' }) }}</span>
         </el-form-item>
       </el-form>
 

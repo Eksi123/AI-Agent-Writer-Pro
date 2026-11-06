@@ -30,6 +30,7 @@ from typing import Any
 from deepagents import SubAgent
 
 from app.agent.subagents.builtin import BUILTIN_SUBAGENTS
+from app.agent.subagents.scrub import SubagentContextScrubMiddleware
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +42,7 @@ def build_subagents(
     enabled_names: set[str] | None = None,
     model_overrides: dict[str, str] | None = None,
     prompt_overrides: dict[str, str] | None = None,
+    default_model: Any | None = None,
 ) -> list[SubAgent]:
     """装配内置子代理为 `SubAgent` 列表。
 
@@ -52,6 +54,7 @@ def build_subagents(
         enabled_names: 只装配这些子代理（None = 全部）。
         model_overrides: name → model_ref（子代理模型覆盖）。
         prompt_overrides: name → system_prompt（DB 自定义提示词覆盖内置）。
+        default_model: 未配模型覆盖时回落主模型（create_sub_agent 要求必带 model）。
     """
     models = resolved_models or {}
     overrides = model_overrides or {}
@@ -77,14 +80,14 @@ def build_subagents(
         }
         if skills:
             agent["skills"] = skills
+        # 子代理用完即销毁：结束时清空中间上下文，回传主图只留最终结论
+        agent["middleware"] = [SubagentContextScrubMiddleware()]
 
         model_ref = overrides.get(name)
-        if model_ref:
-            chat_model = models.get(model_ref)
-            if chat_model is not None:
-                agent["model"] = chat_model
-            else:
-                logger.warning("subagent_model_unresolved", name=name, model_ref=model_ref)
+        chat_model = models.get(model_ref) if model_ref else None
+        if model_ref and chat_model is None:
+            logger.warning("subagent_model_unresolved", name=name, model_ref=model_ref)
+        agent["model"] = chat_model or default_model
 
         result.append(agent)  # type: ignore[arg-type]
 

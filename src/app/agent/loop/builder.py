@@ -38,6 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.harness.llm.resilience import build_resilience_middleware
+from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
 from app.agent.harness.sandbox import build_backend, build_permissions
 from app.agent.loop.checkpointer import get_checkpointer
 from app.agent.loop.context import AgentContext
@@ -45,8 +46,10 @@ from app.agent.loop.llm.factory import get_chat_model
 from app.agent.loop.middleware import (
     ContentLockMiddleware,
     ContextOverflowGuardMiddleware,
+    ContextWindowSyncMiddleware,
     FileChangeNotifyMiddleware,
     HiddenContextInjectionMiddleware,
+    PairingRepairMiddleware,
     RecapInjectionMiddleware,
     SteerInjectionMiddleware,
     WorkspaceGuardMiddleware,
@@ -54,6 +57,7 @@ from app.agent.loop.middleware import (
     WriteApprovalMiddleware,
 )
 from app.agent.loop.prompts import render
+from app.agent.subagents.scrub import SubagentContextScrubMiddleware
 from app.agent.subagents.user import load_specs as load_user_specs
 from app.core.config import current_config_version, get_settings
 from app.core.logging import get_logger
@@ -68,8 +72,10 @@ SKILL_PATHS = ["/skills/user/"]
 #: 删除卷章的风险确认统一由 WriteApprovalMiddleware 按参数判定（批准/拒绝/补充要求）。
 INTERRUPT_ON: dict[str, Any] = {}
 
-#: 单次 run 的 LLM 调用软上限（硬上限另经 config recursion_limit）
-DEFAULT_MODEL_CALL_LIMIT = 40
+#: 单次 run 的 LLM 调用软上限（硬上限另经 config recursion_limit）。
+#: 40 → 60：整篇大纲分卷写入等长任务 40 次不够（实测 28 次调用 + 收尾守护已逼近），
+#: 浪费型循环另有 WastefulLoopGuard 熔断，不靠压低上限兜底。
+DEFAULT_MODEL_CALL_LIMIT = 60
 
 #: 系统提示里梗概的注入上限（每轮模型调用都重发，长梗概改由 AI 按需读 novel.yaml）
 _SYNOPSIS_LIMIT = 120
@@ -86,7 +92,7 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
 
 
 #: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search），
-#: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_recall`
+#: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_grep`
 #: 走自研 registry（非文件工具，作为 extra 工具实例下发）。
 _FS_TOOL_ALIASES = {
     "read_file": "read_file",
@@ -101,13 +107,14 @@ _FS_TOOL_ALIASES = {
     "glob": "glob",
     "web_search": "web_search",
     "web_serach": "web_search",  # 容错：文档里的拼写
-    "outline_recall": "outline_recall",
+    "outline_recall": "outline_grep",  # 兼容旧名（历史子代理配置/提示词残留）
+    "outline_grep": "outline_grep",
 }
 
 #: 非文件类自研工具（名字 → 惰性导入路径）
 _EXTRA_TOOL_MODULES = {
     "web_search": "app.agent.tools.builtin.web_search",
-    "outline_recall": "app.agent.tools.builtin.outline_recall",
+    "outline_grep": "app.agent.tools.builtin.outline_grep",
 }
 
 
@@ -117,12 +124,16 @@ def build_subagents_from_specs(
     *,
     backend: Any = None,
     permissions: Any = None,
+    default_model: BaseChatModel | None = None,
 ) -> list[Any]:
     """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
 
     `spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search）。
     非空时把子代理的工具集收窄为这些工具——文件类工具经
     `FilesystemMiddleware(tools=[...])` 限定，`web_search` 直接给工具实例。
+
+    `default_model`：子代理未配 model_ref（或解析失败）时回落主模型——
+    deepagents `create_sub_agent` 要求 spec 必带 `model`，缺失会抛 ValueError。
     """
     result: list[Any] = []
     for spec in specs:
@@ -138,6 +149,8 @@ def build_subagents_from_specs(
         selected = _resolve_selected_tools(spec.get("tools") or [])
         fs_tools = selected["fs"]
         extra_tools = selected["extra"]
+        #: 子代理用完即销毁：结束时清空中间上下文，回传主图只留最终结论
+        middleware: list[Any] = [SubagentContextScrubMiddleware()]
         if selected["selected"]:
             # 显式勾选 → 收窄工具集：文件类工具经 FilesystemMiddleware(tools=[...]) 限定
             # （deepagents 按中间件 name 原位替换基座 FilesystemMiddleware）。
@@ -148,19 +161,19 @@ def build_subagents_from_specs(
                     from deepagents.middleware.filesystem import FilesystemMiddleware
 
                     restricted = list(fs_tools) or ["read_file"]
-                    agent["middleware"] = [
+                    middleware.append(
                         FilesystemMiddleware(backend=backend, tools=restricted, _permissions=permissions)
-                    ]
+                    )
                 except Exception as exc:  # pragma: no cover - deepagents 版本差异兜底
                     logger.warning("subagent_fs_middleware_failed", name=spec["name"], error=str(exc))
+        agent["middleware"] = middleware
 
         ref = spec.get("model_ref")
-        if ref:
-            chat_model = resolved_models.get(ref)
-            if chat_model is not None:
-                agent["model"] = chat_model
-            else:
-                logger.warning("subagent_model_unresolved", name=spec["name"], model_ref=ref)
+        chat_model = resolved_models.get(ref) if ref else None
+        if ref and chat_model is None:
+            logger.warning("subagent_model_unresolved", name=spec["name"], model_ref=ref)
+        # 无 model_ref / 解析失败 → 回落主模型（create_sub_agent 要求 spec 必带 model）
+        agent["model"] = chat_model or default_model
         result.append(agent)
     return result
 
@@ -169,7 +182,7 @@ def _resolve_selected_tools(names: list[str]) -> dict[str, Any]:
     """把勾选的工具名解析为「文件工具名列表 + 非文件工具实例列表 + 是否有显式勾选」。
 
     deepagents 要求 FilesystemMiddleware 的 tools 必含 `read_file`，故勾选了任何
-    文件工具时自动补上 read_file。非文件工具（`web_search` / `outline_recall`）
+    文件工具时自动补上 read_file。非文件工具（`web_search` / `outline_grep`）
     直接作为工具实例下发。
     """
     fs: list[str] = []
@@ -248,8 +261,10 @@ def build_middleware_stack(
 
     顺序（不可随意调换）：
     WriteApproval→ ModelRetry → ModelSwitchOnFailure → ModelCallLimit
-    → TodoList → RecapInjection → HiddenContext → SteerInjection → WorkspaceGuard
-    → FileChangeNotify → ContentLock
+    → TodoList → RecapInjection → HiddenContext → PairingRepair → WastefulLoopGuard
+    → SteerInjection → WorkspaceGuard → FileChangeNotify → ContentLock
+    （压缩 Summarization 与窗口同步 ContextWindowSync 在 RecapInjection 之前，
+    见装配代码⑤：窗口同步须紧随压缩中间件）
 
     删除 ModelFallback 降级链——改为「当前模型连续失败达阈值才切换备用模型」
     （ModelSwitchOnFailureMiddleware）；编辑大纲/生成正文不审批，仅删除卷章弹风险确认。
@@ -286,6 +301,10 @@ def build_middleware_stack(
     # ⑤ 上下文压缩：超阈值摘要（deepagents 版在 deepagents.middleware.summarization）
     summarization_mw = _build_summarization(primary_model, max_context=max_context)
     if summarization_mw is not None:
+        # 窗口配置实时同步须排在压缩**之前**（before_model 按栈序执行）：
+        # 装配后用户改小 Context Length 时，下一次模型调用先重算阈值再判定压缩，
+        # 保证「比例已超即先压缩」不因旧阈值失效
+        stack.append(ContextWindowSyncMiddleware(summarization_mw))
         stack.append(summarization_mw)
 
     # ⑥~⑩ 自定义中间件
@@ -296,6 +315,12 @@ def build_middleware_stack(
         )
     )
     stack.append(HiddenContextInjectionMiddleware(provider=hidden_context_provider))
+    # 工具消息配对自愈：多并行 tool call 错位（结果丢失/重复成对）在模型调用前
+    # 原地修复——错位上下文会诱导模型反复重读附件（token 暴涨的根因之一）
+    stack.append(PairingRepairMiddleware())
+    # 浪费型循环熔断：检测反复重读/重写后 push 纠正引导，须挂在 SteerInjection
+    # **之前**——before_model 钩子按栈序执行，同一次模型调用即可带上纠正消息
+    stack.append(WastefulLoopGuardMiddleware(steer_sink=_push_steer))
     stack.append(SteerInjectionMiddleware(steer_provider=steer_provider))
     # 读取授权守卫在 WorkspaceGuard 之前：先判定是否允许读，再走路径校验/审计
     stack.append(ReadScopeGuardMiddleware())
@@ -352,6 +377,13 @@ def _steer_provider(run_id: str) -> list[str]:
     from app.agent.loop.runner import run_manager
 
     return run_manager.take_steer(run_id)
+
+
+def _push_steer(run_id: str, text: str) -> None:
+    """向该 run 的引导队列入队一条系统纠正消息（浪费型循环熔断用）。"""
+    from app.agent.loop.runner import run_manager
+
+    run_manager.push_steer(run_id, text)
 
 
 async def build_agent(
@@ -419,7 +451,9 @@ async def build_agent(
         if subagent_names:
             specs = [s for s in specs if s["name"] in subagent_names]
         resolved = await resolve_subagent_models(session, {s["model_ref"] for s in specs if s.get("model_ref")})
-        subagents = build_subagents_from_specs(specs, resolved, backend=backend, permissions=permissions)
+        subagents = build_subagents_from_specs(
+            specs, resolved, backend=backend, permissions=permissions, default_model=model
+        )
 
     middleware_stack = build_middleware_stack(
         primary_model=model,

@@ -119,8 +119,12 @@ function stripTrailingZero(s: string): string {
   return s.endsWith('.0') ? s.slice(0, -2) : s
 }
 
-/** token 使用量 */
-const tokenLabel = computed(() => t('agent.tokenTotal', { n: formatTokens(agent.usage.tokens_total) }))
+/** token 使用量——头部统计**全部会话**的输入+输出消耗：
+ * 已完成 run 总和（usage.tokens_total）+ 进行中 run 的实时累计（runCumulative，含子代理） */
+const tokenLabel = computed(() => {
+  const total = agent.usage.tokens_total + agent.runCumulative.tokens_in + agent.runCumulative.tokens_out
+  return t('agent.tokenTotal', { n: formatTokens(total) })
+})
 
 // ---------------------------------------------------------------------------
 // 上下文使用情况：{当前模型已使用上下文token}/{当前模型的上下文窗口值}
@@ -199,7 +203,7 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     }))
   // AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
   // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
-  const shown = collapseTurns(persisted)
+  const shown = collapseTurns(persisted, agent.running)
   // 乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
   // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
   // pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
@@ -279,11 +283,24 @@ watch(
  * 只保留**最后一条有正文的 assistant 消息**作为本轮回复（并去掉它身上的工具卡片）。
  * 找不到有正文的 assistant（异常轮）时原样保留，避免渲染空气泡。
  */
-function collapseTurns(list: DisplayMessage[]): DisplayMessage[] {
+/**
+ * 每轮问答只展示**最终回复**——中间思考、工具调用卡片一律折叠到下方「思考与工具调用过程」区。
+ *
+ * **运行中隐藏当前 turn 的中间过程**：run 未结束时，persisted 里的 assistant/tool 消息
+ * 可能是中间处理文本或工具调用结果，并非最终回复；此时由下方 live 流式区承载进度。
+ * 但当 run 处于 awaiting_approval / awaiting_consult 状态时，审批/咨询卡片会独立渲染，
+ * 中间过程仍需隐藏以避免与卡片重复展示。run 结束后正常展示最终回复。
+ */
+function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessage[] {
   const out: DisplayMessage[] = []
   let turn: DisplayMessage[] = []
-  const flush = (): void => {
+  const flush = (skipNonUserIfRunning: boolean): void => {
     if (!turn.length) return
+    // 运行中：不展示当前 turn 的任何非 user 消息（中间过程由 live 区承载）
+    if (skipNonUserIfRunning && turn.some((m) => m.role !== 'user')) {
+      turn = []
+      return
+    }
     let finalIdx = -1
     for (let i = turn.length - 1; i >= 0; i--) {
       if (turn[i].role === 'assistant' && turn[i].content.trim()) {
@@ -292,20 +309,17 @@ function collapseTurns(list: DisplayMessage[]): DisplayMessage[] {
       }
     }
     if (finalIdx >= 0) out.push({ ...turn[finalIdx], toolCalls: [] })
-    // 本轮没有最终文字回复（运行中 / 暂停等审批 / 失败）→ 不展示中间过程，
-    // 状态由「AI 正在思考…」状态行、审批/咨询卡片或错误卡片承载，
-    // 避免裸的工具调用被误当成 AI 的回答。
     turn = []
   }
   for (const m of list) {
     if (m.role === 'user') {
-      flush()
+      flush(isRunning)
       out.push(m)
     } else {
       turn.push(m)
     }
   }
-  flush()
+  flush(isRunning)
   return out
 }
 

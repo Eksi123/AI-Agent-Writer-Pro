@@ -25,7 +25,7 @@ from app.agent.tracing.messages import load_tree, set_active_leaf
 from app.core.errors import ApiError, ErrorCode, NotFoundError
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel, ProjectIndex, ToolCallLog
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Message, Novel, ProjectIndex, ToolCallLog
 from app.db.session import session_scope
 from app.services import audit
 
@@ -108,17 +108,25 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
 async def session_usage(db: AsyncSession, session_id: str) -> dict[str, Any]:
     """会话级上下文占用。
 
-    取**最近一次** run 的 `tokens_in` 作为当前上下文占用——它正是该次模型调用的输入
-    token（system prompt + 历史消息 + 工具结果），是最贴近「窗口已用多少」的度量。
-    历史消息累计和跨会话求和都会高估，故一律只看最后一次。
+    取**最近一次模型调用**的输入 token（消息树里最后一条带 usage 的 assistant
+    消息）作为当前上下文占用——它正是该次调用的真实输入（system prompt + 历史 +
+    工具结果），最贴近「窗口已用多少」。
 
-    没有任何 run 时返回 0（前端显示 100% 剩余）。
+    注意**不能**用 `agent_runs.tokens_in`：那是整轮 run 所有模型调用输入 token 的
+    **累加**（每次调用都重发全量历史），一次长 run 可达数十万，远超窗口——拿它当
+    占用会让前端「上下文使用情况」虚高甚至超过窗口（剩余被夹到 0%）。
+
+    没有任何带 usage 的消息时返回 0（前端显示 100% 剩余）。
     """
     row = (
         await db.execute(
-            select(AgentRun.tokens_in, AgentRun.tokens_out)
-            .where(AgentRun.session_id == session_id)
-            .order_by(AgentRun.started_at.desc(), AgentRun.id.desc())
+            select(Message.tokens_in, Message.tokens_out)
+            .where(
+                Message.session_id == session_id,
+                Message.role == "assistant",
+                Message.tokens_in > 0,
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(1)
         )
     ).first()
@@ -291,22 +299,32 @@ async def load_message_tree(session: AsyncSession, session_id: str) -> dict[str,
     )
     tree["latest_run"] = None
     if run_row is not None:
-        pending = (
-            (
-                await session.execute(
-                    select(AgentInterrupt)
-                    .where(AgentInterrupt.run_id == run_row.id, AgentInterrupt.decision.is_(None))
-                    .order_by(AgentInterrupt.created_at.asc())
+        # run 已结束（completed/failed/cancelled）时，未决中断是"孤儿"——
+        # 无法再 resume，前端展示只会让用户反复点批准然后收到"运行已结束"错误。
+        # 故终端态 run 不返回 pending_interrupts，直接标记 latest_run 为 None。
+        if run_row.status in _TERMINAL_RUN_STATUS:
+            tree["latest_run"] = {
+                "run_id": run_row.id,
+                "status": run_row.status,
+                "pending_interrupts": [],
+            }
+        else:
+            pending = (
+                (
+                    await session.execute(
+                        select(AgentInterrupt)
+                        .where(AgentInterrupt.run_id == run_row.id, AgentInterrupt.decision.is_(None))
+                        .order_by(AgentInterrupt.created_at.asc())
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        tree["latest_run"] = {
-            "run_id": run_row.id,
-            "status": run_row.status,
-            "pending_interrupts": [_interrupt_dto(i) for i in pending],
-        }
+            tree["latest_run"] = {
+                "run_id": run_row.id,
+                "status": run_row.status,
+                "pending_interrupts": [_interrupt_dto(i) for i in pending],
+            }
     return tree
 
 

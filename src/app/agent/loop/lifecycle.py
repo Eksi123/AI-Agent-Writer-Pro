@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.more.langfuse import create_score, current_trace_id
@@ -106,6 +107,22 @@ async def finalize(
             trace_id = current_trace_id()
             if trace_id:
                 run.langfuse_trace_id = trace_id
+
+        # run 进入终端态时，清理未决中断（孤儿）——否则前端每次进入会话
+        # 都会显示审批卡片，用户点批准后收到"运行已结束"错误，形成死循环。
+        if not paused and status in ("completed", "failed", "cancelled"):
+            from app.db.models import AgentInterrupt
+
+            orphan_interrupts = (
+                await db.execute(
+                    select(AgentInterrupt)
+                    .where(AgentInterrupt.run_id == run_id, AgentInterrupt.decision.is_(None))
+                )
+            ).scalars().all()
+            for intr in orphan_interrupts:
+                intr.decision = "cancelled"
+                intr.response_json = '{"note":"run_ended"}'
+                intr.decided_at = utcnow()
 
         if not paused:
             sess = await db.get(AgentSession, session_id)

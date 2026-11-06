@@ -281,16 +281,16 @@ class TestBuiltinToolsAndSkills:
         assert not (builtin_dir / "skills").exists()
 
     def test_builtin_tool_dtos(self):
-        """内置工具清单：read/write/edit/list/grep/glob/outline_recall/web_search，展示名与真实名对应。"""
+        """内置工具清单：read/write/edit/list/grep/glob/outline_grep/web_search，展示名与真实名对应。"""
         from app.services.skills import BUILTIN_TOOL_DTOS, BUILTIN_TOOL_NAMES
 
         labels = {d["label"] for d in BUILTIN_TOOL_DTOS}
-        assert {"read", "edit", "list", "grep", "glob", "outline_recall", "web_search", "write"} <= labels
+        assert {"read", "edit", "list", "grep", "glob", "outline_grep", "web_search", "write"} <= labels
         assert "write_file" in BUILTIN_TOOL_NAMES
-        assert "outline_recall" in BUILTIN_TOOL_NAMES
-        # 展示顺序（写作技能页/子代理多选）：write 紧随 read，outline_recall 在 web_search 前
+        assert "outline_grep" in BUILTIN_TOOL_NAMES
+        # 展示顺序（写作技能页/子代理多选）：write 紧随 read，outline_grep 在 web_search 前
         assert [d["label"] for d in BUILTIN_TOOL_DTOS] == [
-            "read", "write", "edit", "list", "grep", "glob", "outline_recall", "web_search",
+            "read", "write", "edit", "list", "grep", "glob", "outline_grep", "web_search",
         ]
 
     def test_subagent_tools_are_known_builtin_tools(self):
