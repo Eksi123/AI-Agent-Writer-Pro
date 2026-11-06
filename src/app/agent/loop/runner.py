@@ -292,6 +292,10 @@ class RunManager:
         self._steer_queues.pop(run_id, None)
         self._user_texts.pop(run_id, None)
         self._read_intents.pop(run_id, None)
+        # 第一层注入槽位登记随 run 释放（ContextGuard 第二层保险用）
+        from app.agent.loop.middleware.recap import clear_injected_slots
+
+        clear_injected_slots(run_id)
 
     async def _run_serialized(self, lock: asyncio.Lock, **kwargs: Any) -> None:
         async with lock:
@@ -331,7 +335,7 @@ async def _execute_run(
         )
         return
 
-    tokens_in = tokens_out = 0
+    tokens_in = tokens_out = cached_in = 0
     recursion_used = 0
     final_status = "completed"
     error_text: str | None = None
@@ -423,6 +427,7 @@ async def _execute_run(
             resumed=resume_value is not None,
         )
         tokens_in, tokens_out = result.tokens_in, result.tokens_out
+        cached_in = result.cached_in
         recursion_used = result.recursion_used
         fallback_count = result.fallback_count
 
@@ -463,6 +468,7 @@ async def _execute_run(
                 )
                 tokens_in += result.tokens_in
                 tokens_out += result.tokens_out
+                cached_in += result.cached_in
                 recursion_used += result.recursion_used
                 fallback_count += result.fallback_count
                 if result.interrupted:
@@ -505,6 +511,7 @@ async def _execute_run(
                 status=final_status,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                cached_in=cached_in,
                 recursion_used=recursion_used,
                 fallback_count=fallback_count,
                 error=error_text,

@@ -75,6 +75,23 @@ def count_messages_tokens(messages: list[Any], *, model: str | None = None) -> i
     return total
 
 
+def cached_tokens_of(usage: Any) -> int:
+    """从 usage_metadata 提取命中前缀缓存的输入 token。
+
+    各 provider 口径：
+    - OpenAI 兼容（含 DashScope）：`input_token_details.cache_read`
+      （原始字段 prompt_tokens_details.cached_tokens，langchain 已归一）；
+    - Anthropic：`input_token_details.cache_read`（cache_read_input_tokens）；
+    - 无缓存概念的 provider 返回 0。
+    """
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("input_token_details")
+    if isinstance(details, dict):
+        return int(details.get("cache_read") or 0)
+    return 0
+
+
 def budget_report(
     current_tokens: int,
     *,

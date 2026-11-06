@@ -126,6 +126,26 @@ const tokenLabel = computed(() => {
   return t('agent.tokenTotal', { n: formatTokens(total) })
 })
 
+/**
+ * token 缓存命中率 = 命中前缀缓存的输入 token ÷ 总输入 token（动态实时）。
+ * 聚合口径与头部 token 统计一致：已完成 run（usage）+ 进行中 run 实时累计（runCumulative）。
+ * 无任何输入 token（新项目/未跑过 run）→ null（不展示图标，避免 0% 误导）。
+ */
+const cacheTotals = computed(() => ({
+  in: agent.usage.tokens_in + agent.runCumulative.tokens_in,
+  cached: agent.usage.cached_in + agent.runCumulative.cached_in,
+}))
+
+const cacheHitPct = computed<number | null>(() => {
+  const { in: tin, cached } = cacheTotals.value
+  if (tin <= 0) return null
+  return Math.max(0, Math.min(100, Math.round((cached / tin) * 100)))
+})
+
+const cacheHitLabel = computed(() =>
+  cacheHitPct.value === null ? '' : t('agent.cacheHitRate', { n: String(cacheHitPct.value) }),
+)
+
 // ---------------------------------------------------------------------------
 // 上下文使用情况：{当前模型已使用上下文token}/{当前模型的上下文窗口值}
 // ---------------------------------------------------------------------------
@@ -185,10 +205,24 @@ interface DisplayMessage {
  */
 const attachmentLabels = ref<Record<string, string[]>>({})
 
+/**
+ * 内部注入消息（系统守护纠正 / 系统修复 / 引导 / 收尾 nudge）——
+ * 属 Agent 内部上下文，**永远不作为回复内容、不渲染成气泡**（含历史遗留落库数据）。
+ */
+const INTERNAL_PREFIXES = ['（系统守护', '（系统修复', '（用户补充指示']
+
+function isInternalMessage(m: { role: string; content?: string | null }): boolean {
+  if (m.role === 'system') return true
+  const text = String(m.content ?? '')
+  return INTERNAL_PREFIXES.some((p) => text.startsWith(p))
+}
+
 const displayMessages = computed<DisplayMessage[]>(() => {
   const persisted: DisplayMessage[] = agent.messages
     // 中间件注入的 system（前情提要等）属内部上下文，绝不渲染成气泡
     .filter((m) => m.role !== 'system')
+    // 内部注入消息（系统守护/引导/nudge）绝不渲染——含历史遗留落库数据
+    .filter((m) => !isInternalMessage(m))
     .map((m) => ({
       key: m.id,
       // tool 消息保留独立角色——collapseTurns 视其为中间过程，
@@ -204,14 +238,20 @@ const displayMessages = computed<DisplayMessage[]>(() => {
   // AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
   // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
   const shown = collapseTurns(persisted, agent.running)
+  // 去重：steered 消息若内容已出现在持久化消息中（后端已将其作为普通用户消息
+  // 持久化），则从 shown 中移除，避免同一条内容同时以「引导」气泡和普通气泡展示。
+  const steeredContents = new Set(agent.steered.map((s) => s.content))
+  const deduped = shown.filter(
+    (m) => !(m.role === 'user' && steeredContents.has(m.content)),
+  )
   // 乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
   // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
   // pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
   const pending = agent.pendingUserMessage
   if (pending) {
-    const lastUser = [...shown].reverse().find((m) => m.role === 'user')
+    const lastUser = [...deduped].reverse().find((m) => m.role === 'user')
     if (lastUser?.content !== pending.content) {
-      shown.push({
+      deduped.push({
         key: 'pending-user',
         role: 'user',
         content: pending.content,
@@ -222,60 +262,10 @@ const displayMessages = computed<DisplayMessage[]>(() => {
       })
     }
   }
-  // 中间思考/工具调用过程改由下方「思考与工具调用过程」折叠区承载
-  // （运行中展开、run 结束自动收起，仿 VS Code Copilot）；
-  // 气泡里只保留每轮问答的最终回复，run 收尾竞态窗口也不再泄漏工具结果。
-  return shown
+  // 中间思考/工具调用/子代理过程**永不展示在会话框中**（用户要求）；
+  // 气泡里只保留每轮问答的最终总结回复。
+  return deduped
 })
-
-/**
- * 运行中的中间过程条目（流式思考文本 + 工具调用/结果），
- * 渲染进可折叠的「思考与工具调用过程」区块。
- */
-interface ProcessItem {
-  key: string
-  kind: 'text' | 'tool'
-  title: string
-  body: string
-  done: boolean
-}
-
-const liveProcess = computed<ProcessItem[]>(() =>
-  agent.streaming.map((s) => {
-    if (s.messageId.startsWith('tool:')) {
-      let name = s.toolCalls[0]?.name ?? 'tool'
-      let status = ''
-      let excerpt = ''
-      let dur = ''
-      try {
-        const d = JSON.parse(s.content) as Record<string, unknown>
-        name = String(d.tool_name ?? name)
-        status = String(d.status ?? '')
-        excerpt = String(d.result_excerpt ?? d.error ?? '')
-        if (d.duration_ms != null) dur = `${d.duration_ms}ms`
-      } catch {
-        /* 非 JSON 载荷原样展示 */
-      }
-      return {
-        key: s.messageId,
-        kind: 'tool' as const,
-        title: `${name}${status ? ` · ${status}` : ''}${dur ? ` · ${dur}` : ''}`,
-        body: excerpt,
-        done: s.done,
-      }
-    }
-    return { key: s.messageId, kind: 'text' as const, title: '', body: s.content, done: s.done }
-  }),
-)
-
-/** 过程区默认展开；run 结束自动收起（用户运行中也可手动折叠/展开） */
-const processOpen = ref(false)
-watch(
-  () => agent.running,
-  (running) => {
-    processOpen.value = running
-  },
-)
 
 /**
  * 把已持久化的消息按「轮」折叠——每个 user 消息开启一轮，
@@ -518,10 +508,22 @@ const hasInput = computed(() => input.value.trim().length > 0)
 /**
  * Agent / 大模型运行报错时，给出**中文提示 + 应该怎么做**（灰色异常态）。
  * 由 store 里的 {error, errorCode} 归一而来，避免直接把英文/原始 message 抛给用户。
+ * 
+ * 注意：后端连接失败错误（50001/uvicorn/后端未连接）由 BackendOfflineBanner 在主页面展示，
+ * 不在会话框内重复显示。
  */
-const errorInfo = computed<AgentErrorInfo | null>(() =>
-  agent.error ? describeAgentError(agent.errorCode, agent.error) : null,
-)
+const errorInfo = computed<AgentErrorInfo | null>(() => {
+  if (!agent.error) return null
+  // 后端连接失败错误由 BackendOfflineBanner 处理，不在会话框显示
+  if (
+    agent.error.includes('50001') ||
+    agent.error.includes('后端未连接') ||
+    agent.error.includes('uvicorn')
+  ) {
+    return null
+  }
+  return describeAgentError(agent.errorCode, agent.error)
+})
 
 /** 用户手动关掉报错卡片（例如已修好配置，准备重试） */
 function dismissError(): void {
@@ -940,6 +942,25 @@ watch(
           {{ tokenLabel }}
         </span>
       </el-tooltip>
+      <!-- Token 缓存命中率：命中前缀缓存的输入 token 占比（动态实时，run 进行中随 usage 事件刷新） -->
+      <el-tooltip
+        v-if="project.currentNovel && cacheHitPct !== null"
+        placement="bottom"
+        :show-after="120"
+        popper-class="usage-tip-popper"
+      >
+        <template #content>
+          <div class="usage-tip">
+            缓存命中 {{ formatTokens(cacheTotals.cached) }} / 输入 {{ formatTokens(cacheTotals.in) }}
+          </div>
+        </template>
+        <span class="head-stat" :class="{ 'cache-good': cacheHitPct >= 50, 'cache-low': cacheHitPct < 20 }">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+            <path d="M12 2C7 2 3 3.8 3 6s4 4 9 4 9-1.8 9-4-4-4-9-4zm9 8c0 2.2-4 4-9 4s-9-1.8-9-4v4c0 2.2 4 4 9 4s9-1.8 9-4v-4zm0 6c0 2.2-4 4-9 4s-9-1.8-9-4v4c0 2.2 4 4 9 4s9-1.8 9-4v-4z" />
+          </svg>
+          {{ cacheHitLabel }}
+        </span>
+      </el-tooltip>
       <div class="head-spacer" />
     </div>
 
@@ -959,18 +980,6 @@ watch(
       </div>
       <template v-else>
         <!-- 删除「会话记录 2/50」这一行——会话数量已在最上方头部展示 -->
-        <!-- 会话列表态下的报错同样给出中文提示与处置建议（灰色） -->
-        <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
-          <div class="msg-content error-content">
-            <div class="error-title">{{ errorInfo.title }}</div>
-            <div class="error-advice">{{ errorInfo.advice }}</div>
-          </div>
-          <div class="msg-foot">
-            <el-button text size="small" class="msg-copy" @click="dismissError">
-              {{ t('agent.errorDismiss') }}
-            </el-button>
-          </div>
-        </div>
         <div
           v-for="s in sessionList"
           :key="s.id"
@@ -1024,7 +1033,7 @@ watch(
           class="msg"
           :class="[`msg-${msg.role}`, { 'msg-streaming': msg.streaming }]"
         >
-        <!-- 添加文件标签（仿 VS Code Copilot，展示在用户消息上方；灰色不可删除） -->
+          <!-- 添加文件标签（仿 VS Code Copilot，展示在用户消息上方；灰色不可删除） -->
           <div v-if="msg.attachments?.length" class="msg-attachments">
             <el-tag
               v-for="label in msg.attachments"
@@ -1055,6 +1064,17 @@ watch(
           <div class="msg-foot">
             <span v-if="msg.createdAt" class="msg-time">{{ stampOf(msg.createdAt) }}</span>
             <span v-else-if="msg.streaming" class="msg-time">{{ t('agent.running') }}</span>
+            <!-- 用户消息底部复制按钮（与时间戳并排） -->
+            <el-button
+              v-if="msg.role === 'user' && msg.content"
+              text
+              size="small"
+              class="msg-copy"
+              @click="copyText(msg.content)"
+            >
+              {{ t('agent.copyMessage') }}
+            </el-button>
+            <!-- AI 回复底部复制按钮 -->
             <el-button
               v-if="msg.role === 'assistant' && msg.content && !msg.streaming"
               text
@@ -1106,42 +1126,9 @@ watch(
           </div>
         </div>
 
-        <!-- 模型思考与工具调用过程（运行中展开、run 结束自动收起，仿 VS Code Copilot；无边框） -->
-        <div v-if="liveProcess.length" class="process-block">
-          <button class="process-head" @click="processOpen = !processOpen">
-            <svg
-              class="chev"
-              :class="{ collapsed: !processOpen }"
-              viewBox="0 0 24 24"
-              width="12"
-              height="12"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <path d="M8.6 4.6 14.3 10.3l-5.7 5.7-1.4-1.4L11.5 12 7.2 7.7z" />
-            </svg>
-            <span>
-              {{ processOpen ? '收起模型思考与工具调用过程' : `展开模型思考与工具调用过程（${liveProcess.length}）` }}
-            </span>
-            <el-tag v-for="sa in agent.activeSubagents" :key="sa" size="small" type="info">
-              {{ t('agent.subagentLane') }}: {{ sa }}
-            </el-tag>
-            <el-tag v-if="agent.workflowStage" size="small" type="warning">
-              {{ t('agent.workflowStage') }}: {{ agent.workflowStage }}
-            </el-tag>
-            <span v-if="agent.running" class="dot-pulse" />
-          </button>
-          <div v-if="processOpen" class="process-body scroll-y">
-            <div v-for="p in liveProcess" :key="p.key" class="process-item">
-              <div v-if="p.kind === 'tool'" class="process-title">
-                <code>{{ p.title }}</code>
-                <span v-if="!p.done" class="dot-pulse" />
-              </div>
-              <pre v-if="p.body" class="process-text">{{ p.body }}</pre>
-              <span v-if="p.kind === 'text' && !p.done" class="cursor-blink">▌</span>
-            </div>
-          </div>
-        </div>
+        <!-- 中间思考/工具调用/子代理过程**永不展示在会话框中**（用户要求）：
+             过程区整块移除；会话里只留用户消息、最终总结回复、审批/咨询卡片与状态行 -->
+
 
         <!-- Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
              整块灰色（代表异常不可用），像一条助手消息一样留在会话里 -->
@@ -1392,6 +1379,15 @@ watch(
   gap: 4px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* 缓存命中率着色：≥50% 绿（缓存生效良好）、<20% 橙（几乎未命中） */
+.head-stat.cache-good {
+  color: var(--el-color-success);
+}
+
+.head-stat.cache-low {
+  color: var(--el-color-warning);
 }
 
 .head-spacer {
@@ -1742,67 +1738,6 @@ watch(
 .msg-prose :deep(ol) {
   padding-left: 18px;
   margin: 4px 0;
-}
-
-/* 模型思考与工具调用过程折叠区（无边框，仅留分隔感） */
-.process-block {
-  margin: 6px 0 2px;
-}
-
-.process-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 2px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  user-select: none;
-  /* 重置原生 button 外观（去掉灰底与边框） */
-  border: none;
-  background: transparent;
-  text-align: left;
-}
-
-.process-head .chev {
-  transition: transform 0.15s;
-}
-
-.process-head .chev.collapsed {
-  transform: rotate(-90deg);
-}
-
-.process-body {
-  max-height: 220px;
-  padding: 4px 2px 8px;
-  overflow-y: auto;
-}
-
-.process-item {
-  margin-bottom: 6px;
-}
-
-.process-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-
-.process-title code {
-  font-family: var(--el-font-family-mono, monospace);
-  color: var(--el-color-primary);
-}
-
-.process-text {
-  margin: 2px 0 0;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--el-text-color-regular);
 }
 
 .tool-card {

@@ -53,5 +53,7 @@ class HiddenContextInjectionMiddleware(AgentMiddleware):
         if any(getattr(m, "name", None) == _MARK for m in messages):
             messages = [injected if getattr(m, "name", None) == _MARK else m for m in messages]
         else:
-            messages = [injected, *messages]
+            from app.agent.loop.middleware.recap import append_injections
+
+            messages = append_injections(messages, [injected])
         return await handler(request.override(messages=messages))

@@ -86,22 +86,27 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
     session_ids = [s.id for s in sessions]
     tokens_in = 0
     tokens_out = 0
+    cached_in = 0
     if session_ids:
         rows = (
             await db.execute(
-                select(func.sum(AgentRun.tokens_in), func.sum(AgentRun.tokens_out)).where(
-                    AgentRun.session_id.in_(session_ids)
-                )
+                select(
+                    func.sum(AgentRun.tokens_in),
+                    func.sum(AgentRun.tokens_out),
+                    func.sum(AgentRun.cached_in),
+                ).where(AgentRun.session_id.in_(session_ids))
             )
         ).first()
         tokens_in = int(rows[0] or 0)
         tokens_out = int(rows[1] or 0)
+        cached_in = int(rows[2] or 0)
     return {
         "project_id": project_id,
         "session_count": len(session_ids),
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "tokens_total": tokens_in + tokens_out,
+        "cached_in": cached_in,
     }
 
 
@@ -120,7 +125,7 @@ async def session_usage(db: AsyncSession, session_id: str) -> dict[str, Any]:
     """
     row = (
         await db.execute(
-            select(Message.tokens_in, Message.tokens_out)
+            select(Message.tokens_in, Message.tokens_out, Message.cached_in)
             .where(
                 Message.session_id == session_id,
                 Message.role == "assistant",
@@ -132,10 +137,12 @@ async def session_usage(db: AsyncSession, session_id: str) -> dict[str, Any]:
     ).first()
     tokens_in = int(row[0] or 0) if row else 0
     tokens_out = int(row[1] or 0) if row else 0
+    cached_in = int(row[2] or 0) if row else 0
     return {
         "session_id": session_id,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
+        "cached_in": cached_in,
     }
 
 

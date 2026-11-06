@@ -20,6 +20,7 @@ import OutlineReader from '@/components/reader/OutlineReader.vue'
 import TiptapEditor from '@/components/editor/TiptapEditor.vue'
 import WordCountBar from '@/components/editor/WordCountBar.vue'
 import ConflictBanner from '@/components/editor/ConflictBanner.vue'
+import BackendOfflineBanner from '@/components/editor/BackendOfflineBanner.vue'
 import EditorActionBar from '@/components/editor/EditorActionBar.vue'
 import OutlineEditor from '@/components/editor/OutlineEditor.vue'
 import AgentPanel from '@/components/agent/AgentPanel.vue'
@@ -421,6 +422,7 @@ window.addEventListener('beforeunload', (e) => {
 
             <template v-else-if="editorStore.chapterId">
               <ConflictBanner />
+              <BackendOfflineBanner />
               <div class="editor-host">
                 <TiptapEditor
                   :chapter-id="editorStore.chapterId"

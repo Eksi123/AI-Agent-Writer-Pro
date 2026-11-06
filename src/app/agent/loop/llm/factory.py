@@ -103,7 +103,7 @@ def build_chat_model(
                 base_url = _KNOWN_BASE_URLS["openrouter"]
             if base_url:
                 kwargs["base_url"] = base_url
-            return _with_profile(ChatOpenAI(**kwargs), model)
+            return stamp_prompt_cache_mode(_with_profile(ChatOpenAI(**kwargs), model), provider)
         if ptype == "azure_openai":
             from langchain_openai import AzureChatOpenAI
 
@@ -115,16 +115,22 @@ def build_chat_model(
                 api_version=extra.get("api_version", "2024-06-01"),
                 **params,
             )
-            return _with_profile(azure_model, model)
+            return stamp_prompt_cache_mode(_with_profile(azure_model, model), provider)
         if ptype == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            return _with_profile(ChatAnthropic(model=model.model_id, api_key=api_key or None, **params), model)
+            return stamp_prompt_cache_mode(
+                _with_profile(ChatAnthropic(model=model.model_id, api_key=api_key or None, **params), model),
+                provider,
+            )
         if ptype == "google":
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            return _with_profile(
-                ChatGoogleGenerativeAI(model=model.model_id, google_api_key=api_key or None, **params), model
+            return stamp_prompt_cache_mode(
+                _with_profile(
+                    ChatGoogleGenerativeAI(model=model.model_id, google_api_key=api_key or None, **params), model
+                ),
+                provider,
             )
     except LlmProviderError:
         raise
@@ -153,6 +159,33 @@ def _with_profile(chat_model: BaseChatModel, model: LlmModel) -> BaseChatModel:
         chat_model.profile = profile  # type: ignore[attr-defined]
     except Exception as exc:  # pragma: no cover - 个别 SDK 属性只读
         logger.warning("chat_model_profile_stamp_failed", model=model.model_id, error=str(exc))
+    return chat_model
+
+
+def stamp_prompt_cache_mode(chat_model: BaseChatModel, provider: LlmProvider) -> BaseChatModel:
+    """标记该模型的**显式前缀缓存断点**模式（供 PromptCacheMiddleware 使用）。
+
+    - `dashscope`：OpenAI 兼容 + DashScope base_url/名称 → content 块带
+      `cache_control: {"type": "ephemeral"}`（显式上下文缓存，命中按折扣计费）；
+    - `anthropic`：langchain_anthropic 原生支持 content 块 cache_control；
+    - 其它（OpenAI 官方等隐式自动缓存）→ None，不加标记避免 400。
+    """
+    mode: str | None = None
+    ptype = (provider.type or "").lower()
+    name = (provider.name or "").lower()
+    base_url = (provider.base_url or "").lower()
+    if ptype == "anthropic":
+        mode = "anthropic"
+    elif "dashscope" in name or "dashscope" in base_url or "aliyuncs" in base_url:
+        mode = "dashscope"
+    try:
+        chat_model.prompt_cache_mode = mode  # type: ignore[attr-defined]
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "prompt_cache_mode_stamp_failed",
+            provider=provider.name,
+            error=str(exc),
+        )
     return chat_model
 
 

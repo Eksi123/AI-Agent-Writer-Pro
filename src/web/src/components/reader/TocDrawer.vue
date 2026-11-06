@@ -102,9 +102,9 @@ function chLabel(title: string, sortOrder: number, index: number): string {
             <template v-if="isExpanded(vol.id, vi)">
               <div
                 v-for="(ch, ci) in vol.chapters"
-                :key="ch.id"
+                :key="`${vol.id}-${ch.id}`"
                 class="toc-node chapter-node"
-                :class="{ active: reader.activeChapterId === ch.id }"
+                :class="{ active: reader.activeChapterId === ch.id && !reader.activeOutline }"
                 @click="reader.openChapter(ch.id)"
               >
                 <span class="ch-title">{{ chLabel(ch.title, ch.sort_order, ci) }}</span>

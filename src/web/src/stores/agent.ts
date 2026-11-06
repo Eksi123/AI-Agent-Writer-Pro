@@ -129,16 +129,22 @@ export const useAgentStore = defineStore('agent', () => {
   /** 最近一次运行的用量 */
   const lastUsage = ref<{ tokens_in: number; tokens_out: number }>({ tokens_in: 0, tokens_out: 0 })
   /** 进行中 run 的累计消耗（含子代理，随 usage 事件的 run_tokens_* 实时刷新）——
-   * 头部「全部会话消耗」= 已完成 run 总和（usage）+ 本值 */
-  const runCumulative = ref<{ tokens_in: number; tokens_out: number }>({ tokens_in: 0, tokens_out: 0 })
+   * 头部「全部会话消耗」= 已完成 run 总和（usage）+ 本值；
+   * cached_in = 输入 token 中命中 provider 前缀缓存的累计（缓存命中率分子） */
+  const runCumulative = ref<{ tokens_in: number; tokens_out: number; cached_in: number }>({
+    tokens_in: 0,
+    tokens_out: 0,
+    cached_in: 0,
+  })
   /** 当前项目 token 使用量 + 会话数（会话框头部展示）
-   * 同时保留入/出明细，供头部 Token 悬浮提示展示 */
+   * 同时保留入/出/缓存命中明细，供头部 Token 悬浮提示与缓存命中率展示 */
   const usage = ref<{
     session_count: number
     tokens_in: number
     tokens_out: number
     tokens_total: number
-  }>({ session_count: 0, tokens_in: 0, tokens_out: 0, tokens_total: 0 })
+    cached_in: number
+  }>({ session_count: 0, tokens_in: 0, tokens_out: 0, tokens_total: 0, cached_in: 0 })
   /** 运行中「添加到队列」的待发消息（run.end 后自动发送首条）
  * 队列项带 id，支持编辑内容 / 删除 / 立即发送（改变排队状态） */
   const queued = ref<QueuedMessage[]>([])
@@ -311,6 +317,7 @@ export const useAgentStore = defineStore('agent', () => {
         tokens_in: u.tokens_in,
         tokens_out: u.tokens_out,
         tokens_total: u.tokens_total,
+        cached_in: u.cached_in ?? 0,
       }
     } catch {
       /* 用量读取失败不阻断会话 */
@@ -512,7 +519,7 @@ export const useAgentStore = defineStore('agent', () => {
       currentRunId = runId
       running.value = true
       // 新 run 开始：run 级累计清零（头部实时部分从零起算）
-      runCumulative.value = { tokens_in: 0, tokens_out: 0 }
+      runCumulative.value = { tokens_in: 0, tokens_out: 0, cached_in: 0 }
       // 会话进入「AI 思考执行中」（列表右侧灰色小字 + 并发上限本地预检）
       markSessionRunning(currentSessionId.value)
       // **不**清零 lastUsage——上下文只增不减，清零会让百分比闪回 100%；
@@ -681,6 +688,7 @@ export const useAgentStore = defineStore('agent', () => {
         runCumulative.value = {
           tokens_in: Number(data.run_tokens_in ?? 0),
           tokens_out: Number(data.run_tokens_out ?? 0),
+          cached_in: Number(data.run_cached_in ?? 0),
         }
         break
       }

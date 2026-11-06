@@ -28,6 +28,34 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+#: run 级「第一层已注入槽位」登记（ContextGuard 第二层保险据此判断是否需要兜底）。
+#: key = run_id，value = 已注入非空内容的槽位名集合；run 结束由 runner 清理。
+INJECTED_SLOTS: dict[str, set[str]] = {}
+
+
+def injected_slots_of(run_id: str) -> set[str]:
+    return INJECTED_SLOTS.get(run_id, set())
+
+
+def clear_injected_slots(run_id: str) -> None:
+    INJECTED_SLOTS.pop(run_id, None)
+
+
+def append_injections(messages: list[Any], injected: list[Any]) -> list[Any]:
+    """把注入的 system 消息追加到消息列表**尾部**（历史与当前用户消息之后）。
+
+    token 缓存友好（对齐 Claude Code / Codex / Cursor 的做法：稳定内容靠前、
+    易变内容靠尾）：provider 隐式前缀缓存按「从头开始的最长公共前缀」命中。
+    - 同 run 内：注入段按 run 缓存、字节稳定且位置固定在尾部 → 每次调用
+      `system + 历史 + 注入` 整体互为前缀，全命中；
+    - 跨 run（同会话新消息）：注入段内容会变，但它在**尾部**，不影响
+      `system + 全部历史` 这段公共前缀命中——若放在头部（system 之后），
+      新 run 的注入段会在第 2 位切断前缀，整段历史全部 miss。
+    多个注入段按中间件装配顺序依次追加（recap/outline_ctx → hidden → guard），
+    顺序确定；同名旧注入先剔除再追加，保证每段只出现一次。
+    """
+    return messages + injected
+
 
 class RecapInjectionMiddleware(AgentMiddleware):
     """在每次模型调用前，把前情提要 / 大纲摘录追加到 system 提示。
@@ -38,7 +66,6 @@ class RecapInjectionMiddleware(AgentMiddleware):
     进而被 MessageSyncer 落库、前端渲染成「重复的问答」。请求级注入只影响本次模型调用，
     不写 state、不落消息树。
     """
-
     name = "RecapInjection"
 
     def __init__(
@@ -81,17 +108,24 @@ class RecapInjectionMiddleware(AgentMiddleware):
                     logger.debug("budget_check_failed", error=str(exc))
 
         segments = [(name, text) for name, text in (("recap", recap), ("outline_ctx", outline_ctx)) if text]
+        # 登记本 run 已注入的槽位（ContextGuard 第二层保险据此判断是否需要兜底提醒）
+        run_id = str(getattr(context, "run_id", "") or "") if context is not None else ""
+        if run_id and segments:
+            INJECTED_SLOTS.setdefault(run_id, set()).update(name for name, _ in segments)
         if not segments:
             return await handler(request)
 
         # 敏感内容检查挂载位（MVP 不实现，见手册「二、(2)」）
         self._check_sensitive(request)
 
+        # 注入置于消息列表**头部**（system 之后、历史之前）：注入内容按 run 缓存、
+        # 字节稳定，历史只在尾部追加 → 每次调用的公共前缀（system+注入+旧历史）
+        # 最大化命中 provider 的隐式前缀缓存。
         messages = list(request.messages)
         injected = [SystemMessage(content=text, name=name) for name, text in segments]
         names = {name for name, _ in segments}
         messages = [m for m in messages if getattr(m, "name", None) not in names]
-        messages = [*injected, *messages]
+        messages = append_injections(messages, injected)
         # 请求级注入：只改本次调用的 messages，不回写 graph state
         return await handler(request.override(messages=messages))
 

@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.agent.harness.approval.write_approval import INTERRUPT_KIND
+from app.agent.harness.llm.budget import cached_tokens_of
 from app.agent.loop.context import AgentContext
 from app.agent.tracing.messages.message_sync import MessageSyncer
 from app.agent.tracing.sse.emitter import Emitter
@@ -36,13 +37,12 @@ _STREAM_MODES = ["updates", "messages"]
 
 
 @dataclass
-
-
 class StreamResult:
     interrupted: bool = False
     cancelled: bool = False
     tokens_in: int = 0
     tokens_out: int = 0
+    cached_in: int = 0
     recursion_used: int = 0
     fallback_count: int = 0
 
@@ -66,7 +66,7 @@ async def stream_graph(
     await syncer.init_baseline(graph, config, user_message_id=user_message_id, resumed=resumed)
     active_subagents: set[str] = set()
     #: run 级 token 累计（含子代理）——usage 事件随带，供前端头部实时统计
-    run_totals: list[int] = [0, 0]
+    run_totals: list[int] = [0, 0, 0]  # [tokens_in, tokens_out, cached_in]
 
     async for chunk in graph.astream(
         stream_input, config=config, stream_mode=_STREAM_MODES, subgraphs=True, context=context,
@@ -89,6 +89,7 @@ async def stream_graph(
             usage = await _handle_message_chunk(run_id, session_id, namespace, payload, emitter, run_totals)
             result.tokens_in += usage[0]
             result.tokens_out += usage[1]
+            result.cached_in += usage[2]
         elif mode == "updates":
             if not namespace and isinstance(payload, dict) and "tools" in payload and active_subagents:
                 for sub_name in list(active_subagents):
@@ -120,8 +121,8 @@ async def _handle_message_chunk(
     payload: Any,
     emitter: Emitter,
     run_totals: list[int],
-) -> tuple[int, int]:
-    """`stream_mode="messages"` → message.delta / subagent.delta / usage。返回 (tokens_in, tokens_out)。
+) -> tuple[int, int, int]:
+    """`stream_mode="messages"` → message.delta / subagent.delta / usage。返回 (tokens_in, tokens_out, cached_in)。
 
     usage 事件携带两组口径：
     - `tokens_in/out`：**本次模型调用**（主 Agent 或子代理，`subagent` 标明）——
@@ -132,7 +133,7 @@ async def _handle_message_chunk(
     try:
         message, _meta = payload
     except (TypeError, ValueError):
-        return 0, 0
+        return 0, 0, 0
 
     content = getattr(message, "content", "")
     text = content if isinstance(content, str) else ""
@@ -154,25 +155,30 @@ async def _handle_message_chunk(
 
     usage = getattr(message, "usage_metadata", None)
     tokens_in = tokens_out = 0
+    cached_in = 0
     if usage:
         tokens_in = int(usage.get("input_tokens") or 0)
         tokens_out = int(usage.get("output_tokens") or 0)
+        cached_in = cached_tokens_of(usage)
         run_totals[0] += tokens_in
         run_totals[1] += tokens_out
+        run_totals[2] += cached_in
         await emitter.publish(
             "usage",
             {
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,
+                "cached_in": cached_in,
                 "run_tokens_in": run_totals[0],
                 "run_tokens_out": run_totals[1],
+                "run_cached_in": run_totals[2],
                 "subagent": is_subagent,
                 "model": getattr(message, "response_metadata", {}).get("model_name")
                 if isinstance(getattr(message, "response_metadata", None), dict)
                 else None,
             },
         )
-    return tokens_in, tokens_out
+    return tokens_in, tokens_out, cached_in
 
 
 async def _handle_update(
@@ -223,6 +229,7 @@ async def _emit_message_complete(message: Any, emitter: Emitter, subagent_name: 
         "tool_calls": tool_calls,
         "tokens_in": int(usage.get("input_tokens") or 0),
         "tokens_out": int(usage.get("output_tokens") or 0),
+        "cached_in": cached_tokens_of(usage),
     }
     if subagent_name:
         await emitter.publish("subagent.end", {"subagent_name": subagent_name, **data})
@@ -277,7 +284,19 @@ async def _persist_and_emit_interrupt(
     kind = value.get("kind")
     interrupt_id = new_id()
 
-    if kind == "workflow_consult":
+    if kind == "call_budget":
+        # 调用预算咨询（ModelCallBudgetMiddleware 已先行建行并发事件；此处仅幂等复用）
+        itype = "consult"
+        tool_name = None
+        emit_event = "consult.request"
+        emit_data = {
+            "interrupt_id": interrupt_id,
+            "question": value.get("question"),
+            "options": value.get("options") or [],
+            "allow_text": bool(value.get("allow_text", True)),
+            "workflow_stage": value.get("workflow_stage"),
+        }
+    elif kind == "workflow_consult":
         itype = "consult"
         tool_name = None
         emit_event = "consult.request"

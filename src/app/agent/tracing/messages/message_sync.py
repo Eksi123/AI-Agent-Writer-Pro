@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.agent.harness.llm.budget import cached_tokens_of
 from app.agent.tracing.messages.tree import add_message
 from app.core.logging import get_logger
 from app.db.models import AgentSession
@@ -86,13 +87,17 @@ class MessageSyncer:
             if not new_messages:
                 return
 
-        # 中间件注入的 system（前情提要等）与**本轮 API 已落库的用户消息副本**
-        # 不入消息树——只推进指针。否则前端会把前情提要渲染成一条「回复」，
-        # 重复 user 还会把一轮问答拆成两轮。
+        # 中间件注入的 system（前情提要等）、**内部注入的 human**（steer 引导 /
+        # 系统守护纠正 / 收尾 nudge）与**本轮 API 已落库的用户消息副本**
+        # 不入消息树——只推进指针。否则前端会把前情提要/守护提醒渲染成气泡，
+        # 重复 user 还会把一轮问答拆成两轮（中间思考文本被当成「最终回复」展示）。
         filtered: list[Any] = []
         for msg in new_messages:
             role = _role_of(msg)
             if role == "system":
+                self._index += 1
+                continue
+            if role == "user" and _is_internal_human(msg):
                 self._index += 1
                 continue
             if role == "user" and self._api_user_text is not None and _text_of(msg) == self._api_user_text:
@@ -133,6 +138,7 @@ class MessageSyncer:
                         status=_status_of(msg),
                         tokens_in=int(usage.get("input_tokens") or 0),
                         tokens_out=int(usage.get("output_tokens") or 0),
+                        cached_in=cached_tokens_of(usage),
                         model=_model_of(msg),
                     )
                     self._last_leaf = row.id
@@ -170,6 +176,19 @@ def _is_incomplete(msg: Any) -> bool:
     if getattr(msg, "status", None) == "streaming":
         return True
     return not getattr(msg, "content", "") and not getattr(msg, "tool_calls", None)
+
+
+#: 内部注入的 human 消息前缀（系统守护纠正 / 预算补充指示 / 收尾 nudge）
+#: 用开括号前缀匹配——覆盖「（系统守护）」与「（系统守护·熔断）」两种文案
+_INTERNAL_HUMAN_PREFIXES = ("（系统守护", "（系统修复", "（用户补充指示")
+
+
+def _is_internal_human(msg: Any) -> bool:
+    """内部注入的 human（steer 引导 / 守护纠正 / nudge）不入消息树、不展示。"""
+    if getattr(msg, "name", None) == "steer":
+        return True
+    text = _text_of(msg)
+    return any(text.startswith(p) for p in _INTERNAL_HUMAN_PREFIXES)
 
 
 def _text_of(msg_or_raw: Any) -> str:

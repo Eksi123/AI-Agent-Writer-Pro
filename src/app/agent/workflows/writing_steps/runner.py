@@ -68,7 +68,7 @@ async def execute_chapter_workflow(
     resume_value: Any,
     cancel_flag: dict[str, bool],
 ) -> None:
-    tokens_in = tokens_out = recursion_used = fallback_count = 0
+    tokens_in = tokens_out = cached_in = recursion_used = fallback_count = 0
     final_status = "completed"
     error_text: str | None = None
 
@@ -172,20 +172,28 @@ async def execute_chapter_workflow(
                 # 让 Agent 代写大纲小节（一次 agent 流），完成后重查 S0
                 draft_prompt = build_outline_draft_prompt(state)
                 syncer = MessageSyncer(session_id=session_id)
+                is_draft_resume = gen_command is not None
+                if is_draft_resume:
+                    # 代写流内触发过中断（写入审批/调用预算）→ 用 resume 续跑同一 graph
+                    draft_input: Any = gen_command
+                    gen_command = None
+                else:
+                    draft_input = {"messages": [("user", draft_prompt)]}
                 sresult = await stream_graph(
                     graph=graph,
                     config=config,
                     context=context,
-                    stream_input={"messages": [("user", draft_prompt)]},
+                    stream_input=draft_input,
                     run_id=run_id,
                     session_id=session_id,
                     emitter=emitter,
                     cancel_flag=cancel_flag,
                     syncer=syncer,
-                    resumed=False,
+                    resumed=is_draft_resume,
                 )
                 tokens_in += sresult.tokens_in
                 tokens_out += sresult.tokens_out
+                cached_in += sresult.cached_in
                 recursion_used += sresult.recursion_used
                 fallback_count += sresult.fallback_count
                 if sresult.cancelled:
@@ -228,6 +236,7 @@ async def execute_chapter_workflow(
                 )
                 tokens_in += sresult.tokens_in
                 tokens_out += sresult.tokens_out
+                cached_in += sresult.cached_in
                 recursion_used += sresult.recursion_used
                 fallback_count += sresult.fallback_count
 
@@ -270,6 +279,7 @@ async def execute_chapter_workflow(
                 status=final_status,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                cached_in=cached_in,
                 recursion_used=recursion_used,
                 fallback_count=fallback_count,
                 error=error_text,

@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
-from app.api import api_router
+# from app.api import api_router  # 延迟到 create_app() 内导入，减少启动耗时 ~25s
 from app.core.config import PROJECT_ROOT, get_settings
 from app.core.errors import CODE_TO_HTTP, CODE_TO_MESSAGE, ApiError, ErrorCode
 from app.core.logging import configure_logging, get_logger
@@ -79,6 +79,8 @@ async def _seed_agent_config() -> None:
 
 
 def create_app() -> FastAPI:
+    from app.api import api_router  # 延迟导入：避免模块级加载全部路由（~25s）
+
     settings = get_settings()
     app = FastAPI(
         title="AI Writer Pro",

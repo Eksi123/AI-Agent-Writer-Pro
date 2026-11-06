@@ -706,7 +706,7 @@ class TestRecapMiddlewareSlots:
         mw = RecapInjectionMiddleware(recap_provider=recap, outline_ctx_provider=outline)
         messages = await self._run(mw, SimpleNamespace(run_id="r2", emit=None))
         names = [getattr(m, "name", None) for m in messages]
-        assert names == ["recap", "outline_ctx", None]
+        assert names == [None, "recap", "outline_ctx"]  # 注入在尾部（缓存友好）
 
     async def test_provider_cached_per_run(self):
         calls: list[str] = []
@@ -739,11 +739,11 @@ class TestRecapMiddlewareSlots:
         mw = RecapInjectionMiddleware(recap_provider=recap)
         ctx = SimpleNamespace(run_id="r5", emit=None)
         first = await self._run(mw, ctx)
-        assert getattr(first[0], "name", None) == "recap"
+        assert getattr(first[-1], "name", None) == "recap"  # 尾部注入（缓存友好）
         # 缓存生效：改 provider 结果不影响同 run（这是既有语义，缓存优先）
         state["text"] = ""
         second = await self._run(mw, ctx)
-        assert getattr(second[0], "name", None) == "recap"
+        assert getattr(second[-1], "name", None) == "recap"
 
 
 # ---------------------------------------------------------------------------
@@ -993,8 +993,8 @@ class TestCompressionThreshold:
 class TestPromptSlimming:
     """主提示词精简 + 梗概截断 + recaller 子代理。"""
 
-    def test_iron_rules_are_eight(self):
-        """铁律 8 条（含 2026-11-05 新增的截断续写/禁止重复全量读取），硬约束一条不少。"""
+    def test_iron_rules_are_ten(self):
+        """铁律 10 条（2026-11-06 新增「调度者定位」「没有依据不动笔」），硬约束一条不少。"""
         import re
 
         from app.agent.loop.prompts import render
@@ -1010,13 +1010,16 @@ class TestPromptSlimming:
             extra_instructions="",
         )
         rules = re.findall(r"(?m)^\d+\.\s+\*\*", prompt)
-        assert len(rules) == 8, f"铁律应为 8 条，实际 {len(rules)}"
+        assert len(rules) == 10, f"铁律应为 10 条，实际 {len(rules)}"
         # 关键硬约束仍在
         for required in ("备注", "outline_grep", "recaller", "任务没做完不要收尾", "不要新建/重命名章节文件"):
             assert required in prompt, f"缺少硬约束：{required}"
         # 新增反浪费硬约束
         for required in ("续写", "重复全量读取"):
             assert required in prompt, f"缺少反浪费约束：{required}"
+        # 调度者定位与两层保险第二层约束
+        for required in ("你是调度者，不是执行者", "没有依据不动笔"):
+            assert required in prompt, f"缺少约束：{required}"
         # 旧的「先 read_file 大纲」指令已移除（改为按需摘录）
         assert "先 `read_file` 大纲" not in prompt
 
@@ -1160,7 +1163,7 @@ class TestUsageEventDualGauge:
             async def publish(self, event: str, data: dict) -> None:
                 published.append((event, data))
 
-        totals = [0, 0]
+        totals = [0, 0, 0]
         msg1 = AIMessage(
             content="a",
             usage_metadata={"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
@@ -1173,8 +1176,8 @@ class TestUsageEventDualGauge:
         got1 = await _handle_message_chunk("r", "s", (), (msg1, {}), _Emitter(), totals)
         got2 = await _handle_message_chunk("r", "s", ("sub", "tools"), (msg2, {}), _Emitter(), totals)
 
-        assert got1 == (100, 10) and got2 == (50, 5)
-        assert totals == [150, 15]
+        assert got1 == (100, 10, 0) and got2 == (50, 5, 0)
+        assert totals == [150, 15, 0]
         usages = [d for ev, d in published if ev == "usage"]
         assert len(usages) == 2
         # 主 Agent：无子代理标记，run 累计=本次
@@ -1202,7 +1205,7 @@ class TestWastefulLoopGuard:
 
         mw = WastefulLoopGuardMiddleware()
         msgs = self._messages([("read_file", "/a.md")] * 3)
-        kind, count = mw.count_repeats(msgs)
+        kind, _path, count = mw.worst_repeat(msgs)
         assert kind == "read" and count == 3
 
     def test_detects_repeated_writes(self):
@@ -1210,7 +1213,7 @@ class TestWastefulLoopGuard:
 
         mw = WastefulLoopGuardMiddleware()
         msgs = self._messages([("write_file", "/o.md"), ("edit_file", "/o.md"), ("write_file", "/o.md")])
-        kind, count = mw.count_repeats(msgs)
+        kind, _path, count = mw.worst_repeat(msgs)
         assert kind == "write" and count == 3
 
     def test_no_repeat_below_limit(self):
@@ -1218,7 +1221,7 @@ class TestWastefulLoopGuard:
 
         mw = WastefulLoopGuardMiddleware()
         msgs = self._messages([("read_file", "/a.md"), ("read_file", "/b.md")])
-        assert mw.count_repeats(msgs) == ("", 0)
+        assert mw.worst_repeat(msgs) == ("", "", 0)
 
     async def test_pushes_steer_on_repeat(self):
         from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware

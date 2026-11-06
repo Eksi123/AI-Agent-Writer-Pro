@@ -407,13 +407,65 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
 
 
 def _renumber_volumes(volumes: list[dict[str, Any]]) -> None:
-    """按当前 `sort_order` 次序把卷重新连续编号为 1..N（原地修改）。"""
+    """按当前 `sort_order` 次序把卷重新连续编号为 1..N（原地修改）。
+
+    同时同步标题里的序数词（如「第二卷 醉锦城」→「第一卷 醉锦城」），
+    保持标题序数与 sort_order 一致，消除大纲校验的橙色警告。
+    标题无「第X卷」前缀的不动。
+    """
     ordered = sorted(
         volumes,
         key=lambda v: (int(v.get("sort_order") or 0), str(v.get("created_at") or "")),
     )
     for i, vol in enumerate(ordered, start=1):
         vol["sort_order"] = i
+        vol["title"] = _sync_title_ordinal(vol.get("title") or "", i, kind="卷")
+
+
+def _sync_title_ordinal(title: str, ordinal: int, *, kind: str) -> str:
+    """把标题里的「第X{kind}」序数词替换为 `ordinal`，其余部分原样保留。
+
+    - 标题无「第X{kind}」前缀 → 原样返回（不擅自加序数）；
+    - 原序数为阿拉伯数字 → 仍用阿拉伯数字；
+    - 原序数为中文数字 → 仍用中文数字（1-99 覆盖）。
+    """
+    import re
+
+    cn_digits = "零一二三四五六七八九十百千万两"
+    pattern = rf"^第\s*([0-9{cn_digits}]+)\s*{kind}"
+    m = re.match(pattern, title.strip())
+    if not m:
+        return title
+    token = m.group(1)
+    use_cn = not token.isdigit()
+    if use_cn:
+        new_num = _to_cn_ordinal(ordinal)
+    else:
+        new_num = str(ordinal)
+    suffix = title[m.end():]
+    return f"第{new_num}{kind}{suffix}"
+
+
+#: 1-99 中文数字表（覆盖小说卷/章常见范围）
+_CN_ORDINALS = [
+    "", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+    "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九", "三十",
+    "三十一", "三十二", "三十三", "三十四", "三十五", "三十六", "三十七", "三十八", "三十九", "四十",
+    "四十一", "四十二", "四十三", "四十四", "四十五", "四十六", "四十七", "四十八", "四十九", "五十",
+    "五十一", "五十二", "五十三", "五十四", "五十五", "五十六", "五十七", "五十八", "五十九", "六十",
+    "六十一", "六十二", "六十三", "六十四", "六十五", "六十六", "六十七", "六十八", "六十九", "七十",
+    "七十一", "七十二", "七十三", "七十四", "七十五", "七十六", "七十七", "七十八", "七十九", "八十",
+    "八十一", "八十二", "八十三", "八十四", "八十五", "八十六", "八十七", "八十八", "八十九", "九十",
+    "九十一", "九十二", "九十三", "九十四", "九十五", "九十六", "九十七", "九十八", "九十九", "一百",
+]
+
+
+def _to_cn_ordinal(n: int) -> str:
+    """整数 → 中文序数词（1-100 查表，超出回落阿拉伯数字）。"""
+    if 1 <= n <= len(_CN_ORDINALS) - 1:
+        return _CN_ORDINALS[n]
+    return str(n)
 
 
 def _locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
@@ -533,12 +585,43 @@ def _shift_chapter_meta(project_id: str, vol_id: str, chapter_id: str, new_sort:
     files.write_chapter(project_id, vol_id, chapter_id, meta, content)
 
 
+def _sync_chapter_title_ordinal(project_id: str, vol_id: str, chapter_id: str, ordinal: int) -> None:
+    """把章节标题里的「第X章」序数词替换为 `ordinal`，其余部分原样保留。
+
+    - 标题无「第X章」前缀 → 不动；
+    - 原序数为阿拉伯数字 → 仍用阿拉伯数字；
+    - 原序数为中文数字 → 仍用中文数字（1-99 覆盖）。
+    只改 frontmatter 的 `title`，不动正文、不递增 version、不写快照。
+    """
+    meta, content = files.read_chapter(project_id, vol_id, chapter_id)
+    old_title = meta.get("title") or ""
+    new_title = _sync_title_ordinal(old_title, ordinal, kind="章")
+    if new_title != old_title:
+        meta["title"] = new_title
+        files.write_chapter(project_id, vol_id, chapter_id, meta, content)
+        logger.info(
+            "chapter_title_ordinal_synced",
+            project_id=project_id,
+            chapter_id=chapter_id,
+            old_title=old_title,
+            new_title=new_title,
+        )
+
+
 def _renumber_chapters(project_id: str, vol_id: str, keep: list[dict[str, Any]]) -> None:
-    """按当前 `sort_order` 次序把卷内章重新连续编号为 1..N。"""
+    """按当前 `sort_order` 次序把卷内章重新连续编号为 1..N。
+
+    同时同步章节标题里的序数词（如「第五章 青衣谪凡」→「第二章 青衣谪凡」），
+    保持标题序数与 sort_order 一致，消除大纲校验的橙色警告。
+    标题无「第X章」前缀的不动。
+    """
     ordered = sorted(keep, key=lambda c: (int(c.get("sort_order") or 0), str(c.get("id"))))
     for i, ch in enumerate(ordered, start=1):
-        if int(ch.get("sort_order") or 0) != i:
+        old_sort = int(ch.get("sort_order") or 0)
+        if old_sort != i:
             _shift_chapter_meta(project_id, vol_id, str(ch["id"]), i)
+        # 同步标题序数（无论 sort_order 是否变化，标题可能已过时）
+        _sync_chapter_title_ordinal(project_id, vol_id, str(ch["id"]), i)
 
 
 def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:

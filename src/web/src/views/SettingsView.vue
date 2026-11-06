@@ -193,7 +193,7 @@ function back(): void {
           <div class="muted text-sm">{{ t('settings.autosaveHint') }}</div>
         </el-form-item>
 
-        <!-- 小说导出地址：留空 = 桌面；浏览器无法读取文件夹绝对路径，故用路径输入 -->
+        <!-- 小说导出地址：默认为桌面；浏览器无法读取文件夹绝对路径，故用路径输入 -->
         <el-form-item :label="t('settings.exportDir')">
           <el-input v-model="form.export_dir" class="export-dir-input" :placeholder="t('settings.exportDirPlaceholder')" />
           <div class="muted text-sm">{{ t('settings.exportDirHint') }}</div>

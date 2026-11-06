@@ -50,6 +50,7 @@ async def add_message(
     status: str = "complete",
     tokens_in: int = 0,
     tokens_out: int = 0,
+    cached_in: int = 0,
     model: str | None = None,
 ) -> Message:
     """追加一条消息。`parent_id` 为空时自动接在当前 active_leaf 之后。"""
@@ -84,6 +85,7 @@ async def add_message(
         status=status,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
+        cached_in=cached_in,
         model=model,
         run_id=run_id,
         created_at=utcnow(),

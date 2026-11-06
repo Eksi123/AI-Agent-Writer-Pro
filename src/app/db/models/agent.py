@@ -59,6 +59,8 @@ class Message(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="complete")
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 输入 token 中命中 provider 前缀缓存的部分（usage_metadata.input_token_details.cache_read）
+    cached_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), nullable=False, default=utcnow)
@@ -99,6 +101,8 @@ class AgentRun(Base):
     recursion_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: 输入 token 中命中 provider 前缀缓存的累计（缓存命中率 = cached_in / tokens_in）
+    cached_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     fallback_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     langfuse_trace_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

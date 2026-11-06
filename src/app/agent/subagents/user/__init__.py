@@ -40,6 +40,23 @@ def _loads_list(raw: str | None) -> list[str]:
     return [str(x) for x in value] if isinstance(value, list) else []
 
 
+#: 内置子代理回传纪律（装配期追加，DB 旧行/用户改过的提示词同样生效；已有则不重复追加）
+_RETURN_DISCIPLINE = (
+    "\n\n## 回传纪律\n"
+    "- 你的**最终回复就是回传给主 Agent 的唯一内容**：必须是简洁的中文结论"
+    "（做了什么 / 关键要点 / 遗留问题），一两段话即可；"
+    "禁止粘贴工具日志、JSON、代码块、检索原文或正文大段内容；\n"
+    "- 中间思考与工具调用过程不会回传，也不要写进最终回复。\n"
+)
+
+
+def _with_return_discipline(prompt: str) -> str:
+    text = prompt or ""
+    if "回传纪律" in text:
+        return text
+    return text.strip() + _RETURN_DISCIPLINE
+
+
 def row_to_spec(row: SubagentConfig) -> dict[str, Any]:
     """DB 行 → 装配 spec（与内置 spec 同构；提示词为空时回落内置同名定义）。
 
@@ -59,7 +76,11 @@ def row_to_spec(row: SubagentConfig) -> dict[str, Any]:
         "name": row.name,
         "label": row.name,
         "description": row.description,
-        "system_prompt": row.system_prompt or builtin.get("system_prompt", ""),
+        "system_prompt": _with_return_discipline(
+            row.system_prompt or builtin.get("system_prompt", "")
+        )
+        if row.is_builtin
+        else (row.system_prompt or builtin.get("system_prompt", "")),
         "mode": mode,
         "skills": skills,
         "tools": tools,

@@ -6,10 +6,10 @@
 时间: 2026-10-27
 说明: 自定义中间件（手册「二、(2)」表，挂载点用真实 API）。
 
-装配顺序：WriteApproval → ModelRetry → ModelSwitchOnFailure（连续失败才切换）
-→ ModelCallLimit → TodoList → RecapInjection → HiddenContext → PairingRepair
-→ WastefulLoopGuard → SteerInjection → ReadScopeGuard → WorkspaceGuard
-→ FileChangeNotify → ContentLock。
+装配顺序：WriteApproval → ModelCallBudget（调用预算）→ ModelRetry → ModelSwitchOnFailure
+（连续失败才切换）→ TodoList → RecapInjection → HiddenContext → ContextGuard（两层保险第二层）
+→ PairingRepair → WastefulLoopGuard（分级熔断）→ SteerInjection → ReadScopeGuard
+→ WorkspaceGuard → FileChangeNotify → ContentLock → PromptCache（显式缓存断点，最内层）。
 
     （架构优化）：安全类中间件已迁至 harness——
     `WriteApprovalMiddleware`（harness/approval）、`WorkspaceGuardMiddleware`（harness/guard）、
@@ -22,6 +22,7 @@ from app.agent.harness.approval.write_approval import WriteApprovalMiddleware
 from app.agent.harness.guard.read_scope import ReadScopeGuardMiddleware
 from app.agent.harness.guard.workspace_guard import WorkspaceGuardMiddleware
 from app.agent.harness.lock.content_lock import ContentLockMiddleware
+from app.agent.loop.middleware.context_guard import ContextGuardMiddleware
 from app.agent.loop.middleware.file_change import FileChangeNotifyMiddleware
 from app.agent.loop.middleware.hidden_context import HiddenContextInjectionMiddleware
 from app.agent.loop.middleware.overflow_guard import ContextOverflowGuardMiddleware
@@ -42,4 +43,5 @@ __all__ = [
     "ReadScopeGuardMiddleware",
     "PairingRepairMiddleware",
     "ContextWindowSyncMiddleware",
+    "ContextGuardMiddleware",
 ]

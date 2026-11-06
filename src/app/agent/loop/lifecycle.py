@@ -82,6 +82,7 @@ async def finalize(
     status: str,
     tokens_in: int,
     tokens_out: int,
+    cached_in: int = 0,
     recursion_used: int,
     fallback_count: int,
     error: str | None,
@@ -99,6 +100,7 @@ async def finalize(
             run.status = status
             run.tokens_in = tokens_in
             run.tokens_out = tokens_out
+            run.cached_in = cached_in
             run.recursion_used = recursion_used
             run.fallback_count = fallback_count
             run.error = error

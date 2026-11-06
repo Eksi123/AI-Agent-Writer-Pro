@@ -272,7 +272,12 @@ class TestSessionUsage:
 
         usage = await client.get(f"/api/v1/agent/sessions/{sid}/usage")
         assert usage.status_code == 200
-        assert usage.json()["data"] == {"session_id": sid, "tokens_in": 0, "tokens_out": 0}
+        assert usage.json()["data"] == {
+            "session_id": sid,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cached_in": 0,
+        }
 
         async with session_scope() as db:
             assert (await session_usage(db, sid))["tokens_in"] == 0

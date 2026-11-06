@@ -230,15 +230,21 @@ class TestCompletionNudge:
         _, model_ref = await setup_provider_model(client)
         sid = await new_session(client, novel_id)
         path = f"/projects/{novel_id}/chapters/n2.md"
-        install_fake(
+        fake = install_fake(
             model_ref,
             [ai_tool_call("write_file", {"file_path": path, "content": "x"}, "c1"), ai_text("")],
         )
         run_id = await post_message(client, sid, "写 n2")
         await drain_events(run_id)
         await wait_status(client, run_id, ("completed", "failed"))
+        # nudge 仍触发额外一轮模型调用（其入参含系统守护提示）……
+        assert len(fake.calls) >= 2
+        assert any(
+            any("系统守护" in str(m.content) for m in call) for call in fake.calls[1:]
+        )
+        # ……但内部守护消息**永不落消息树**（不作为回复内容展示在会话中）
         tree = await _tree(client, sid)
-        assert any("系统守护" in t for t in _texts(tree))
+        assert not any("系统守护" in t for t in _texts(tree))
 
     async def test_no_nudge_with_final_reply(self, client, novel_id):
         _, model_ref = await setup_provider_model(client)

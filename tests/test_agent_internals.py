@@ -234,9 +234,11 @@ class TestBuilderAssembly:
         def idx(key: str) -> int:
             return next(i for i, n in enumerate(names) if key.lower() in n.lower())
 
-        assert idx("ModelRetry") < idx("ModelCallLimit") < idx("TodoList")
+        assert idx("ModelCallBudget") < idx("ModelRetry") < idx("TodoList")
         assert idx("TodoList") < idx("RecapInjection") < idx("WorkspaceGuard")
         assert idx("WorkspaceGuard") < idx("FileChangeNotify")
+        # 两层保险第二层：ContextGuard 在 HiddenContext 之后、SteerInjection 之前
+        assert idx("HiddenContext") < idx("ContextGuard") < idx("SteerInjection")
         # WriteApproval 必须**最外层**（index 0）
         assert names[0] == "WriteApproval"
 

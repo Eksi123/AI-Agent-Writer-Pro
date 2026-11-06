@@ -131,57 +131,155 @@ def make_recap_provider(project_id: str, session_id: str) -> Any:
     return _provider
 
 
-def make_outline_ctx_provider(project_id: str) -> Any:
-    """目标章大纲摘录 provider（按需注入，代替整篇读大纲）。
+async def _outline_targets(user_text: str, project_id: str, run_id: str = "") -> dict[str, Any]:
+    """解析用户消息指向的大纲目标（章 → 卷+章 → 卷 → 附录 三级定位链）。
 
-    定位链：写作意图 / 显式提及章名 → `outline_recall.chapter_brief` 精确摘录
-    「简介 + 衔接要点」（≤1200 字）。任一环缺失则返回空串（不注入），
-    由主 Agent 自行按需调用 `outline_grep` 工具查询。
-    固定流程运行（S0–S3）的生成提示词已带章简介，故由调用方决定是否装配本 provider。
+    返回 `{chapter_meta, volume_title, appendix_title}`；全未命中则各字段为空。
+    卷级请求（「第二卷全部章节」）章级定位必然失败，须回落到卷级摘录，
+    否则主 Agent 拿不到任何大纲依据、只能瞎猜。
+    """
+    from app.agent.loop.knowledge.chapters import list_chapters_ordered
+    from app.agent.loop.runner import run_manager
+    from app.agent.workflows.writing_steps.intent import (
+        resolve_chapter_in_volume,
+        resolve_mentioned_appendix,
+        resolve_mentioned_chapter,
+        resolve_mentioned_volume,
+        resolve_workflow_chapter,
+    )
+
+    out: dict[str, Any] = {
+        "chapter_meta": None,
+        "volume_title": "",
+        "appendix_title": "",
+        "appendix_all": False,
+    }
+    if not (user_text or "").strip():
+        return out
+    try:
+        chapters = await list_chapters_ordered(project_id)
+    except Exception as exc:  # 章节清单读取失败不阻断生成
+        logger.warning("outline_ctx_chapters_failed", project_id=project_id, error=str(exc))
+        chapters = []
+
+    # 卷序清单（供「第X卷」序数定位；index 从 1 起）
+    volumes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for meta in chapters:
+        vt = str(meta.get("volume_title") or "")
+        if vt and vt not in seen:
+            seen.add(vt)
+            volumes.append({"title": vt, "index": len(volumes) + 1})
+
+    # ① 章级：写作意图目标章 > 显式章标题/全局序数
+    chapter_id = (
+        resolve_workflow_chapter(user_text, chapters)
+        if run_id and run_manager.read_intent_of(run_id)
+        else None
+    ) or resolve_mentioned_chapter(user_text, chapters)
+
+    # ② 卷级：显式卷标题/「第X卷」序数
+    vol = resolve_mentioned_volume(user_text, volumes)
+    volume_title = str(vol.get("title") or "") if vol else ""
+
+    # ③ 卷+章组合：「第二卷第三章」——卷内序数优先于全局序数修正章级结果
+    if volume_title:
+        in_vol = resolve_chapter_in_volume(user_text, chapters, volume_title)
+        if in_vol:
+            chapter_id = in_vol
+
+    if chapter_id:
+        meta = next((c for c in chapters if str(c.get("id")) == chapter_id), None)
+        if meta is not None:
+            out["chapter_meta"] = meta
+            # 同时提到卷时以消息卷名为准（消歧），否则用章所在卷
+            out["volume_title"] = volume_title or str(meta.get("volume_title") or "")
+            return out
+    if volume_title:
+        out["volume_title"] = volume_title
+        return out
+
+    # ④ 附录级：完整附录标题 / 裸「附录」
+    try:
+        data = await story_read_outline(project_id)
+        appendices = [
+            {"title": a.title} for a in parse_outline_cached(data.get("content") or "").appendices
+        ]
+    except Exception as exc:  # 附录清单读取失败不阻断
+        logger.warning("outline_ctx_appendices_failed", project_id=project_id, error=str(exc))
+        appendices = []
+    app = resolve_mentioned_appendix(user_text, appendices)
+    if app is not None:
+        out["appendix_title"] = str(app.get("title") or "")
+        out["appendix_all"] = bool(app.get("all"))
+    return out
+
+
+async def story_read_outline(project_id: str) -> dict[str, Any]:
+    from app.services import story as story_service
+
+    async with session_scope() as db:
+        return await story_service.read_outline(db, project_id)
+
+
+def parse_outline_cached(text: str) -> Any:
+    from app.services.outline import parse_outline
+
+    return parse_outline(text)
+
+
+def make_outline_ctx_provider(project_id: str) -> Any:
+    """目标大纲摘录 provider（按需注入，代替整篇读大纲）。
+
+    三级定位链：章简介摘录 → 卷级摘录（各章简介）→ 附录摘录；
+    任一环命中即注入对应段落（可多段并存，如「第二卷+附录D」）。
+    全未命中返回空串（不注入），由 ContextGuard 第二层兜底。
     """
 
     async def _provider(context: Any) -> str:
-        from app.agent.loop.knowledge.chapters import list_chapters_ordered
         from app.agent.loop.runner import run_manager
-        from app.agent.workflows.writing_steps.intent import (
-            resolve_mentioned_chapter,
-            resolve_workflow_chapter,
-        )
-        from app.services.outline_recall import chapter_brief
+        from app.services.outline_recall import appendix_brief, chapter_brief, volume_brief
 
         run_id = str(getattr(context, "run_id", "") or "")
         user_text = run_manager.user_text_of(run_id)
-        if not (user_text or "").strip():
-            return ""
-        try:
-            chapters = await list_chapters_ordered(project_id)
-        except Exception as exc:  # 章节清单读取失败不阻断生成
-            logger.warning("outline_ctx_chapters_failed", project_id=project_id, error=str(exc))
-            return ""
-        chapter_id = (
-            resolve_workflow_chapter(user_text, chapters)
-            if run_manager.read_intent_of(run_id)
-            else None
-        ) or resolve_mentioned_chapter(user_text, chapters)
-        if not chapter_id:
-            return ""
-        meta = next((c for c in chapters if str(c.get("id")) == chapter_id), None)
-        if meta is None:
+        targets = await _outline_targets(user_text, project_id, run_id=run_id)
+        meta = targets["chapter_meta"]
+        volume_title = targets["volume_title"]
+        appendix_title = targets["appendix_title"]
+        appendix_all = bool(targets.get("appendix_all"))
+        if not meta and not volume_title and not appendix_title and not appendix_all:
             return ""
 
+        parts: list[str] = []
         async with session_scope() as db:
-            brief = await chapter_brief(
-                db,
-                project_id,
-                volume_title=str(meta.get("volume_title") or ""),
-                chapter_title=str(meta.get("title") or ""),
-            )
-        if not brief:
+            if meta is not None:
+                brief = await chapter_brief(
+                    db,
+                    project_id,
+                    volume_title=str(meta.get("volume_title") or ""),
+                    chapter_title=str(meta.get("title") or ""),
+                )
+                if brief:
+                    parts.append(f"## 目标章大纲摘录\n{brief}")
+            elif volume_title:
+                # 章级未命中但卷级命中（如「生成第二卷全部章节」）→ 整卷各章简介
+                brief = await volume_brief(db, project_id, volume_title=volume_title)
+                if brief:
+                    parts.append(f"## 目标卷大纲摘录（逐章简介）\n{brief}")
+            if appendix_title or appendix_all:
+                brief = await appendix_brief(
+                    db,
+                    project_id,
+                    appendix_title=appendix_title,
+                    all_appendices=appendix_all,
+                )
+                if brief:
+                    parts.append(f"## 大纲附录摘录\n{brief}")
+        if not parts:
             return ""
         return (
-            "## 目标章大纲摘录\n"
-            f"{brief}\n\n"
-            "（需要其它卷章的简介/设定，调用 `outline_grep` 工具按需查询，"
+            "\n\n".join(parts)
+            + "\n\n（需要其它卷章的简介/设定，调用 `outline_grep` 工具按需查询，"
             "不要 read_file 整篇大纲。）"
         )
 

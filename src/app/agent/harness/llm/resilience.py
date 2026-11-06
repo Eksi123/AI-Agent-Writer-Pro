@@ -11,8 +11,8 @@
     - ModelSwitchOnFailure：**当前模型连续失败
       达到阈值**才自动切换到其它已启用模型重试（循环一轮仍失败则抛错）；
       不再按预设降级链「一次失败即切换」；
-    - ModelCallLimit：单次 run 的 LLM 调用软上限，超限**优雅收尾**（exit_behavior="end"）
-      而非硬断——防止 Agent 死循环烧 token（硬上限另经 config recursion_limit）。
+调用次数预算改由 `harness/llm/call_budget.ModelCallBudgetMiddleware` 承担
+（超限先总结再 consult 询问继续/结束，取代旧 ModelCallLimit 的静默收尾）。
 
     装配容错：任一中间件在当前 langchain 版本不可用时告警跳过，不阻断装配
     （与既有 builder 的兼容性兜底行为一致）。
@@ -22,9 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain.agents.middleware import ModelCallLimitMiddleware, ModelRetryMiddleware
+from langchain.agents.middleware import ModelRetryMiddleware
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.errors import GraphInterrupt
 
 from app.core.logging import get_logger
 
@@ -74,6 +75,10 @@ class ModelSwitchOnFailureMiddleware(AgentMiddleware):
                 result = await handler(req)
                 self._fails = 0
                 return result
+            except GraphInterrupt:
+                # 审批/咨询/预算中断不是模型失败——必须原样上抛，
+                # 否则 interrupt() 被吞成异常会导致 run 无法挂起
+                raise
             except Exception as exc:
                 self._fails += 1
                 if self._fails < self._threshold:
@@ -98,9 +103,11 @@ def build_resilience_middleware(
     *,
     primary_model: BaseChatModel,
     alternate_models: list[BaseChatModel],
-    model_call_limit: int = DEFAULT_MODEL_CALL_LIMIT,
 ) -> list[Any]:
-    """装配 重试 → 连续失败切换 → 限次 三段中间件（顺序固定）。"""
+    """装配 重试 → 连续失败切换 两段中间件（顺序固定）。
+
+    调用次数预算由 `ModelCallBudgetMiddleware` 单独装配（见 loop/builder）。
+    """
     stack: list[Any] = []
 
     # ① 重试：仅对超时 / 429 / 5xx / 连接错误重试（指数退避 + 抖动）。
@@ -121,11 +128,5 @@ def build_resilience_middleware(
         stack.append(ModelSwitchOnFailureMiddleware(alternate_models))
     except Exception as exc:  # pragma: no cover
         logger.warning("model_switch_mw_unavailable", error=str(exc))
-
-    # ③ 调用次数上限：优雅收尾
-    try:
-        stack.append(ModelCallLimitMiddleware(run_limit=model_call_limit, exit_behavior="end"))
-    except Exception as exc:  # pragma: no cover
-        logger.warning("model_call_limit_mw_unavailable", error=str(exc))
 
     return stack

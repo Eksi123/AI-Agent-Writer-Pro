@@ -29,13 +29,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.agent.loop.runner import run_manager
+# from app.agent.loop.runner import run_manager  # 延迟到端点函数内导入（~20s）
 
 # agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
 # 这两个是「运行 Agent」的驱动面，不是取数——数据访问（会话列表/消息树/工具日志/分支切换）
 # 已全部下沉到 `services.agent`，故本模块不再直连 agent 的取数函数，
 # 与其它 13 个 api 模块的取数路径保持一致（都经 services）。
-from app.agent.tracing.sse.events import buffer_lost_event, sse_bus
+# from app.agent.tracing.sse.events import buffer_lost_event, sse_bus  # 延迟到端点函数内导入
 from app.core.deps import get_session
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
@@ -63,6 +63,8 @@ MAX_CONCURRENT_RUNS = 5
 
 def _live_run_ids() -> list[str]:
     """当前进程内真正在跑的 run（任务未结束）。"""
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     return [rid for rid in run_manager.running_ids() if run_manager.is_running(rid)]
 
 
@@ -81,6 +83,8 @@ async def get_sessions(
     灰色小字提示「AI思考执行中……」。
     """
     dtos = await agent_service.list_sessions(session, novel_id)
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     running_sessions = {run_manager.session_of(rid) for rid in _live_run_ids()}
     for dto in dtos:
         dto["is_running"] = dto["id"] in running_sessions
@@ -178,6 +182,8 @@ async def post_message(
         )
 
     # 同时「AI 思考执行中」的会话上限 5 个（本会话已在跑的不重复计数）
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     live = _live_run_ids()
     live_sessions = {run_manager.session_of(rid) for rid in live}
     if len(live) >= MAX_CONCURRENT_RUNS and session_id not in live_sessions:
@@ -256,6 +262,8 @@ async def _detect_workflow_target(project_id: str, body: AgentMessageIn) -> str:
 
 
 def _has_live_run(session_id: str) -> bool:
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     return any(run_manager.session_of(rid) == session_id for rid in _live_run_ids())
 
 
@@ -301,6 +309,8 @@ async def stream_run(
       `?last_event_id={seq}`（手动重连；EventSource 无法自定义 header）；
     - 缓冲丢失 → error(41001) 并关流；run 已结束时补发缓冲后正常关流。
     """
+    from app.agent.tracing.sse.events import buffer_lost_event, sse_bus  # 延迟导入
+
     async with _db() as db:
         run = await db.get(AgentRun, run_id)
         if run is None:
@@ -348,6 +358,8 @@ async def stream_run(
                 if item.event in ("run.end", "error"):
                     return
         finally:
+            from app.agent.tracing.sse.events import sse_bus  # 延迟导入
+
             await sse_bus.unsubscribe(run_id, queue)
 
     return EventSourceResponse(event_gen(), ping=0)
@@ -356,6 +368,8 @@ async def stream_run(
 @router.post("/runs/{run_id}/cancel")
 async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """取消运行（协作式：置取消标志 → 当前工具/模型调用返回后停）。"""
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     run = await session.get(AgentRun, run_id)
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
@@ -373,6 +387,8 @@ async def steer_run(
     引导文本入 run 级队列，由 `SteerInjectionMiddleware` 在**下次模型调用前**注入，
     不中断当前 run、不新建 run。run 已结束 → 409/40902（前端回落为普通发送）。
     """
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     run = await session.get(AgentRun, run_id)
     if run is None:
         raise NotFoundError(f"run 不存在：{run_id}")
@@ -415,6 +431,8 @@ async def resolve_interrupt(
     await session.commit()
 
     # 异步续跑（不阻塞响应；失败会落 run.error 并发 error 事件）
+    from app.agent.loop.runner import run_manager  # 延迟导入
+
     asyncio.get_running_loop().create_task(
         run_manager.resume(run_id=result["run_id"], resume_value=result["resume_value"]),
         name=f"agent-resume-{result['run_id'][:8]}",

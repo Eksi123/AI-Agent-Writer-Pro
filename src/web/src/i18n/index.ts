@@ -238,7 +238,7 @@ export const zh = {
     autosaveInterval: '自动保存间隔',
     autosaveHint: '编辑模式下辅助主动保存，时长单位为秒',
     exportDir: '小说导出地址',
-    exportDirPlaceholder: '留空 = 桌面（Desktop）',
+    exportDirPlaceholder: '默认为桌面（Desktop）',
     exportDirHint: '导出产物（zip）保存的文件夹绝对路径，如 D:\\novels；目录不存在会自动创建，非法路径回落桌面',
     saved: '设置已保存',
     resetDefault: '恢复默认设置',
@@ -347,6 +347,8 @@ export const zh = {
     sessionCount: '{n}个会话',
     /** 头部 token 用量带单位（x.yK Token） */
     tokenTotal: '{n} Token',
+    /** 头部缓存命中率（输入 token 命中 provider 前缀缓存的比例） */
+    cacheHitRate: '缓存命中 {n}%',
     tokenUsage: '{used}K / {window}K',
     tokenUsageOnly: '已用 {used}K tokens',
     sessionLabel: '会话',

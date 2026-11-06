@@ -13,9 +13,11 @@
     - `checkpointer`：AsyncSqliteSaver（`data/agent_state.db`），按 thread_id 持久化
     - `context_schema`：AgentContext（project_id/session_id/run_id/... 经 Runtime.context 注入）
     - `middleware` 顺序（手册「二、(2)」）：
-      WriteApproval（harness/approval，最外层）→ 重试/降级/限次（harness/llm/resilience）
-      → TodoList → RecapInjection → HiddenContext → Steer → WorkspaceGuard（harness/guard）
-      → FileChangeNotify → ContentLock（harness/lock）
+      WriteApproval（harness/approval，最外层）→ ModelCallBudget（调用预算：超限先总结再咨询）
+      → 重试/连续失败切换（harness/llm/resilience）
+      → TodoList → RecapInjection → HiddenContext → ContextGuard（两层保险第二层）
+      → PairingRepair → WastefulLoopGuard（分级熔断）→ Steer → ReadScopeGuard
+      → WorkspaceGuard（harness/guard）→ FileChangeNotify → ContentLock（harness/lock）
     - `skills`：`["/skills/user/"]`（虚拟路径）+ 会话精选 `/skills/session-{sid}/`
     - `subagents`：4 个内置写作子代理 planner/writer/reviewer/web-searcher
       （subagents/builtin/*/spec.py + prompt.md；general-purpose 由 deepagents 自动追加）
@@ -37,6 +39,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.harness.llm.call_budget import ModelCallBudgetMiddleware
+from app.agent.harness.llm.prompt_cache import PromptCacheMiddleware
 from app.agent.harness.llm.resilience import build_resilience_middleware
 from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
 from app.agent.harness.sandbox import build_backend, build_permissions
@@ -56,6 +60,8 @@ from app.agent.loop.middleware import (
     ReadScopeGuardMiddleware,
     WriteApprovalMiddleware,
 )
+from app.agent.loop.middleware.context_guard import ContextGuardMiddleware
+from app.agent.loop.middleware.recap import injected_slots_of
 from app.agent.loop.prompts import render
 from app.agent.subagents.scrub import SubagentContextScrubMiddleware
 from app.agent.subagents.user import load_specs as load_user_specs
@@ -125,6 +131,7 @@ def build_subagents_from_specs(
     backend: Any = None,
     permissions: Any = None,
     default_model: BaseChatModel | None = None,
+    subagent_call_limit: int = 20,
 ) -> list[Any]:
     """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
 
@@ -151,6 +158,15 @@ def build_subagents_from_specs(
         extra_tools = selected["extra"]
         #: 子代理用完即销毁：结束时清空中间上下文，回传主图只留最终结论
         middleware: list[Any] = [SubagentContextScrubMiddleware()]
+        # 子代理一次委派同样受调用预算约束：超限先总结再 consult 询问继续/结束
+        # （isolated 子图的 interrupt 会冒泡到主图，前端同一张咨询卡片）
+        middleware.append(
+            ModelCallBudgetMiddleware(
+                limit=subagent_call_limit,
+                summary_model=default_model,
+                steer_sink=_push_steer,
+            )
+        )
         if selected["selected"]:
             # 显式勾选 → 收窄工具集：文件类工具经 FilesystemMiddleware(tools=[...]) 限定
             # （deepagents 按中间件 name 原位替换基座 FilesystemMiddleware）。
@@ -260,9 +276,11 @@ def build_middleware_stack(
     """按手册顺序装配中间件栈。
 
     顺序（不可随意调换）：
-    WriteApproval→ ModelRetry → ModelSwitchOnFailure → ModelCallLimit
-    → TodoList → RecapInjection → HiddenContext → PairingRepair → WastefulLoopGuard
-    → SteerInjection → WorkspaceGuard → FileChangeNotify → ContentLock
+    WriteApproval → ModelCallBudget（调用预算：超限先总结再咨询继续/结束）
+    → ModelRetry → ModelSwitchOnFailure
+    → TodoList → RecapInjection → HiddenContext → ContextGuard（两层保险第二层）
+    → PairingRepair → WastefulLoopGuard（分级熔断）→ SteerInjection → ReadScopeGuard
+    → WorkspaceGuard → FileChangeNotify → ContentLock
     （压缩 Summarization 与窗口同步 ContextWindowSync 在 RecapInjection 之前，
     见装配代码⑤：窗口同步须紧随压缩中间件）
 
@@ -279,12 +297,21 @@ def build_middleware_stack(
     # ⓪ 高危写入审批（最外层：保证 interrupt() 的 GraphInterrupt 不被吞）
     stack.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
 
-    # ①~③ LLM 容错三段（重试 → 连续失败切换 → 限次）：装配逻辑在 harness/llm/resilience
+    # ⓪.5 调用预算（外层：其 interrupt() 同样不得被 Retry/Switch 吞掉）：
+    # 即将超限时先总结已处理结果，再 consult 弹窗询问「继续思考 / 结束并输出总结」
+    stack.append(
+        ModelCallBudgetMiddleware(
+            limit=model_call_limit,
+            summary_model=primary_model,
+            steer_sink=_push_steer,
+        )
+    )
+
+    # ①~② LLM 容错两段（重试 → 连续失败切换）：装配逻辑在 harness/llm/resilience
     stack.extend(
         build_resilience_middleware(
             primary_model=primary_model,
             alternate_models=alternate_models,
-            model_call_limit=model_call_limit,
         )
     )
 
@@ -315,6 +342,9 @@ def build_middleware_stack(
         )
     )
     stack.append(HiddenContextInjectionMiddleware(provider=hidden_context_provider))
+    # 两层保险第二层：确定性 provider 全未命中但用户消息含明确「回顾/按大纲生成」
+    # 指令时，提示模型自行获取上下文；无明确指令则不注入、禁止自作主张
+    stack.append(ContextGuardMiddleware(injected_slots_provider=injected_slots_of))
     # 工具消息配对自愈：多并行 tool call 错位（结果丢失/重复成对）在模型调用前
     # 原地修复——错位上下文会诱导模型反复重读附件（token 暴涨的根因之一）
     stack.append(PairingRepairMiddleware())
@@ -327,6 +357,8 @@ def build_middleware_stack(
     stack.append(WorkspaceGuardMiddleware())
     stack.append(FileChangeNotifyMiddleware())
     stack.append(ContentLockMiddleware())
+    # 最内层：所有注入完成后给稳定前缀打显式缓存断点（未打标记的模型原样透传）
+    stack.append(PromptCacheMiddleware())
 
     return stack
 
