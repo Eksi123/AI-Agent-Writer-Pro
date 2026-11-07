@@ -23,8 +23,6 @@ class ErrorCode:
     NOT_FOUND = 40401
     VERSION_CONFLICT = 40901
     RUN_STATE_CONFLICT = 40902
-    #: 同时「AI 思考执行中」的会话数已达上限（默认 5）
-    RUN_CONCURRENCY_LIMIT = 40904
     #: 章节正被 AI 编辑（内容锁），用户保存（含自动保存）一律拒绝
     CONTENT_LOCKED = 40903
     STREAM_BUFFER_LOST = 41001
@@ -43,7 +41,6 @@ CODE_TO_HTTP: dict[int, int] = {
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.VERSION_CONFLICT: 409,
     ErrorCode.RUN_STATE_CONFLICT: 409,
-    ErrorCode.RUN_CONCURRENCY_LIMIT: 409,
     ErrorCode.CONTENT_LOCKED: 409,
     ErrorCode.STREAM_BUFFER_LOST: 410,
     ErrorCode.NAMING_INVALID: 422,
@@ -61,7 +58,6 @@ CODE_TO_MESSAGE: dict[int, str] = {
     ErrorCode.NOT_FOUND: "资源不存在",
     ErrorCode.VERSION_CONFLICT: "版本冲突，内容已被其它端修改",
     ErrorCode.RUN_STATE_CONFLICT: "运行状态冲突",
-    ErrorCode.RUN_CONCURRENCY_LIMIT: "同时思考执行的会话已达上限",
     ErrorCode.CONTENT_LOCKED: "AI编辑中，请稍后再试……",
     ErrorCode.STREAM_BUFFER_LOST: "stream buffer lost",
     ErrorCode.NAMING_INVALID: "显式命名校验失败（不允许空名/默认名/纯序号名）",

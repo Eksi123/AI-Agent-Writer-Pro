@@ -118,6 +118,8 @@ class ChapterUpdate(BaseModel):
     status: Literal["draft", "finalized"] | None = None
     #: 重命名弹窗同时给出卷名（默认不变）；变更时重命名该章所属的卷
     volume_title: str | None = Field(default=None, max_length=200)
+    #: 章节重定位：把本章插入到该 1-based 位置（其后各章顺延），卷内重新连续编号
+    position: int | None = Field(default=None, ge=1)
 
 
 class ChapterOut(BaseModel):

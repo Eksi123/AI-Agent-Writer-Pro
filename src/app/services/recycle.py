@@ -457,7 +457,8 @@ async def restore_chapter(session: AsyncSession, novel_id: str, chapter_id: str)
     shutil.copy2(src, dst)
     src.unlink()
 
-    # 卷内重新连续编号（1..N）
+    # 回收的章节默认插入到所在卷**末尾**（避免旧序号插回中间造成「两个第X章」），
+    # 再按当前顺序重新连续编号并同步标题/大纲序数词
     files.write_volumes(novel_id, volumes)
     siblings = sorted(
         (
@@ -467,12 +468,25 @@ async def restore_chapter(session: AsyncSession, novel_id: str, chapter_id: str)
         ),
         key=lambda m: (int(m.get("sort_order") or 0), str(m.get("title") or "")),
     )
-    for i, meta in enumerate(siblings, start=1):
-        if int(meta.get("sort_order") or 0) != i:
-            cid = str(meta["id"])
-            full, content = files.read_chapter(novel_id, vol_id, cid)
-            full["sort_order"] = i
-            files.write_chapter(novel_id, vol_id, cid, full, content)
+    last = max((int(m.get("sort_order") or 0) for m in siblings), default=0)
+    for meta in siblings:
+        if str(meta.get("id")) == chapter_id:
+            full, content = files.read_chapter(novel_id, vol_id, chapter_id)
+            full["sort_order"] = last + 1
+            files.write_chapter(novel_id, vol_id, chapter_id, full, content)
+            break
+    siblings = sorted(
+        (
+            files.read_chapter_meta(novel_id, vol_id, p.stem[1:])
+            | {"id": p.stem[1:]}
+            for p in files.list_chapter_files(novel_id, vol_id)
+        ),
+        key=lambda m: (int(m.get("sort_order") or 0), str(m.get("id"))),
+    )
+    # （volumes 依赖 recycle，延迟导入避免循环依赖）重编号 + 同步标题/大纲序数
+    from app.services import volumes as volumes_service
+
+    volumes_service._renumber_chapters(novel_id, vol_id, siblings)
 
     # 清单里移除这一章
     index["chapters"] = [

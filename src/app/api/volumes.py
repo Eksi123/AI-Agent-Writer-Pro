@@ -8,6 +8,8 @@
 
     **无 reorder / move 接口**：起位置编辑的唯一入口是「插入」——
     `POST` 带 `ordinal` 即插入到该位置（其后各项自动顺延 +1）。
+    `POST /novels/{id}/volumes/renumber` 是幂等的修复性重编号（同步标题/大纲序数），
+    不是手工重排入口。
 """
 
 from __future__ import annotations
@@ -32,6 +34,17 @@ router = APIRouter(tags=["volumes"])
 async def list_volumes(novel_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """卷列表（含各卷章节），按 `sort_order` 只读排序。"""
     return ok(await volumes.list_volumes(session, novel_id))
+
+
+@router.post("/novels/{novel_id}/volumes/renumber")
+async def renumber_volumes(novel_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+    """重编号修复：按当前结构把卷/章重新连续编号，并同步标题与大纲序数词。
+
+    用于修复历史数据造成的「序数与 sort_order 不一致」告警；幂等。
+    """
+    dto = await volumes.renumber_all(session, novel_id)
+    await session.commit()
+    return ok(dto)
 
 
 @router.post("/novels/{novel_id}/volumes")
@@ -112,10 +125,15 @@ async def create_chapter(
 async def update_chapter(
     chapter_id: str, body: ChapterUpdate, session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """改章名 / 状态（draft|finalized）。定稿触发一次修订快照。
+    """改章名 / 状态 / 卷名，或章节重定位（`position`）。定稿触发一次修订快照。
 
     重命名弹窗同时含卷名，`volume_title` 有变更时重命名该章所属的卷。
+    `position`（1-based）→ 章节重定位：插入到该位置、卷内重新连续编号并同步序数。
     """
+    if body.position is not None:
+        dto = await volumes.reposition_chapter(session, chapter_id, position=body.position)
+        await session.commit()
+        return ok(dto)
     dto = await volumes.update_chapter_meta(
         session,
         chapter_id,

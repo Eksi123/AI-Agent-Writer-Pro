@@ -26,6 +26,7 @@ from app.agent.loop.lifecycle import (
     graph_config,
     mark_running,
     publish_run_end,
+    resume_input_for,
 )
 from app.agent.loop.resolve import (
     attach_langfuse,
@@ -66,6 +67,7 @@ async def execute_chapter_workflow(
     session_id: str,
     model_ref: str | None,
     resume_value: Any,
+    interrupt_id: str | None = None,
     cancel_flag: dict[str, bool],
 ) -> None:
     tokens_in = tokens_out = cached_in = recursion_used = fallback_count = 0
@@ -139,7 +141,11 @@ async def execute_chapter_workflow(
             else:
                 from langgraph.types import Command
 
-                gen_command = Command(resume=resume_value)
+                gen_command = Command(
+                    resume=await resume_input_for(
+                        run_id, interrupt_id, resume_value, graph=graph, config=config
+                    )
+                )
 
         runner = WorkflowRunner(
             db=None,  # type: ignore[arg-type]  # 每次操作用独立 session_scope

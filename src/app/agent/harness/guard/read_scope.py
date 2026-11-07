@@ -33,11 +33,12 @@ from langgraph.types import interrupt
 
 from app.agent.harness.approval.write_approval import (
     INTERRUPT_KIND,
+    _truncate_args,
     create_interrupt,
     find_decided,
+    humanize_virtual_path,
     record_decision,
     set_run_status,
-    _truncate_args,
 )
 from app.core.logging import get_logger
 from app.services.read_grant import mentions_explicit_read
@@ -102,7 +103,7 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
 
         # ④ 弹确认卡
         tool_call_id = request.tool_call.get("id") or ""
-        reason = f"AI 想读取{'大纲' if scope == 'outline' else '章节正文'}内容：{path}"
+        reason = f"AI 想读取{humanize_virtual_path(path)}"
         existing = await find_decided(run_id, tool_call_id)
         if existing is not None:
             return await self._apply(existing, request, handler, tool_name, scope, session_id, reason)

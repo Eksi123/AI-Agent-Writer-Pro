@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import signal
 import subprocess
@@ -149,29 +150,39 @@ def _wait_port(port: int, timeout: float = 30.0) -> bool:
 
 
 def _terminate(proc: subprocess.Popen) -> None:
-    """优雅停止子进程（含其子进程树，如 uv/npm 派生的实际进程）。"""
+    """优雅停止子进程（含其子进程树，如 uv/npm 派生的实际进程）。
+
+    统一流程：先温和终止整棵进程树 → 等最多 5s 回收 → 仍存活则强杀整棵树 → 再等回收；
+    任何一步进程已退出都直接返回，绝不留下占着端口的孤儿进程。
+    """
     if proc.poll() is not None:
         return
-    try:
+
+    def _signal_tree(force: bool) -> None:
         if _is_windows():
             # Windows：taskkill /T 终止整棵进程树（uv→python、npm→node）
-            subprocess.run(  # noqa: S603,S607
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True, check=False,
-            )
+            args = ["taskkill", "/T", "/PID", str(proc.pid)]
+            if force:
+                args.insert(1, "/F")
+            subprocess.run(args, capture_output=True, check=False)  # noqa: S603,S607
         else:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            try:
-                proc.wait(timeout=5)
-                return
-            except subprocess.TimeoutExpired:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, OSError):
+            sig = signal.SIGKILL if force else signal.SIGTERM
+            with contextlib.suppress(ProcessLookupError, OSError):
+                os.killpg(os.getpgid(proc.pid), sig)
+
+    _signal_tree(force=False)
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
         pass
+    _signal_tree(force=True)
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):  # pragma: no cover - 极端兜底
+            proc.wait(timeout=5)
 
 
 def run_dev(backend_port: int, *, open_browser: bool = True) -> int:

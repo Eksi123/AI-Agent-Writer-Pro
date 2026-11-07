@@ -57,6 +57,16 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Itera
     probe_fts5.cache_clear()
     yield
 
+    # 全局单飞：收尾取消残留的活 run，避免挡住下一个测试发消息。
+    # 同步 fixture 不能 await——只 cancel；被取消任务在下次 await 点自行退出，
+    # 其收尾异常已被 runner 的 finally 兜住（CancelledError 直接终止任务）。
+    from app.agent.loop.runner import run_manager
+
+    for rid in list(run_manager.running_ids()):
+        task = run_manager._tasks.get(rid)
+        if task is not None and not task.done():
+            task.cancel()
+
     # 同步 teardown：直接释放全局态（连接对象交由 GC；测试用临时目录）
     clear_model_overrides()
     cp._saver = None

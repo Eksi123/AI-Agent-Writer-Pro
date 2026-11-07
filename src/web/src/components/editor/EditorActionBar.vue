@@ -162,6 +162,48 @@ async function submitInsert(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 章节重定位（把当前章插入到卷内指定位置，全卷重新编号）
+// ---------------------------------------------------------------------------
+
+const repositionVisible = ref(false)
+const repositionTarget = ref(1)
+
+/** 当前卷的章节按展示顺序（sort_order）排列，供重定位选择 */
+const repositionOptions = computed(() => {
+  const vol = current.value?.volume
+  if (!vol) return [] as { value: number; label: string }[]
+  return [...vol.chapters]
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((c, i) => ({ value: i + 1, label: formatChapterTitle(c.title, c.sort_order, 0) }))
+})
+
+function openReposition(): void {
+  if (!current.value) {
+    ElMessage.warning(t('volumeChapter.editNoTarget'))
+    return
+  }
+  repositionTarget.value = current.value.index + 1
+  repositionVisible.value = true
+}
+
+async function submitReposition(): Promise<void> {
+  if (!current.value || submitting.value) return
+  submitting.value = true
+  try {
+    const ch = await chaptersApi.update(current.value.chapter.id, {
+      position: repositionTarget.value,
+    })
+    await project.loadVolumes()
+    repositionVisible.value = false
+    ElMessage.success(t('volumeChapter.repositionDone', { ordinal: ch.sort_order }))
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+  } finally {
+    submitting.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 重命名（章名 + 卷名，卷名默认不变）
 // ---------------------------------------------------------------------------
 
@@ -308,6 +350,15 @@ async function onDelete(): Promise<void> {
           </svg>
         </button>
       </el-tooltip>
+
+      <!-- 章节重定位：把当前章插入到卷内指定位置 -->
+      <el-tooltip :content="t('volumeChapter.repositionChapter')" placement="bottom">
+        <button class="act-btn" :disabled="!current" @click="openReposition">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M4 5h9v2H4V5zm0 4h9v2H4V9zm0 4h9v2H4v-2zm0 4h9v2H4v-2zm12-9 4 4-4 4v-3h-2v-2h2V8z" />
+          </svg>
+        </button>
+      </el-tooltip>
     </template>
 
     <span class="act-sep" />
@@ -367,6 +418,23 @@ async function onDelete(): Promise<void> {
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="submitInsert">
+          {{ t('common.confirm') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ============ 章节重定位弹窗 ============ -->
+    <el-dialog v-model="repositionVisible" :title="t('volumeChapter.repositionDialogTitle')" width="440px">
+      <div class="muted text-sm reposition-hint">{{ t('volumeChapter.repositionHint') }}</div>
+      <el-radio-group v-model="repositionTarget" class="reposition-list">
+        <el-radio v-for="opt in repositionOptions" :key="opt.value" :value="opt.value" class="reposition-item">
+          {{ opt.value }}. {{ opt.label }}
+        </el-radio>
+      </el-radio-group>
+
+      <template #footer>
+        <el-button @click="repositionVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitReposition">
           {{ t('common.confirm') }}
         </el-button>
       </template>
@@ -460,5 +528,24 @@ async function onDelete(): Promise<void> {
 .target-hint {
   padding-left: 96px;
   line-height: 1.7;
+}
+
+.reposition-hint {
+  margin-bottom: 8px;
+}
+
+.reposition-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  max-height: 320px;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.reposition-item {
+  height: auto;
+  margin-right: 0;
 }
 </style>

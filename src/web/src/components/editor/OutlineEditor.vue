@@ -11,7 +11,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { outlineApi } from '@/api'
+import { outlineApi, volumesApi } from '@/api'
 import { errorMessage } from '@/api/http'
 import { useEditorStore } from '@/stores/editor'
 import { useProjectStore } from '@/stores/project'
@@ -120,6 +120,29 @@ async function validateOnly(): Promise<void> {
   }
 }
 
+/** 警告条[重编号修复]：卷/章按当前结构重新连续编号，并同步标题与大纲序数词 */
+const renumbering = ref(false)
+
+async function renumber(): Promise<void> {
+  if (!project.currentNovelId) return
+  renumbering.value = true
+  try {
+    await volumesApi.renumber(project.currentNovelId)
+    ElMessage.success(t('outline.renumbered'))
+    // 大纲文件已被后端同步 → 重新载入，避免本地旧内容覆盖
+    const data = await outlineApi.read(project.currentNovelId)
+    content.value = data.content
+    savedContent.value = data.content
+    await validateOnly()
+    await project.loadVolumes()
+    emit('saved')
+  } catch (err) {
+    ElMessage.error(errorMessage(err))
+  } finally {
+    renumbering.value = false
+  }
+}
+
 async function save(): Promise<void> {
   if (!project.currentNovelId) return
   // AI 正在写大纲时拒绝用户保存（后端 PUT 同样 409 兜底）
@@ -184,6 +207,9 @@ watch(() => project.currentNovelId, load)
           {{ w.message }}
         </li>
       </ul>
+      <el-button size="small" class="mt8" :loading="renumbering" @click="renumber">
+        {{ t('outline.renumber') }}
+      </el-button>
     </el-alert>
 
     <el-alert v-if="validation && !validation.ok && !errors.length" type="info" :closable="false" class="mb8">
@@ -215,6 +241,10 @@ watch(() => project.currentNovelId, load)
 
 .mb8 {
   margin-bottom: 8px;
+}
+
+.mt8 {
+  margin-top: 8px;
 }
 
 .issue-list {

@@ -99,12 +99,13 @@ async def stream_graph(
             if update_result.get("interrupted"):
                 result.interrupted = True
             result.fallback_count += int(update_result.get("fallback") or 0)
-            await syncer.sync(graph, config)
+            # ★中间消息不落库：思考/工具调用等过程消息只在 run 收尾时一次性同步，
+            # 避免暂停态（审批/咨询卡片弹出）时把「中间思考文本」当成回复展示给用户。
 
         if result.interrupted:
             break
 
-    # 收尾同步消息（中断时也要落库已产生的消息）
+    # 收尾同步消息（中断/暂停时也要落库已产生的消息）
     await syncer.sync(graph, config, force=True)
     return result
 
@@ -296,6 +297,20 @@ async def _persist_and_emit_interrupt(
             "allow_text": bool(value.get("allow_text", True)),
             "workflow_stage": value.get("workflow_stage"),
         }
+    elif kind == "ask_user":
+        # ask_user 工具的多问题卡片（工具已先行建行并发事件；此处仅幂等复用）
+        itype = "consult"
+        tool_name = "ask_user"
+        emit_event = "consult.request"
+        emit_data = {
+            "interrupt_id": interrupt_id,
+            "kind": "ask_user",
+            "question": value.get("question"),
+            "questions": value.get("questions") or [],
+            "options": value.get("options") or [],
+            "allow_text": True,
+            "workflow_stage": value.get("workflow_stage"),
+        }
     elif kind == "workflow_consult":
         itype = "consult"
         tool_name = None
@@ -318,6 +333,8 @@ async def _persist_and_emit_interrupt(
             "decisions": value.get("decisions") or ["approve", "edit", "reject", "respond"],
             "risk": value.get("risk"),
             "reason": value.get("reason"),
+            "item_label": value.get("item_label"),
+            "path": value.get("path"),
             "langgraph_interrupt_id": getattr(intr, "id", None),
         }
     else:
@@ -364,6 +381,11 @@ async def _persist_and_emit_interrupt(
                     continue
                 if str(prior.get("tool_call_id") or prior.get("consult_kind") or "") == match_key:
                     existing_id = row.id
+                    # 中间件/工具先建行时拿不到 langgraph 的 interrupt id；
+                    # 这里补记，供多中断挂起时 resume 按 id 路由
+                    if not prior.get("langgraph_interrupt_id"):
+                        prior["langgraph_interrupt_id"] = getattr(intr, "id", None)
+                        row.payload_json = json.dumps(prior, ensure_ascii=False, default=str)[:20000]
                     break
         if existing_id is None:
             db.add(

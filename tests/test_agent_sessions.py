@@ -18,7 +18,14 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage
 
-from helpers import setup_provider_model
+from helpers import (
+    drain_events,
+    install_fake,
+    new_session,
+    post_message,
+    setup_provider_model,
+    wait_status,
+)
 from fake_model import ScriptedFakeChatModel
 
 from app.agent.loop.builder import build_agent
@@ -341,3 +348,53 @@ class TestContextApiRoundtrip:
         await client.patch(f"/api/v1/agent/sessions/{sid}/context", json={"model_ref": "p:m"})
         logs = (await client.get("/api/v1/audit-logs", params={"action": "agent.session.context"})).json()["data"]
         assert logs["total"] >= 1
+
+
+class TestGlobalSingleFlight:
+    """全局单飞：同一时刻只允许一个会话「AI 思考执行中」。"""
+
+    async def test_second_session_gets_direct_ai_reply(self, client, novel_id):
+        """会话 A 思考中 → 会话 B 发消息：202 但 run_id=null，AI 直接回复提示文案。"""
+        _, model_ref = await setup_provider_model(client)
+        fake = install_fake(model_ref, [AIMessage(content="会话A的回复")])
+        # 让会话 A 的 run 保持「思考中」，确保会话 B 的发送落在单飞窗口内
+        fake.sleep = 2.0
+        sid_a = await new_session(client, novel_id)
+        sid_b = await new_session(client, novel_id)
+
+        run_a = await post_message(client, sid_a, "帮我写点东西")
+
+        resp = await client.post(
+            f"/api/v1/agent/sessions/{sid_b}/messages", json={"content": "我也想说一句"}
+        )
+        assert resp.status_code == 202, resp.text
+        data = resp.json()["data"]
+        assert data["run_id"] is None
+        assert data["rejected"] == "global_busy"
+        assert data["reply"] == "当前已有其他会话在进行AI思考哦，等任务完成后再聊吧~"
+
+        # 会话 B 的消息树：用户消息 + AI 提示回复（无 run 关联）
+        tree = (await client.get(f"/api/v1/agent/sessions/{sid_b}/messages")).json()["data"]
+        active = [m for m in tree["items"] if m["in_active_path"]]
+        assert [m["role"] for m in active] == ["user", "assistant"]
+        assert active[1]["content"] == "当前已有其他会话在进行AI思考哦，等任务完成后再聊吧~"
+
+        # 会话 A 的 run 不受影响，正常跑完
+        await drain_events(run_a)
+        run = await wait_status(client, run_a, ("completed", "failed"))
+        assert run["status"] == "completed"
+
+    async def test_same_session_not_blocked_by_itself(self, client, novel_id):
+        """本会话的 run 已结束后再发第二条消息不受单飞限制（正常起新 run）。"""
+        _, model_ref = await setup_provider_model(client)
+        install_fake(model_ref, [AIMessage(content="第一条回复"), AIMessage(content="第二条回复")])
+        sid = await new_session(client, novel_id)
+
+        run1 = await post_message(client, sid, "第一条")
+        await drain_events(run1)
+        await wait_status(client, run1, ("completed", "failed"))
+
+        run2 = await post_message(client, sid, "第二条")
+        await drain_events(run2)
+        run = await wait_status(client, run2, ("completed", "failed"))
+        assert run["status"] == "completed"

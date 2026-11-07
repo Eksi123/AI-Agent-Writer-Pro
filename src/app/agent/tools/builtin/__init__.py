@@ -12,6 +12,7 @@
     FilesystemMiddleware 提供，不在本目录落文件；装配清单在上级 `tools/registry.py`。
 """
 
+from app.agent.tools.builtin.ask_user import ask_user
 from app.agent.tools.builtin.web_search import web_search
 
-__all__ = ["web_search"]
+__all__ = ["ask_user", "web_search"]

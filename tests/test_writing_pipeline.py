@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -375,6 +376,71 @@ class TestApprovalInterrupt:
             "/api/v1/agent/interrupts/no-such-id/resolve", json={"decision": "approve"}
         )
         assert resp.status_code == 404
+
+    async def test_multiple_pending_interrupts_resolve_one_by_one(self, client, novel_id):
+        """模型一次发两个 delete → 审批逐个处理；全部批准后 run 才完成。
+
+        回归：多中断挂起时 resume 必须按 langgraph interrupt id 路由（映射里带上
+        已决兄弟的值、未决兄弟保持挂起），否则 langgraph 抛
+        「multiple pending interrupts」把 run 打成 failed（用户点批准即报错）。
+        并行工具调用下第二张卡的落库时机存在竞态（可能首暂停即两张、也可能
+        首张批准续跑后才出现），故按「有卡就批、直到 run 收尾」循环断言。
+        """
+        sid = await new_session(client, novel_id)
+        _, model_ref = await setup_provider_model(client)
+        # 预置两个章文件，使 delete 真实生效
+        ws = workspace_dir(novel_id)
+        for cid in ("c1", "c2"):
+            (ws / "chapters" / "v1").mkdir(parents=True, exist_ok=True)
+            (ws / "chapters" / "v1" / f"{cid}.md").write_text(
+                "---\ntitle: 待删章\n---\n正文。\n", encoding="utf-8"
+            )
+        install_fake(
+            model_ref,
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "delete", "args": {"file_path": f"/projects/{novel_id}/chapters/v1/c1.md"}, "id": "d1"},
+                        {"name": "delete", "args": {"file_path": f"/projects/{novel_id}/chapters/v1/c2.md"}, "id": "d2"},
+                    ],
+                ),
+                AIMessage(content="两个文件都已删除。"),
+            ],
+        )
+        run_id = await post_message(client, sid, "把前两章都删掉")
+        await drain_events(run_id)
+
+        approved = 0
+        for _ in range(8):
+            run = await wait_status(client, run_id, ("awaiting_approval", "completed", "failed"))
+            if run["status"] != "awaiting_approval":
+                break
+            # 竞态窗口：resolve 后续跑期间 run 状态仍是 awaiting_approval（收尾才改写），
+            # 而未决卡可能已清空/尚未落库 → 轮询直到出现未决卡或 run 进入终态
+            pending = []
+            for _ in range(60):
+                run = (await client.get(f"/api/v1/agent/runs/{run_id}")).json()["data"]
+                if run["status"] != "awaiting_approval":
+                    break
+                tree = await _tree(client, sid)
+                pending = tree["latest_run"]["pending_interrupts"]
+                if pending:
+                    break
+                await asyncio.sleep(0.1)
+            if not pending:
+                continue
+            resp = await client.post(
+                f"/api/v1/agent/interrupts/{pending[0]['id']}/resolve", json={"decision": "approve"}
+            )
+            assert resp.status_code == 200, resp.text
+            approved += 1
+
+        run = await wait_status(client, run_id, ("completed", "failed"))
+        assert run["status"] == "completed", f"逐个批准后应完成，实际 {run['status']}: {run.get('error')}"
+        assert approved == 2, "两个 delete 各审批一次"
+        assert not (ws / "chapters" / "v1" / "c1.md").exists()
+        assert not (ws / "chapters" / "v1" / "c2.md").exists()
 
 
 # ---------------------------------------------------------------------------

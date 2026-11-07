@@ -20,7 +20,9 @@ import pytest
 from conftest import workspace_of
 
 from app.main import app
+from app.services import files as files_service
 from app.services import volumes as volumes_service
+from app.services.workspace import WorkspaceGuard
 
 # ---------------------------------------------------------------------------
 # 卷
@@ -264,7 +266,130 @@ async def test_create_chapter_with_ordinal_inserts_and_shifts(client, novel_id, 
     chapters = (await client.get(f"/api/v1/volumes/{volume_id}/chapters")).json()["data"]
     assert [c["sort_order"] for c in chapters] == [1, 2, 3]
     assert chapters[1]["title"] == "插入的第二章"
-    assert chapters[2]["title"] == "第二章 钟声"
+    # 插入后卷内重新连续编号：标题序数词同步顺延（第二章 钟声 → 第三章 钟声）
+    assert chapters[2]["title"] == "第三章 钟声"
+
+
+@pytest.mark.asyncio
+async def test_delete_chapter_syncs_title_ordinals_and_outline(client, novel_id, volume_id):
+    """删章后卷内重新编号：章节标题序数词与大纲小节序数词一并同步。"""
+    meta = files_service.read_novel_meta(novel_id)
+    rel = str(meta.get("outline_file") or "")
+    assert rel, "novel.yaml 缺 outline_file"
+    guard = WorkspaceGuard(novel_id)
+    guard.write(
+        rel,
+        "# 测试书 · 大纲\n\n# 荒原初醒\n\n## 第一章 拾荒\n\n- 简介：甲。\n\n"
+        "## 第二章 钟声\n\n- 简介：乙。\n\n## 第三章 深空\n\n- 简介：丙。\n",
+    )
+
+    ids = {}
+    for title in ("第一章 拾荒", "第二章 钟声", "第三章 深空"):
+        resp = await client.post(f"/api/v1/volumes/{volume_id}/chapters", json={"title": title})
+        ids[title] = resp.json()["data"]["id"]
+
+    resp = await client.delete(f"/api/v1/chapters/{ids['第一章 拾荒']}")
+    assert resp.status_code == 200, resp.text
+
+    chapters = (await client.get(f"/api/v1/volumes/{volume_id}/chapters")).json()["data"]
+    assert [(c["title"], c["sort_order"]) for c in chapters] == [
+        ("第一章 钟声", 1),
+        ("第二章 深空", 2),
+    ], "删章后标题序数词随 sort_order 同步"
+
+    outline = guard.read(rel)
+    assert "## 第一章 钟声" in outline and "## 第二章 深空" in outline, "大纲小节序数词同步"
+    assert "## 第三章" not in outline, "大纲不再保留已删除位置的序数"
+
+
+@pytest.mark.asyncio
+async def test_renumber_endpoint_fixes_stale_ordinals(client, novel_id, volume_id):
+    """历史脏数据（sort_order 与标题序数不一致）可经重编号接口修复。"""
+    for title in ("第四章 拾荒", "第五章 钟声"):
+        await client.post(f"/api/v1/volumes/{volume_id}/chapters", json={"title": title})
+
+    resp = await client.post(f"/api/v1/novels/{novel_id}/volumes/renumber")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["chapters"] == 2
+
+    chapters = (await client.get(f"/api/v1/volumes/{volume_id}/chapters")).json()["data"]
+    assert [(c["title"], c["sort_order"]) for c in chapters] == [
+        ("第一章 拾荒", 1),
+        ("第二章 钟声", 2),
+    ]
+
+    # 幂等：再跑一次无变化
+    resp2 = await client.post(f"/api/v1/novels/{novel_id}/volumes/renumber")
+    assert resp2.status_code == 200, resp2.text
+    chapters2 = (await client.get(f"/api/v1/volumes/{volume_id}/chapters")).json()["data"]
+    assert [(c["title"], c["sort_order"]) for c in chapters2] == [
+        ("第一章 拾荒", 1),
+        ("第二章 钟声", 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reposition_chapter_renumbers_volume(client, novel_id, volume_id):
+    """章节重定位：移动到指定位置后卷内重新连续编号并同步标题/大纲序数。"""
+    ids = {}
+    for title in ("第一章 拾荒", "第二章 钟声", "第三章 深空"):
+        resp = await client.post(f"/api/v1/volumes/{volume_id}/chapters", json={"title": title})
+        ids[title] = resp.json()["data"]["id"]
+
+    # 把第三章移到第 1 位
+    resp = await client.patch(f"/api/v1/chapters/{ids['第三章 深空']}", json={"position": 1})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["sort_order"] == 1
+
+    chapters = (await client.get(f"/api/v1/volumes/{volume_id}/chapters")).json()["data"]
+    assert [(c["title"], c["sort_order"]) for c in chapters] == [
+        ("第一章 深空", 1),
+        ("第二章 拾荒", 2),
+        ("第三章 钟声", 3),
+    ], "重定位后全卷重新连续编号且标题序数同步"
+
+
+@pytest.mark.asyncio
+async def test_reposition_chapter_bad_position_rejected(client, novel_id, volume_id, chapter_id):
+    resp = await client.patch(f"/api/v1/chapters/{chapter_id}", json={"position": 99})
+    assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.asyncio
+async def test_restore_chapter_appends_to_volume_end(client, novel_id):
+    """回收章节默认插入到所在卷末尾，且标题/大纲序数随之更新。"""
+    meta = files_service.read_novel_meta(novel_id)
+    rel = str(meta.get("outline_file") or "")
+    guard = WorkspaceGuard(novel_id)
+    guard.write(
+        rel,
+        "# 测试书 · 大纲\n\n# 荒原初醒\n\n## 第一章 拾荒\n\n- 简介：甲。\n\n"
+        "## 第二章 钟声\n\n- 简介：乙。\n\n## 第三章 深空\n\n- 简介：丙。\n",
+    )
+    vol = (await client.post(f"/api/v1/novels/{novel_id}/volumes", json={"title": "荒原初醒"})).json()["data"]
+    ids = {}
+    for title in ("第一章 拾荒", "第二章 钟声", "第三章 深空"):
+        resp = await client.post(f"/api/v1/volumes/{vol['id']}/chapters", json={"title": title})
+        ids[title] = resp.json()["data"]["id"]
+
+    # 删除第一章 → 其余顺延
+    resp = await client.delete(f"/api/v1/chapters/{ids['第一章 拾荒']}")
+    assert resp.status_code == 200, resp.text
+
+    # 回收第一章 → 应落在卷末尾（第 3 位），标题序数同步为三
+    resp = await client.post(f"/api/v1/recycle/{novel_id}/chapters/{ids['第一章 拾荒']}/restore")
+    assert resp.status_code == 200, resp.text
+
+    chapters = (await client.get(f"/api/v1/volumes/{vol['id']}/chapters")).json()["data"]
+    assert [(c["title"], c["sort_order"]) for c in chapters] == [
+        ("第一章 钟声", 1),
+        ("第二章 深空", 2),
+        ("第三章 拾荒", 3),
+    ], "回收章插入卷末尾且全卷序数连续"
+
+    outline = guard.read(rel)
+    assert "## 第三章 拾荒" in outline, "大纲小节序数同步"
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,43 @@ class TestClassifyRisk:
     def test_delete_in_project_is_high_risk(self):
         kind, reason = classify_risk("delete", {"file_path": "/projects/abc/chapters/v1/c1.md"})
         assert kind == "delete"
-        assert "不可逆" in reason
+        assert "不可恢复" in reason
+        # 人话文案：不暴露内部路径（无工作区时回落「某一章」，绝不编造序号/名称）
+        assert "c1.md" not in reason
+        assert "某一章的正文" in reason
+
+    def test_humanize_virtual_path_fallback_without_workspace(self):
+        from app.agent.harness.approval.write_approval import humanize_virtual_path
+
+        # 项目工作区不存在 → 序号/名称读不到 → 省略，绝不编造
+        assert humanize_virtual_path("/projects/p/chapters/v2/c3.md") == "某一章的正文"
+        assert humanize_virtual_path("/projects/p/chapters/v2/") == "某一卷的全部章节"
+        assert humanize_virtual_path("/projects/p/outline/x-大纲.md") == "小说大纲"
+        assert humanize_virtual_path("/projects/p/summaries/ch-5.md") == "章节摘要"
+        assert humanize_virtual_path("/projects/p/volumes.yaml") == "卷目录"
+        assert humanize_virtual_path("/projects/p/novel.yaml") == "书籍信息"
+
+    def test_humanize_uses_real_ordinals_and_titles(self, tmp_path, monkeypatch):
+        """序号取 volumes.yaml / frontmatter 的 sort_order，名称取各自 title（目录名是短 ID 非序号）。"""
+        from app.agent.harness.approval.write_approval import humanize_virtual_path
+        from app.services import files
+
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+        get_settings.cache_clear()
+        pid = "proj1"
+        files.write_volumes(
+            pid,
+            [
+                {"id": "aa", "title": "谪凡间", "summary": "", "sort_order": 1},
+                {"id": "bb", "title": "醉锦城", "summary": "", "sort_order": 2},
+            ],
+        )
+        files.write_chapter(pid, "bb", "cc", {"title": "夜宴", "sort_order": 3}, "正文。")
+
+        assert humanize_virtual_path(f"/projects/{pid}/chapters/bb/cc.md") == "第二卷第三章《夜宴》的正文"
+        assert humanize_virtual_path(f"/projects/{pid}/chapters/bb/") == "第二卷《醉锦城》的全部章节"
+        reason = classify_risk("delete", {"file_path": f"/projects/{pid}/chapters/bb/cc.md"})[1]
+        assert reason == "删除第二卷第三章《夜宴》的正文，删除后不可恢复"
 
     def test_delete_outside_project_allowed(self):
         kind, _ = classify_risk("delete", {"file_path": "/conversation_history/x.md"})
@@ -125,6 +161,139 @@ class TestNormalizeDecision:
 
     def test_unknown_defaults_approve(self):
         assert _normalize_decision(42)["decision"] == "approve"
+
+
+class TestResumeInputFor:
+    """resume 路由（lifecycle.resume_input_for）——★批准绝不能流向另一个高危写入。
+
+    回归：并行工具调用下某个任务的 `interrupt()` 可能被取消（审批卡已建、中断未落
+    checkpoint）。用户批准这张「幽灵卡」时，若退回标量（langgraph 记为全局
+    null_resume）或「只有一个挂起就给它」，该决定会被**另一个**待批的删除操作当成
+    自己的答复直接执行——未经用户批准就删了章节。
+    """
+
+    class _FakeIntr:
+        def __init__(self, iid: str, tool_call_id: str) -> None:
+            self.id = iid
+            self.value = {"kind": "writer_approval", "tool_call_id": tool_call_id}
+
+    @pytest.fixture(autouse=True)
+    async def _bootstrap_db(self, session):
+        """初始化临时库（resume_input_for 内部用 session_scope 读写中断行）。"""
+        return session
+
+    class _FakeTask:
+        def __init__(self, intrs: list) -> None:
+            self.interrupts = intrs
+
+    class _FakeSnap:
+        def __init__(self, tasks: list) -> None:
+            self.tasks = tasks
+
+    class _FakeGraph:
+        def __init__(self, tasks: list) -> None:
+            self._tasks = tasks
+
+        async def aget_state(self, config):  # noqa: ARG002
+            return TestResumeInputFor._FakeSnap(self._tasks)
+
+    async def _add_row(self, run_id: str, session_id: str, tool_call_id: str, *, decided: bool) -> str:
+        import json
+
+        from app.db.base import utcnow
+        from app.db.models import AgentInterrupt
+        from app.db.session import session_scope
+
+        iid = new_id()
+        async with session_scope() as db:
+            db.add(
+                AgentInterrupt(
+                    id=iid,
+                    run_id=run_id,
+                    session_id=session_id,
+                    type="approval",
+                    tool_name="delete",
+                    payload_json=json.dumps({"tool_call_id": tool_call_id}),
+                    decision="approve" if decided else None,
+                    response_json=json.dumps({"decision": "approve"}) if decided else None,
+                    decided_by="user" if decided else None,
+                    decided_at=utcnow() if decided else None,
+                    created_at=utcnow(),
+                )
+            )
+        return iid
+
+    async def test_phantom_card_approval_does_not_leak_to_pending_sibling(self):
+        """批准「幽灵卡」时，另一张仍待批的卡必须保持挂起（失败关闭）。"""
+        from app.agent.loop.lifecycle import _UNMATCHED_RESUME_KEY, resume_input_for
+
+        run_id, session_id = new_id(), new_id()
+        # c1 的卡已决（幽灵卡：其中断不在 checkpoint 里）；c2 的卡仍未决
+        ghost_id = await self._add_row(run_id, session_id, "c1", decided=True)
+        await self._add_row(run_id, session_id, "c2", decided=False)
+        graph = self._FakeGraph([self._FakeTask([self._FakeIntr("f" * 32, "c2")])])
+
+        out = await resume_input_for(run_id, ghost_id, {"decision": "approve"}, graph=graph, config={})
+        # 绝不能把 c1 的批准投递给 c2 → 只放一个匹配不到任何命名空间的占位键
+        assert out == {_UNMATCHED_RESUME_KEY: {"decision": "approve"}}
+
+    async def test_matched_interrupt_gets_its_own_decision(self):
+        """正常路径：按 langgraph interrupt id 定向投递本次决定。"""
+        from app.agent.loop.lifecycle import resume_input_for
+
+        run_id, session_id = new_id(), new_id()
+        iid = await self._add_row(run_id, session_id, "c1", decided=True)
+        graph = self._FakeGraph([self._FakeTask([self._FakeIntr("a" * 32, "c1")])])
+
+        out = await resume_input_for(run_id, iid, {"decision": "approve"}, graph=graph, config={})
+        assert out == {"a" * 32: {"decision": "approve"}}
+
+    async def test_decided_sibling_delivered_undecided_stays_pending(self):
+        """多中断挂起：本次决定 + 已决兄弟一并送达，未决兄弟保持挂起。"""
+        from app.agent.loop.lifecycle import resume_input_for
+
+        run_id, session_id = new_id(), new_id()
+        await self._add_row(run_id, session_id, "c1", decided=True)
+        await self._add_row(run_id, session_id, "c3", decided=True)
+        await self._add_row(run_id, session_id, "c2", decided=False)
+        graph = self._FakeGraph(
+            [
+                self._FakeTask([self._FakeIntr("a" * 32, "c1")]),
+                self._FakeTask([self._FakeIntr("b" * 32, "c2")]),
+                self._FakeTask([self._FakeIntr("c" * 32, "c3")]),
+            ]
+        )
+        iid = (await self._rows_by_tool_call(run_id))["c1"]
+
+        out = await resume_input_for(run_id, iid, {"decision": "reject"}, graph=graph, config={})
+        assert set(out) == {"a" * 32, "c" * 32}  # c2 未决 → 不在映射里
+        assert out["a" * 32] == {"decision": "reject"}
+        assert out["c" * 32] == {"decision": "approve"}  # 已决兄弟用其落库 response
+
+    async def _rows_by_tool_call(self, run_id: str) -> dict[str, str]:
+        import json
+
+        from sqlalchemy import select
+
+        from app.db.models import AgentInterrupt
+        from app.db.session import session_scope
+
+        async with session_scope() as db:
+            rows = (
+                await db.execute(select(AgentInterrupt).where(AgentInterrupt.run_id == run_id))
+            ).scalars().all()
+        return {json.loads(r.payload_json or "{}")["tool_call_id"]: r.id for r in rows}
+
+    async def test_no_pending_interrupt_returns_scalar(self):
+        """checkpoint 无挂起中断（重放已消化）→ 沿用标量，避免无人可投的空映射。"""
+        from app.agent.loop.lifecycle import resume_input_for
+
+        run_id, session_id = new_id(), new_id()
+        iid = await self._add_row(run_id, session_id, "c1", decided=True)
+        graph = self._FakeGraph([])
+
+        out = await resume_input_for(run_id, iid, {"decision": "approve"}, graph=graph, config={})
+        assert out == {"decision": "approve"}
 
 
 class TestErrorFingerprint:

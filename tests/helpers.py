@@ -62,11 +62,16 @@ def install_fake(model_ref: str, responses: list[Any]) -> ScriptedFakeChatModel:
 
 
 async def drain_events(run_id: str, *, timeout: float = 8.0) -> list[dict[str, Any]]:
-    """直接从 sse_bus 订阅并收集事件直到 run.end / error。"""
+    """直接从 sse_bus 订阅并收集事件直到 run.end / error。
+
+    收尾再等后台任务真正结束（`run.end` 事件先于 `finally` 清理发出）——
+    全局单飞下，任务未结束会挡住下一条消息，故这里必须等到任务 done。
+    """
     queue, backlog, _lost, finished = await sse_bus.subscribe(run_id)
     events: list[dict[str, Any]] = [e.to_dict() for e in backlog]
     if finished or any(e["event"] in ("run.end", "error") for e in events):
         await sse_bus.unsubscribe(run_id, queue)
+        await _wait_task_done(run_id)
         return events
 
     try:
@@ -79,7 +84,19 @@ async def drain_events(run_id: str, *, timeout: float = 8.0) -> list[dict[str, A
                 break
     finally:
         await sse_bus.unsubscribe(run_id, queue)
+    await _wait_task_done(run_id)
     return events
+
+
+async def _wait_task_done(run_id: str, *, timeout: float = 5.0) -> None:
+    """轮询等待 run 的后台任务结束（全局单飞的判据是任务未 done）。"""
+    from app.agent.loop.runner import run_manager
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if not run_manager.is_running(run_id):
+            return
+        await asyncio.sleep(0.05)
 
 
 async def post_message(client, session_id: str, content: str, **kwargs) -> str:

@@ -128,6 +128,10 @@ export const zh = {
     insertAfterVolume: '往后插入小说卷',
     insertBeforeChapter: '往前插入小说章节',
     insertAfterChapter: '往后插入小说章节',
+    repositionChapter: '章节重定位',
+    repositionDialogTitle: '章节重定位',
+    repositionHint: '把当前章节插入到所选位置，卷内各章序号随之更新',
+    repositionDone: '已移动到第 {ordinal} 位',
     /** 卷/章序号一律自动推算，序号输入框与相关文案移除 */
     /** 插入卷必须带上第一章（不支持空卷）；标签「第一章章节名」改为「章节名」 */
     firstChapterLabel: '章节名',
@@ -163,6 +167,8 @@ export const zh = {
     validateOk: '大纲校验通过（{volumes} 卷 / {chapters} 章）',
     validateIssues: '大纲校验发现 {count} 条提示',
     warnings: '警告',
+    renumber: '重编号修复',
+    renumbered: '重编号完成，卷章序数已同步',
     errors: '错误',
     missing: '缺失清单',
     unregistered: '未在大纲登记（大纲仅作参考，不影响卷章结构）',
@@ -396,9 +402,9 @@ export const zh = {
     fileChanged: 'AI 修改了文件：{path}',
     approvalTitle: '需要你审批',
     approvalRisk: '高危操作',
-    approvalTool: '工具',
-    approvalArgs: '参数',
-    approvalReason: '原因',
+    approvalSubmit: '提交',
+    approvalRespondPlaceholder: '回复补充（会作为工具结果返回给 AI）',
+    processToggle: '展开/收起模型思考和工具调用',
     approve: '批准',
     approveSession: '本次会话允许',
     attachmentStoredHint:
@@ -414,6 +420,10 @@ export const zh = {
     consultText: '输入',
     consultSendOption: '提交选择',
     consultSendText: '提交说明',
+    /** ask_user 多问题卡片 */
+    askUserTitle: 'AI 想问你几个问题',
+    askUserCustom: '输入自定义答案',
+    askUserSubmit: '提交',
     cancelledRun: '运行已取消',
     runFailed: '运行出错：{msg}',
     modelForThisMessage: '本次使用的模型',

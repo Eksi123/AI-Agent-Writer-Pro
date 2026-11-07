@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from langgraph.errors import GraphRecursionError
@@ -32,6 +33,7 @@ from app.agent.loop.lifecycle import (
     graph_config,
     mark_running,
     publish_run_end,
+    resume_input_for,
     run_state_conflict,
 )
 from app.agent.loop.resolve import (
@@ -51,11 +53,15 @@ from app.agent.workflows.writing_steps.runner import execute_chapter_workflow
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentRun, AgentSession, Message
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Message
 from app.db.session import session_scope
 from app.services import agent as agent_service
 
 logger = get_logger(__name__)
+
+#: 全局单飞：同一时刻只允许一个会话处于「AI 思考执行中」。
+#: 其它会话发消息时不排队不报错——AI 直接以该文案回复（用户消息与回复均落消息树）。
+GLOBAL_BUSY_REPLY = "当前已有其他会话在进行AI思考哦，等任务完成后再聊吧~"
 
 
 class RunManager:
@@ -76,6 +82,13 @@ class RunManager:
 
     def running_ids(self) -> list[str]:
         return [rid for rid, t in self._tasks.items() if not t.done()]
+
+    def live_run_id(self) -> str | None:
+        """当前真正在跑的 run（任务未结束）；无则 None。全局单飞的判据。"""
+        for rid, task in self._tasks.items():
+            if not task.done():
+                return rid
+        return None
 
     def session_of(self, run_id: str) -> str | None:
         return self._sessions.get(run_id)
@@ -132,13 +145,35 @@ class RunManager:
         workflow_stage: str = "",
         target_chapter_id: str = "",
         hidden_context: str = "",
-    ) -> str:
-        """新建 run（落库 + 起后台任务），返回 run_id。对应用户发新消息。
+    ) -> str | None:
+        """新建 run（落库 + 起后台任务），返回 run_id；返回 None 表示全局单飞拦截。
+
+        **全局单飞**：已有其它会话的 run 在跑时，不再起新 run——把用户消息落树后
+        直接以 `GLOBAL_BUSY_REPLY` 作 assistant 回复（不排队、不报错），
+        对应「不允许同时有多个会话正在 AI 思考中」。
 
         `hidden_context`（如选区润色提示词）只注入模型请求，不入消息树、不展示。
         """
         async with session_scope() as db:
             agent_session = await agent_service.require_session(db, session_id)
+
+            # 全局单飞：已有活 run（且不属于本会话）→ 直接 AI 回复提示，不起新 run
+            live = self.live_run_id()
+            if live is not None and self.session_of(live) != session_id:
+                await add_message(
+                    db, session_id=session_id, role="user", content=content,
+                    parent_id=parent_id if parent_id else agent_session.active_leaf_id,
+                )
+                await add_message(
+                    db, session_id=session_id, role="assistant", content=GLOBAL_BUSY_REPLY,
+                )
+                logger.info(
+                    "run_rejected_global_busy",
+                    session_id=session_id,
+                    busy_run_id=live,
+                    busy_session_id=self.session_of(live),
+                )
+                return None
 
             # 首条用户消息 → 会话标题自动改为「问题总结」（此前无 user 消息时才改）
             has_user_msg = (
@@ -182,8 +217,12 @@ class RunManager:
         self._spawn(run_id, project_id, session_id, content, run_model_ref, user_msg.id)
         return run_id
 
-    async def resume(self, *, run_id: str, resume_value: Any) -> None:
-        """中断恢复：用 `Command(resume=...)` 续跑同一 run（thread 不变，seq 续增）。"""
+    async def resume(self, *, run_id: str, resume_value: Any, interrupt_id: str | None = None) -> None:
+        """中断恢复：用 `Command(resume=...)` 续跑同一 run（thread 不变，seq 续增）。
+
+        `interrupt_id` = 业务中断行 id：多个中断同时挂起时 langgraph 要求 resume
+        带「langgraph interrupt id → 值」映射，据此把值路由到对应中断。
+        """
         async with session_scope() as db:
             run = await db.get(AgentRun, run_id)
             if run is None:
@@ -196,7 +235,10 @@ class RunManager:
 
         # 重开流：finished=False，seq 续增，缓冲保留（客户端可无缝续传）
         await sse_bus.reopen(run_id, session_id)
-        self._spawn(run_id, project_id, session_id, None, model_ref, None, resume_value=resume_value)
+        self._spawn(
+            run_id, project_id, session_id, None, model_ref, None,
+            resume_value=resume_value, interrupt_id=interrupt_id,
+        )
 
     async def cancel(self, run_id: str) -> dict[str, Any]:
         """协作式取消：置标志 → 当前工具/模型调用返回后停。"""
@@ -259,6 +301,7 @@ class RunManager:
         model_ref: str | None,
         user_message_id: str | None,
         resume_value: Any = None,
+        interrupt_id: str | None = None,
     ) -> None:
         """同一 run 串行执行（防止 resolve 与进行中的 run 并发写同一 thread）。"""
         lock = self._locks.setdefault(run_id, asyncio.Lock())
@@ -277,6 +320,7 @@ class RunManager:
                 model_ref=model_ref,
                 user_message_id=user_message_id,
                 resume_value=resume_value,
+                interrupt_id=interrupt_id,
             ),
             name=f"agent-run-{run_id[:8]}",
         )
@@ -316,6 +360,7 @@ async def _execute_run(
     model_ref: str | None,
     user_message_id: str | None,
     resume_value: Any = None,
+    interrupt_id: str | None = None,
 ) -> None:
     """一次运行（新消息 / 中断恢复 / 流程）。异常一律收敛为 run 状态 + error 事件。"""
     cancel_flag = run_manager._cancel_flags.setdefault(run_id, {"cancelled": False})
@@ -331,6 +376,7 @@ async def _execute_run(
             session_id=session_id,
             model_ref=model_ref,
             resume_value=resume_value,
+            interrupt_id=interrupt_id,
             cancel_flag=cancel_flag,
         )
         return
@@ -409,7 +455,11 @@ async def _execute_run(
         if resume_value is not None:
             from langgraph.types import Command
 
-            stream_input = Command(resume=resume_value)
+            stream_input = Command(
+                resume=await resume_input_for(
+                    run_id, interrupt_id, resume_value, graph=graph, config=config
+                )
+            )
         else:
             stream_input = {"messages": [("user", content or "")]}
 

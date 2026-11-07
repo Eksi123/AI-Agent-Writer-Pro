@@ -68,10 +68,10 @@ class FileChangeNotifyMiddleware(AgentMiddleware):
                 },
             )
 
-        await self._sync_derived(project_id, change)
+        await self._sync_derived(project_id, change, change_kind)
         return result
 
-    async def _sync_derived(self, project_id: str, change: dict[str, Any]) -> None:
+    async def _sync_derived(self, project_id: str, change: dict[str, Any], change_kind: str) -> None:
         """同步派生索引（失败不阻断，标 dirty 待全量重建）。"""
         if not project_id:
             return
@@ -90,6 +90,10 @@ class FileChangeNotifyMiddleware(AgentMiddleware):
                     from app.services import volumes as volumes_service
 
                     volumes_service.register_orphan_volumes(project_id)
+                    # Agent 用 delete 工具直删章文件会绕过 delete_chapter 的
+                    # 「章节删空 → 卷一并删除」规则 → 按文件事实剪掉空卷
+                    if change_kind == "delete":
+                        volumes_service.prune_empty_volumes(project_id)
                     await novels_service.refresh_project_index(db, project_id)
                     await search_service.reindex_project(db, project_id)
                 else:

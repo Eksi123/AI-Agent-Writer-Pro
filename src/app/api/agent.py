@@ -57,9 +57,6 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
-#: 同时处于「AI 思考执行中」的会话上限（超出再发消息 → 409/40902）
-MAX_CONCURRENT_RUNS = 5
-
 
 def _live_run_ids() -> list[str]:
     """当前进程内真正在跑的 run（任务未结束）。"""
@@ -169,6 +166,8 @@ async def post_message(
     """发消息 → **202** + `{run_id}`；事件走 `GET /agent/runs/{run_id}/stream`。
 
     先建流再发消息、或先发消息再建流都支持（环形缓冲补齐）。
+    **全局单飞**：其它会话正在思考时 `run_id` 为 null 且带 `rejected="global_busy"`——
+    用户消息与 AI 的提示回复已落消息树，前端刷新消息即可看到。
     """
     row = await agent_service.require_session(session, session_id)
     if row.status == "running" and _has_live_run(row.id):
@@ -181,26 +180,13 @@ async def post_message(
             },
         )
 
-    # 同时「AI 思考执行中」的会话上限 5 个（本会话已在跑的不重复计数）
-    from app.agent.loop.runner import run_manager  # 延迟导入
-
-    live = _live_run_ids()
-    live_sessions = {run_manager.session_of(rid) for rid in live}
-    if len(live) >= MAX_CONCURRENT_RUNS and session_id not in live_sessions:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "code": 40904,
-                "message": f"同时思考执行的会话已达上限（{MAX_CONCURRENT_RUNS} 个），请等待其中某个完成后再发送",
-                "data": {"running_sessions": sorted(s for s in live_sessions if s)},
-            },
-        )
-
     # 流程（四阶段工作流）改为意图驱动——无「生成本章」按钮；
     # 用户消息表达「按大纲某章简介生成/修改正文」时才把 run 标记为固定流程运行。
     target_chapter_id = body.target_chapter_id or ""
     if not target_chapter_id:
         target_chapter_id = await _detect_workflow_target(row.project_id, body)
+
+    from app.agent.loop.runner import GLOBAL_BUSY_REPLY, run_manager  # 延迟导入
 
     run_id = await run_manager.start(
         project_id=row.project_id,
@@ -211,6 +197,23 @@ async def post_message(
         target_chapter_id=target_chapter_id,
         hidden_context=_pointerize_attachments(row.project_id, body.hidden_context or ""),
     )
+    # 全局单飞：其它会话正在思考 → 不起 run，AI 已直接回复提示文案（消息树可见）
+    if run_id is None:
+        await session.commit()
+        return JSONResponse(
+            status_code=202,
+            content={
+                "code": 0,
+                "message": "accepted",
+                "data": {
+                    "run_id": None,
+                    "session_id": session_id,
+                    "rejected": "global_busy",
+                    "reply": GLOBAL_BUSY_REPLY,
+                    "workflow_target_chapter_id": None,
+                },
+            },
+        )
     await session.commit()
     return JSONResponse(
         status_code=202,
@@ -434,7 +437,11 @@ async def resolve_interrupt(
     from app.agent.loop.runner import run_manager  # 延迟导入
 
     asyncio.get_running_loop().create_task(
-        run_manager.resume(run_id=result["run_id"], resume_value=result["resume_value"]),
+        run_manager.resume(
+            run_id=result["run_id"],
+            resume_value=result["resume_value"],
+            interrupt_id=interrupt_id,
+        ),
         name=f"agent-resume-{result['run_id'][:8]}",
     )
     return ok(

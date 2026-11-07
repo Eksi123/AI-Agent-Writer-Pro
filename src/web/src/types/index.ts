@@ -19,8 +19,6 @@ export const ErrorCode = {
   RUN_STATE_CONFLICT: 40902,
   /** 章节正被 AI 编辑（内容锁），保存被拒 */
   CONTENT_LOCKED: 40903,
-  /** 同时「AI 思考执行中」的会话数已达上限（5） */
-  RUN_CONCURRENCY_LIMIT: 40904,
   STREAM_BUFFER_LOST: 41001,
   NAMING_INVALID: 42201,
   OUTLINE_PARSE_FAILED: 42202,

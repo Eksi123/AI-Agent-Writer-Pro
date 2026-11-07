@@ -21,6 +21,7 @@ from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphBubbleUp
 
 from app.core.logging import get_logger
 
@@ -175,6 +176,10 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
         await self._record_audit_start(context, tool_name, args)
         try:
             result = await handler(request)
+        except GraphBubbleUp:
+            # langgraph 控制流（interrupt() 的审批/咨询/ask_user 暂停）不是工具失败——
+            # 必须原样上抛，否则中断会被吞成「工具执行失败」导致 run 无法挂起
+            raise
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             self.stats["error"] += 1

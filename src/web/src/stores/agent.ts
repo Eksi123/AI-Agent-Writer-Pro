@@ -13,11 +13,10 @@ import { ApiError, errorMessage } from '@/api/http'
 import { SseClient, type SseEnvelope } from '@/api/sse'
 import { useEditorStore } from '@/stores/editor'
 import { useReaderStore } from '@/stores/reader'
-import { ErrorCode } from '@/types'
-import type { AgentMessageDto, AgentRunDto, AgentSessionDto, MessageTree } from '@/types'
+import type { AgentInterruptDto, AgentMessageDto, AgentRunDto, AgentSessionDto, MessageTree } from '@/types'
 
-/** 同时「AI 思考执行中」的会话上限（与后端 MAX_CONCURRENT_RUNS 一致） */
-export const MAX_CONCURRENT_SESSIONS = 5
+/** 全局单飞：同一时刻只允许一个会话「AI 思考执行中」（后端硬校验，AI 直接回复提示） */
+export const GLOBAL_BUSY_HINT = '当前已有其他会话在进行AI思考哦，等任务完成后再聊吧~'
 
 /** 流式中的助手消息（按 message_id 聚合 delta） */
 export interface StreamingMessage {
@@ -45,15 +44,29 @@ export interface PendingInterrupt {
   decisions: string[]
   risk?: string
   reason?: string
+  /** 单条人话标签（如「第二卷第三章《章名》的正文」），批量卡片逐条展示用 */
+  itemLabel?: string
+  /** 原始虚拟路径（仅前端分组展示，不直接给用户看） */
+  path?: string
 }
 
-/** 待决咨询卡片（M4 流程使用） */
+/** 待决咨询卡片（M4 流程使用；ask_user 多问题卡片带 questions） */
 export interface PendingConsult {
   interruptId: string
   question: string
   options: { value: string; label: string }[] | string[]
   allowText: boolean
   workflowStage?: string
+  /** ask_user 多问题清单（缺省 = 单问旧契约） */
+  questions?: AskUserQuestion[]
+}
+
+/** ask_user 卡片的一个问题 */
+export interface AskUserQuestion {
+  question: string
+  header?: string
+  options: { label: string; description?: string }[]
+  multi_select?: boolean
 }
 
 /**
@@ -79,9 +92,12 @@ export const useAgentStore = defineStore('agent', () => {
   const activeLeafId = ref<string | null>(null)
   const currentRun = ref<AgentRunDto | null>(null)
   const streaming = ref<StreamingMessage[]>([])
-  const pendingInterrupt = ref<PendingInterrupt | null>(null)
+  /** 待决审批卡片队列（同类多条时合并成一张分页卡片，逐条决策后一次提交） */
+  const pendingInterrupts = ref<PendingInterrupt[]>([])
   const pendingConsult = ref<PendingConsult | null>(null)
   const running = ref(false)
+  /** run 处于暂停态（等待审批/咨询卡片答复）——此时不展示未完成的中间消息 */
+  const runPaused = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
   /**
@@ -167,9 +183,9 @@ export const useAgentStore = defineStore('agent', () => {
     steered.value = []
   }
   /**
-   * 当前「AI 思考执行中」的会话 id 集合（上限 5 个，后端硬校验）。
+   * 当前「AI 思考执行中」的会话 id 集合（全局单飞：至多 1 个）。
    * 会话列表条目右侧据此显示灰色小字「AI思考执行中……」；
-   * 发送时本地先拦一道（同会话重复发送），跨会话并发由后端 40904 兜底。
+   * 发送时本地先拦一道（已有其它会话在跑），后端 run_manager 全局单飞兜底。
    */
   const runningSessionIds = ref<Set<string>>(new Set())
   /** 本地标记的起始时刻（宽限窗口内以本地为准，之后以服务端 is_running 为准） */
@@ -364,7 +380,7 @@ export const useAgentStore = defineStore('agent', () => {
     messages.value = []
     steered.value = []
     lastUsage.value = { tokens_in: 0, tokens_out: 0 }
-    pendingInterrupt.value = null
+    pendingInterrupts.value = []
     pendingConsult.value = null
     streaming.value = []
     todos.value = []
@@ -381,11 +397,42 @@ export const useAgentStore = defineStore('agent', () => {
     return sess
   }
 
+  /** 由未决中断清单恢复审批/咨询卡片（进入会话与暂停态 run.end 共用） */
+  function restorePendingCards(items: AgentInterruptDto[]): void {
+    const approvals: PendingInterrupt[] = []
+    for (const it of items) {
+      const payload = (typeof it.payload === 'object' && it.payload !== null ? it.payload : {}) as Record<string, unknown>
+      if (it.type === 'approval') {
+        approvals.push({
+          interruptId: it.id,
+          toolName: (payload.tool_name as string | null) ?? it.tool_name ?? null,
+          args: (payload.args as Record<string, unknown> | null) ?? null,
+          decisions: (payload.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
+          risk: payload.risk as string | undefined,
+          reason: payload.reason as string | undefined,
+          itemLabel: (payload.item_label as string | undefined) ?? undefined,
+          path: (payload.path as string | undefined) ?? undefined,
+        })
+      } else {
+        pendingConsult.value = {
+          interruptId: it.id,
+          question: String(payload.question ?? ''),
+          options: (payload.options as PendingConsult['options']) ?? [],
+          allowText: Boolean(payload.allow_text ?? true),
+          workflowStage: payload.workflow_stage as string | undefined,
+          questions: (payload.questions as PendingConsult['questions']) ?? undefined,
+        }
+      }
+    }
+    if (approvals.length) pendingInterrupts.value = approvals
+  }
+
   async function selectSession(sessionId: string): Promise<void> {
     stopStream()
     currentSessionId.value = sessionId
-    pendingInterrupt.value = null
+    pendingInterrupts.value = []
     pendingConsult.value = null
+    runPaused.value = false
     streaming.value = []
     steered.value = []
     todos.value = []
@@ -407,28 +454,9 @@ export const useAgentStore = defineStore('agent', () => {
       if (lr && (lr.status === 'awaiting_approval' || lr.status === 'awaiting_consult' || lr.status === 'running' || lr.status === 'pending')) {
         currentRunId = lr.run_id
         running.value = true
+        runPaused.value = lr.status === 'awaiting_approval' || lr.status === 'awaiting_consult'
         markSessionRunning(sessionId)
-        for (const it of lr.pending_interrupts ?? []) {
-          const payload = (it.payload ?? {}) as Record<string, unknown>
-          if (it.type === 'approval') {
-            pendingInterrupt.value = {
-              interruptId: it.id,
-              toolName: (payload.tool_name as string | null) ?? it.tool_name ?? null,
-              args: (payload.args as Record<string, unknown> | null) ?? null,
-              decisions: (payload.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
-              risk: payload.risk as string | undefined,
-              reason: payload.reason as string | undefined,
-            }
-          } else {
-            pendingConsult.value = {
-              interruptId: it.id,
-              question: String(payload.question ?? ''),
-              options: (payload.options as PendingConsult['options']) ?? [],
-              allowText: Boolean(payload.allow_text ?? true),
-              workflowStage: payload.workflow_stage as string | undefined,
-            }
-          }
-        }
+        restorePendingCards(lr.pending_interrupts ?? [])
         // 重连事件流：缓冲仍在则续传，已丢则 onBufferLost 回落重拉消息树
         startStream(lr.run_id)
       }
@@ -494,13 +522,13 @@ export const useAgentStore = defineStore('agent', () => {
       errorCode.value = null
       return
     }
-    // 并发上限本地预检（后端 40904 兜底）：已有 5 个会话在思考且不含本会话 → 拒绝
+    // 全局单飞本地预检（后端 run_manager 兜底）：已有其它会话在思考 → 直接提示，不发请求
     if (
-      runningSessionIds.value.size >= MAX_CONCURRENT_SESSIONS &&
+      runningSessionIds.value.size > 0 &&
       !runningSessionIds.value.has(currentSessionId.value)
     ) {
-      error.value = `同时思考执行的会话已达上限（${MAX_CONCURRENT_SESSIONS} 个），请等待其中某个完成后再发送`
-      errorCode.value = ErrorCode.RUN_CONCURRENCY_LIMIT
+      error.value = GLOBAL_BUSY_HINT
+      errorCode.value = null
       return
     }
     clearError()
@@ -509,22 +537,29 @@ export const useAgentStore = defineStore('agent', () => {
     // 后端意图检测命中且消息未点名章节时，用它作流程目标章
     pendingUserMessage.value = { content, sentAt: new Date().toISOString() }
     try {
-      const { run_id: runId } = await agentApi.postMessage(currentSessionId.value, {
+      const result = await agentApi.postMessage(currentSessionId.value, {
         content,
         model_ref: modelRef,
         active_chapter_id: activeChapterIdForWorkflow() || undefined,
         // 隐藏上下文（润色提示词）随本轮送给模型，不入消息树不展示
         hidden_context: hiddenContext || undefined,
       })
-      currentRunId = runId
+      // 全局单飞拦截：AI 的提示回复已落消息树 → 撤乐观回显并刷新消息即可看到
+      if (!result.run_id) {
+        pendingUserMessage.value = null
+        void refreshMessages()
+        return
+      }
+      currentRunId = result.run_id
       running.value = true
+      runPaused.value = false
       // 新 run 开始：run 级累计清零（头部实时部分从零起算）
       runCumulative.value = { tokens_in: 0, tokens_out: 0, cached_in: 0 }
-      // 会话进入「AI 思考执行中」（列表右侧灰色小字 + 并发上限本地预检）
+      // 会话进入「AI 思考执行中」（列表右侧灰色小字 + 全局单飞本地预检）
       markSessionRunning(currentSessionId.value)
       // **不**清零 lastUsage——上下文只增不减，清零会让百分比闪回 100%；
       // 保留上一次的值直到本次 run 的 usage 事件刷新它。
-      startStream(runId)
+      startStream(result.run_id)
       // 首条消息发出后后端即刻把会话标题改为「首条消息文字」，
       // 这里轻量刷新会话列表，让标题/列表立刻生效（不必等 run 结束）。
       void refreshSessionsLight()
@@ -692,16 +727,23 @@ export const useAgentStore = defineStore('agent', () => {
         }
         break
       }
-      case 'interrupt.request':
-        pendingInterrupt.value = {
+      case 'interrupt.request': {
+        const item: PendingInterrupt = {
           interruptId: String(data.interrupt_id ?? ''),
           toolName: (data.tool_name as string | null) ?? null,
           args: (data.args as Record<string, unknown> | null) ?? null,
           decisions: (data.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
           risk: data.risk as string | undefined,
           reason: data.reason as string | undefined,
+          itemLabel: (data.item_label as string | undefined) ?? undefined,
+          path: (data.path as string | undefined) ?? undefined,
+        }
+        // 同类多条合并进同一张分页卡片（按 interruptId 去重，重连补发不重复入队）
+        if (!pendingInterrupts.value.some((p) => p.interruptId === item.interruptId)) {
+          pendingInterrupts.value = [...pendingInterrupts.value, item]
         }
         break
+      }
       case 'consult.request':
         pendingConsult.value = {
           interruptId: String(data.interrupt_id ?? ''),
@@ -709,6 +751,7 @@ export const useAgentStore = defineStore('agent', () => {
           options: (data.options as PendingConsult['options']) ?? [],
           allowText: Boolean(data.allow_text ?? true),
           workflowStage: data.workflow_stage as string | undefined,
+          questions: (data.questions as PendingConsult['questions']) ?? undefined,
         }
         break
       case 'error':
@@ -716,9 +759,24 @@ export const useAgentStore = defineStore('agent', () => {
         break
       case 'run.end':
         running.value = false
+        runPaused.value =
+          String(data.status ?? '') === 'awaiting_approval' ||
+          String(data.status ?? '') === 'awaiting_consult'
+        // 暂停态：清空实时流式区（中间思考文本不再展示，等卡片答复后续跑）
+        if (runPaused.value) streaming.value = []
         // run 结束（含暂停态 awaiting_*）→ 解除列表「AI思考执行中……」标记
-        if (String(data.status ?? '') !== 'awaiting_approval' && String(data.status ?? '') !== 'awaiting_consult') {
+        if (!runPaused.value) {
           if (currentSessionId.value) markSessionIdle(currentSessionId.value)
+        }
+        // 暂停态且仍有未决中断（多中断只决了其一）→ 恢复剩余卡片供继续处理
+        if (
+          (String(data.status ?? '') === 'awaiting_approval' || String(data.status ?? '') === 'awaiting_consult') &&
+          currentRunId
+        ) {
+          void agentApi
+            .getMessages(String(currentSessionId.value ?? ''))
+            .then((tree) => restorePendingCards(tree.latest_run?.pending_interrupts ?? []))
+            .catch(() => undefined)
         }
         // 运行以 failed 结束时，把后端错误转成中文提示（灰色异常态）
         if (String(data.status ?? '') === 'failed') {
@@ -730,24 +788,45 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  /**
+   * 批量提交审批决策：`decisions` 与 `pendingInterrupts` 一一对应（缺省 approve）。
+   * 顺序 resolve 各中断；首个成功后续跑流，其余 resolve 在 resume 重放时按已决行生效。
+   */
+  async function resolveInterrupts(
+    decisions: ('approve' | 'approve_session' | 'edit' | 'reject' | 'respond')[],
+    payloads?: ({ edited_args?: Record<string, unknown>; message?: string } | undefined)[],
+  ): Promise<void> {
+    const queue = [...pendingInterrupts.value]
+    if (!queue.length) return
+    pendingInterrupts.value = []
+    let firstError: unknown = null
+    for (let i = 0; i < queue.length; i++) {
+      const decision = decisions[i] ?? 'approve'
+      const payload = payloads?.[i]
+      try {
+        await agentApi.resolveInterrupt(queue[i].interruptId, { decision, ...payload })
+      } catch (err) {
+        firstError = firstError ?? err
+      }
+    }
+    if (firstError) {
+      setError(firstError)
+      return
+    }
+    // resume 会重开流；重新订阅（seq 续增）
+    if (currentRunId) {
+      running.value = true
+      runPaused.value = false
+      if (currentSessionId.value) markSessionRunning(currentSessionId.value)
+      startStream(currentRunId, sseClient?.currentSeq ?? undefined)
+    }
+  }
+
   async function resolveInterrupt(
     decision: 'approve' | 'approve_session' | 'edit' | 'reject' | 'respond',
     payload?: { edited_args?: Record<string, unknown>; message?: string },
   ): Promise<void> {
-    if (!pendingInterrupt.value) return
-    const id = pendingInterrupt.value.interruptId
-    pendingInterrupt.value = null
-    try {
-      await agentApi.resolveInterrupt(id, { decision, ...payload })
-      // resume 会重开流；重新订阅（seq 续增）
-      if (currentRunId) {
-        running.value = true
-        if (currentSessionId.value) markSessionRunning(currentSessionId.value)
-        startStream(currentRunId, sseClient?.currentSeq ?? undefined)
-      }
-    } catch (err) {
-      setError(err)
-    }
+    await resolveInterrupts([decision], [payload])
   }
 
   async function resolveConsult(decision: 'option' | 'text', value: string): Promise<void> {
@@ -762,6 +841,7 @@ export const useAgentStore = defineStore('agent', () => {
       })
       if (currentRunId) {
         running.value = true
+        runPaused.value = false
         if (currentSessionId.value) markSessionRunning(currentSessionId.value)
         startStream(currentRunId, sseClient?.currentSeq ?? undefined)
       }
@@ -775,6 +855,7 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       await agentApi.cancelRun(currentRunId)
       running.value = false
+      runPaused.value = false
       if (currentSessionId.value) markSessionIdle(currentSessionId.value)
       await refreshMessages()
     } catch (err) {
@@ -815,9 +896,10 @@ export const useAgentStore = defineStore('agent', () => {
     activeLeafId,
     currentRun,
     streaming,
-    pendingInterrupt,
+    pendingInterrupts,
     pendingConsult,
     running,
+    runPaused,
     loading,
     error,
     errorCode,
@@ -858,6 +940,7 @@ export const useAgentStore = defineStore('agent', () => {
     switchBranch,
     sendMessage,
     resolveInterrupt,
+    resolveInterrupts,
     resolveConsult,
     cancelRun,
     steerCurrentRun,

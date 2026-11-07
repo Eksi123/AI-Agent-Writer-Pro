@@ -17,13 +17,18 @@
     - `sort_order` 由本服务直接维护：不传 `ordinal` → 追加到末尾（`max+1`）；
       传 `ordinal` → 插入到该位置，**其后各项自动顺延 +1**（往前/往后插入卷章）；
     - 删除章后卷内章重新连续编号（1..N）；**某卷下章节删空后该卷一并删除**，卷层同样重新连续编号；
-    - 仍不提供跨卷移动 / 任意拖拽重排：插入即唯一的位置编辑入口；
+      重编号同时同步卷/章标题与大纲文件中的序数词（消除大纲校验的橙色警告）；
+      `renumber_all` 提供幂等的修复入口（`POST /novels/{id}/volumes/renumber`）；
+    - 仍不提供跨卷移动 / 任意拖拽重排：位置编辑入口为「插入」与「章节重定位」
+      （`reposition_chapter`：卷内移动到指定位置后全卷重新连续编号）；
     - 大纲保存不再回填 `sort_order`（见 `services/story.py`），大纲仅作 AI 创作的参考来源。
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -301,6 +306,12 @@ async def create_volume(
     files.write_volumes(project_id, volumes)
     volume_dir(project_id, vol_id).mkdir(parents=True, exist_ok=True)
 
+    # 插入（ordinal）会顺延其后各卷 → 重新连续编号并同步标题/大纲序数，避免序数告警
+    if position is not None:
+        _renumber_volumes(volumes)
+        files.write_volumes(project_id, volumes)
+        _sync_outline_volume_ordinals(project_id, volumes)
+
     await audit.record(
         session,
         "volume.create",
@@ -404,6 +415,44 @@ async def delete_volume(session: AsyncSession, vol_id: str) -> dict[str, Any]:
         "volume_deleted", project_id=project_id, volume_id=vol_id, chapters=len(removed_files)
     )
     return {"id": vol_id, "deleted": True, "chapters_deleted": len(removed_files)}
+
+
+def prune_empty_volumes(project_id: str) -> list[str]:
+    """剪掉「章节已删空」的卷（Agent 用 `delete` 工具直删章文件时的自愈）。
+
+    「某卷章节删空 → 卷一并删除」的规则在 `delete_chapter`（REST 路径）里；
+    Agent 经 `delete` 工具直接删章文件会绕过它，留下 0 章空卷（目录里显示空卷）。
+    本函数按文件事实自愈：已登记卷的卷目录不存在或不含任何 `c*.md`
+    → 从 `volumes.yaml` 移除（空目录一并删除）+ 其余卷重新连续编号 + 同步大纲卷序数。
+
+    Returns:
+        被剪掉的卷 id 列表（空 = 无需处理）。
+    """
+    volumes = files.read_volumes(project_id)
+    if not volumes:
+        return []
+    guard = WorkspaceGuard(project_id)
+    keep: list[dict[str, Any]] = []
+    pruned: list[str] = []
+    for vol in volumes:
+        vid = str(vol.get("id"))
+        vdir = volume_dir(project_id, vid)
+        if vdir.is_dir() and any(vdir.glob("c*.md")):
+            keep.append(vol)
+            continue
+        pruned.append(vid)
+        if vdir.is_dir():
+            try:
+                guard.delete(f"chapters/v{vid}")
+            except Exception as exc:  # pragma: no cover - 空目录删除失败不阻断
+                logger.warning("empty_volume_dir_delete_failed", project_id=project_id, volume_id=vid, error=str(exc))
+    if not pruned:
+        return []
+    _renumber_volumes(keep)
+    files.write_volumes(project_id, keep)
+    _sync_outline_volume_ordinals(project_id, keep)
+    logger.info("empty_volumes_pruned", project_id=project_id, volumes=pruned)
+    return pruned
 
 
 def _renumber_volumes(volumes: list[dict[str, Any]]) -> None:
@@ -560,6 +609,13 @@ async def create_chapter(
     }
     files.write_chapter(project_id, vol_id, chapter_id, meta, content)
 
+    # 插入（ordinal）会顺延其后各章 → 重新连续编号并同步标题/大纲序数，避免序数告警
+    if position is not None:
+        _renumber_chapters(
+            project_id, vol_id, await list_chapters(session, project_id, vol_id)
+        )
+        meta = files.read_chapter_meta(project_id, vol_id, chapter_id)
+
     await novels.refresh_project_index(session, project_id)
     await audit.record(
         session,
@@ -567,14 +623,16 @@ async def create_chapter(
         entity_type="chapter",
         entity_id=f"{project_id}:{chapter_id}",
         detail={
-            "title": clean,
+            "title": meta.get("title"),
             "volume_id": vol_id,
             "sort_order": sort_order,
             "inserted_at": position,
         },
         commit=True,
     )
-    logger.info("chapter_created", project_id=project_id, chapter_id=chapter_id, title=clean)
+    logger.info(
+        "chapter_created", project_id=project_id, chapter_id=chapter_id, title=meta.get("title")
+    )
     return _chapter_dto(meta, chapter_id, vol_id)
 
 
@@ -608,6 +666,111 @@ def _sync_chapter_title_ordinal(project_id: str, vol_id: str, chapter_id: str, o
         )
 
 
+def _outline_path_of(project_id: str) -> Path | None:
+    """大纲文件绝对路径（按 novel.yaml.outline_file 寻址）；不存在返回 None。"""
+    from app.services.story import outline_relpath_of
+
+    rel = outline_relpath_of(project_id)
+    guard = WorkspaceGuard(project_id)
+    if not guard.exists(rel):
+        return None
+    return guard.resolve(rel)
+
+
+def _sync_outline_volume_ordinals(project_id: str, volumes: list[dict[str, Any]]) -> None:
+    """同步大纲文件里卷节标题（H1）的序数词，与 volumes.yaml 的 sort_order 保持一致。
+
+    只改序数词，不动卷节下的其它内容；任何异常只记日志，不阻断主流程。
+    """
+    try:
+        outline_path = _outline_path_of(project_id)
+        if outline_path is None:
+            return
+        content = outline_path.read_text(encoding="utf-8")
+
+        ordinal_map = {
+            normalize_title(str(v.get("title") or "")): int(v.get("sort_order") or 0)
+            for v in volumes
+            if str(v.get("title") or "")
+        }
+
+        lines = content.split("\n")
+        changed = False
+        for idx, line in enumerate(lines):
+            if not re.match(r"^#\s+", line):
+                continue
+            title = line.lstrip("#").strip()
+            normalized = normalize_title(title)
+            if normalized not in ordinal_map:
+                continue
+            new_title = _sync_title_ordinal(title, ordinal_map[normalized], kind="卷")
+            if new_title != title:
+                lines[idx] = f"# {new_title}"
+                changed = True
+
+        if changed:
+            outline_path.write_text("\n".join(lines), encoding="utf-8")
+            logger.info("outline_volume_ordinals_synced", project_id=project_id)
+    except Exception as exc:  # pragma: no cover - 大纲同步失败不阻断卷章操作
+        logger.warning("outline_volume_ordinals_sync_failed", project_id=project_id, error=str(exc))
+
+
+def _sync_outline_chapter_ordinals(
+    project_id: str, vol_id: str, ordered_chapters: list[dict[str, Any]]
+) -> None:
+    """同步大纲文件里对应卷的章小节标题（H2）序数词，与卷内实际顺序保持一致。
+
+    只改序数词，不动简介 / 衔接要点等内容；任何异常只记日志，不阻断主流程。
+    """
+    try:
+        outline_path = _outline_path_of(project_id)
+        if outline_path is None:
+            return
+        content = outline_path.read_text(encoding="utf-8")
+
+        vol_meta = next(
+            (v for v in files.read_volumes(project_id) if str(v.get("id")) == vol_id), None
+        )
+        vol_title = str((vol_meta or {}).get("title") or "")
+        if not vol_title:
+            return
+
+        ordinal_map: dict[str, int] = {}
+        for i, ch in enumerate(ordered_chapters, start=1):
+            ch_title = str(ch.get("title") or "")
+            if ch_title:
+                ordinal_map[normalize_title(ch_title)] = i
+
+        lines = content.split("\n")
+        in_target_volume = False
+        changed = False
+        for idx, line in enumerate(lines):
+            if re.match(r"^#\s+", line):
+                in_target_volume = (
+                    normalize_title(line.lstrip("#").strip()) == normalize_title(vol_title)
+                )
+                continue
+            if in_target_volume and re.match(r"^##\s+", line):
+                ch_title = line.lstrip("#").strip()
+                normalized = normalize_title(ch_title)
+                if normalized in ordinal_map:
+                    new_title = _sync_title_ordinal(ch_title, ordinal_map[normalized], kind="章")
+                    if new_title != ch_title:
+                        lines[idx] = f"## {new_title}"
+                        changed = True
+
+        if changed:
+            outline_path.write_text("\n".join(lines), encoding="utf-8")
+            logger.info(
+                "outline_chapter_ordinals_synced",
+                project_id=project_id,
+                volume_id=vol_id,
+            )
+    except Exception as exc:  # pragma: no cover - 大纲同步失败不阻断卷章操作
+        logger.warning("outline_chapter_ordinals_sync_failed", project_id=project_id, error=str(exc))
+
+
+
 def _renumber_chapters(project_id: str, vol_id: str, keep: list[dict[str, Any]]) -> None:
     """按当前 `sort_order` 次序把卷内章重新连续编号为 1..N。
 
@@ -622,6 +785,48 @@ def _renumber_chapters(project_id: str, vol_id: str, keep: list[dict[str, Any]])
             _shift_chapter_meta(project_id, vol_id, str(ch["id"]), i)
         # 同步标题序数（无论 sort_order 是否变化，标题可能已过时）
         _sync_chapter_title_ordinal(project_id, vol_id, str(ch["id"]), i)
+    # 同步大纲文件中的章节标题序数
+    _sync_outline_chapter_ordinals(project_id, vol_id, ordered)
+
+
+async def renumber_all(session: AsyncSession, project_id: str) -> dict[str, Any]:
+    """按当前结构把全书卷/章重新连续编号，并同步标题与大纲里的序数词。
+
+    用于修复历史数据（如旧版本删章后只改了 `sort_order`、未同步标题序数）
+    造成的「序数与 sort_order 不一致」告警；幂等，无差异时不做任何写盘。
+    """
+    await novels.get_novel(session, project_id)
+    volumes = files.read_volumes(project_id)
+    _renumber_volumes(volumes)
+    files.write_volumes(project_id, volumes)
+    _sync_outline_volume_ordinals(project_id, volumes)
+
+    chapters_synced = 0
+    for vol in volumes:
+        vol_id = str(vol.get("id"))
+        siblings = await list_chapters(session, project_id, vol_id)
+        if not siblings:
+            continue
+        _renumber_chapters(project_id, vol_id, siblings)
+        chapters_synced += len(siblings)
+
+    await novels.refresh_project_index(session, project_id)
+    await audit.record(
+        session,
+        "volumes.renumber",
+        entity_type="novel",
+        entity_id=project_id,
+        detail={"volumes": len(volumes), "chapters": chapters_synced},
+        commit=True,
+    )
+    logger.info(
+        "volumes_renumbered", project_id=project_id, volumes=len(volumes), chapters=chapters_synced
+    )
+    return {
+        "novel_id": project_id,
+        "volumes": len(volumes),
+        "chapters": chapters_synced,
+    }
 
 
 def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
@@ -716,9 +921,46 @@ async def update_chapter_meta(
     return _chapter_dto(meta, chapter_id, vol_id)
 
 
+async def reposition_chapter(session: AsyncSession, chapter_id: str, *, position: int) -> dict[str, Any]:
+    """章节重定位：把本章插入到所属卷的 `position`（1-based）位置。
+
+    - 其后各章顺延 +1；随后卷内重新连续编号（1..N）并同步标题/大纲序数词；
+    - 不跨卷移动（换卷仍需新建章复制正文再删旧章）；
+    - 位置越界（<1 或 >N）→ 400。
+    """
+    project_id, vol_id, meta, _content = _locate_chapter(chapter_id)
+    siblings = await list_chapters(session, project_id, vol_id)
+    count = len(siblings)
+    if position < 1 or position > count:
+        raise BadRequestError(f"位置超出范围（当前卷共 {count} 章，允许 1~{count}）")
+
+    ordered = sorted(siblings, key=lambda c: (c["sort_order"], c["title"] or ""))
+    others = [c for c in ordered if str(c["id"]) != chapter_id]
+    new_order = others[: position - 1] + [next(c for c in ordered if str(c["id"]) == chapter_id)] + others[position - 1 :]
+
+    for i, ch in enumerate(new_order, start=1):
+        if int(ch.get("sort_order") or 0) != i:
+            _shift_chapter_meta(project_id, vol_id, str(ch["id"]), i)
+
+    _renumber_chapters(project_id, vol_id, await list_chapters(session, project_id, vol_id))
+    await novels.refresh_project_index(session, project_id)
+    await audit.record(
+        session,
+        "chapter.move",
+        entity_type="chapter",
+        entity_id=f"{project_id}:{chapter_id}",
+        detail={"title": meta.get("title"), "volume_id": vol_id, "position": position},
+        commit=True,
+    )
+    logger.info(
+        "chapter_moved", project_id=project_id, chapter_id=chapter_id, position=position
+    )
+    moved = next(c for c in await list_chapters(session, project_id, vol_id) if str(c["id"]) == chapter_id)
+    return moved
+
+
 async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, Any]:
     """删除章文件。不提供跨卷移动——换卷需新建同名章复制正文再删旧章。
-
     
     - 删除后卷内其余章重新连续编号（1..N）；
     - **某一卷下所有章节都删除后，该卷一并删除**（卷层同样重新连续编号）。
@@ -1031,8 +1273,10 @@ async def restore_revision(
 def assert_no_manual_reorder() -> None:
     """设计守卫：本模块**不提供**任何拖拽重排 / 跨卷移动能力。
 
-    位置编辑的唯一入口是「插入」（`create_volume` / `create_chapter` 的
-    `ordinal` 参数，插入后其后各项自动顺延）；仍无 reorder / move 接口。
+    位置编辑的入口只有两个：「插入」（`create_volume` / `create_chapter` 的
+    `ordinal` 参数，插入后其后各项自动顺延）与「章节重定位」
+    （`reposition_chapter`：卷内移动到指定位置后重新连续编号）；
+    仍无 reorder / 跨卷 move 接口。
     该函数供测试断言「无 reorder/move 入口」时调用，也作为文档化契约。
     """
     forbidden = {"reorder_volumes", "reorder_chapters", "move_chapter", "move_volume"}

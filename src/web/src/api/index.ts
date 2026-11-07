@@ -109,6 +109,12 @@ export const volumesApi = {
 
   remove: (volId: string) =>
     del<{ id: string; deleted: boolean; chapters_deleted: number }>(`/volumes/${volId}`),
+
+  /** 重编号修复：卷/章重新连续编号并同步标题与大纲序数词（幂等） */
+  renumber: (novelId: string) =>
+    post<{ novel_id: string; volumes: number; chapters: number }>(
+      `/novels/${novelId}/volumes/renumber`,
+    ),
 }
 
 // ---------------------------------------------------------------------------
@@ -122,10 +128,11 @@ export const chaptersApi = {
   create: (volId: string, title: string, content = '', ordinal?: number) =>
     post<Chapter>(`/volumes/${volId}/chapters`, { title, content, ordinal }),
 
-  /** 重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改） */
+  /** 重命名弹窗可同时改所属卷名（volume_title 默认传当前卷名 = 不修改）；
+   * position（1-based）= 章节重定位：插入到该位置并重排卷内序号 */
   update: (
     chapterId: string,
-    payload: { title?: string; volume_title?: string },
+    payload: { title?: string; volume_title?: string; position?: number },
   ) => patch<Chapter>(`/chapters/${chapterId}`, payload),
 
   remove: (chapterId: string) =>
@@ -478,7 +485,13 @@ export const agentApi = {
       active_chapter_id?: string
       hidden_context?: string
     },
-  ) => post<{ run_id: string; session_id: string; gate_target_chapter_id?: string | null }>(
+  ) => post<{
+    run_id: string | null
+    session_id: string
+    gate_target_chapter_id?: string | null
+    /** 全局单飞拦截：其它会话正在思考时为 "global_busy"，AI 已直接回复提示 */
+    rejected?: string | null
+  }>(
     `/agent/sessions/${id}/messages`,
     payload,
   ),

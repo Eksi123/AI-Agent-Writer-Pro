@@ -35,6 +35,12 @@ const project = useProjectStore()
 const input = ref('')
 const sending = ref(false)
 const messageHost = ref<HTMLElement | null>(null)
+/** 「模型思考和工具调用」过程框展开态（默认展开；弹卡隐藏期间不展示，续跑后保持原态） */
+const processOpen = ref(true)
+/** 审批/询问卡片待处理中——过程框与最终回复都不展示（同属 AI 思考中间过程） */
+const cardPending = computed(
+  () => agent.pendingInterrupts.length > 0 || agent.pendingConsult !== null,
+)
 const overview = ref<LlmOverview | null>(null)
 /**
  * 选中的模型（未选中或无模型 → Model Off）。
@@ -237,7 +243,9 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     }))
   // AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
   // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
-  const shown = collapseTurns(persisted, agent.running)
+  // 暂停态（审批/咨询卡片等待答复）视同运行中：不落库的中间消息不会进来，
+  // 但持久化里若残留本轮中间文本也一并隐藏，只留卡片。
+  const shown = collapseTurns(persisted, agent.running || agent.runPaused)
   // 去重：steered 消息若内容已出现在持久化消息中（后端已将其作为普通用户消息
   // 持久化），则从 shown 中移除，避免同一条内容同时以「引导」气泡和普通气泡展示。
   const steeredContents = new Set(agent.steered.map((s) => s.content))
@@ -326,6 +334,11 @@ function stampOf(iso?: string | null): string {
  * 与大纲阅读视图同形制（markdown-it + DOMPurify 消毒）。
  */
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+
+/** 去掉回复末尾的多余空行/空白（模型常以 \n\n 收尾，渲染后会留出大片空白） */
+function trimTrailing(text: string): string {
+  return text.replace(/\s+$/, '')
+}
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(md.render(text || ''))
@@ -1055,7 +1068,7 @@ watch(
             </template>
             <div v-if="msg.content && msg.role === 'assistant'" class="msg-text">
               <!-- eslint-disable-next-line vue/no-v-html -->
-              <div class="novel-prose msg-prose" v-html="renderMarkdown(msg.content)" />
+              <div class="msg-prose" v-html="renderMarkdown(trimTrailing(msg.content))" />
             </div>
             <span v-else-if="msg.content" class="msg-text">{{ msg.content }}</span>
             <span v-if="msg.streaming" class="cursor-blink">▌</span>
@@ -1095,6 +1108,24 @@ watch(
         <div v-if="agent.running" class="status-inline">
           <span class="dot-pulse" />
           <span class="status-text">{{ t('agent.running') }}</span>
+        </div>
+
+        <!-- 「模型思考和工具调用」过程框（AI 思考处理的中间过程）：
+             仅运行中展示；出现审批/询问卡片（同属中间过程）时整框隐藏，
+             用户处理完卡片续跑后重新出现；run 结束即隐藏，全程不暴露最终回复 -->
+        <div v-if="agent.running && !cardPending" class="process-box">
+          <button type="button" class="process-toggle" @click="processOpen = !processOpen">
+            <span class="caret">{{ processOpen ? '▾' : '▸' }}</span>
+            <span>{{ t('agent.processToggle') }}</span>
+          </button>
+          <div v-if="processOpen" class="process-body scroll-y">
+            <template v-for="s in agent.streaming" :key="s.messageId">
+              <div v-for="(tc, i) in s.toolCalls" :key="`${s.messageId}-t${i}`" class="tool-card">
+                <code>{{ formatToolCall(tc) }}</code>
+              </div>
+              <div v-if="s.content && !s.toolCalls.length" class="process-text">{{ s.content }}</div>
+            </template>
+          </div>
         </div>
 
         <!-- 运行中「通过消息引导发送」的引导消息（展示在队列消息之前；
@@ -1155,7 +1186,7 @@ watch(
           :results="agent.workflowResults"
         />
 
-        <ApprovalCard v-if="agent.pendingInterrupt" :interrupt="agent.pendingInterrupt" />
+        <ApprovalCard v-if="agent.pendingInterrupts.length" :interrupts="agent.pendingInterrupts" />
         <ConsultCard v-if="agent.pendingConsult" :consult="agent.pendingConsult" />
       </div>
     </template>
@@ -1407,6 +1438,48 @@ watch(
 
 .status-text {
   color: var(--el-text-color-secondary);
+}
+
+/* 「模型思考和工具调用」过程区：无外框，仅运行中显示、弹卡隐藏、续跑恢复 */
+.process-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.process-toggle .caret {
+  flex: none;
+  font-size: 10px;
+}
+
+.process-body {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* [停止] 已移到底部发送按键，状态条里的 .status-stop 随之删除 */

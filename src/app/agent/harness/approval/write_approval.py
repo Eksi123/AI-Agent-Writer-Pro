@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,133 @@ def virtual_to_host(virtual_path: str) -> Path | None:
     return workspaces_root() / rel
 
 
+_CN_DIGITS = "一二三四五六七八九"
+
+
+def _cn_num(n: int) -> str:
+    """1-99 → 中文数字（超出回落阿拉伯数字）。"""
+    if 1 <= n <= 9:
+        return _CN_DIGITS[n - 1]
+    if 10 <= n <= 99:
+        tens, ones = divmod(n, 10)
+        head = "" if tens == 1 else _CN_DIGITS[tens - 1]
+        return f"{head}十{_CN_DIGITS[ones - 1] if ones else ''}"
+    return str(n)
+
+
+def _project_of(virtual_path: str) -> str | None:
+    """`/projects/{pid}/...` → pid；非项目路径返回 None。"""
+    p = (virtual_path or "").replace("\\", "/").strip()
+    if not p.startswith("/projects/"):
+        return None
+    rel = p[len("/projects/") :]
+    return rel.split("/", 1)[0] if "/" in rel else None
+
+
+def _rel_of(virtual_path: str) -> str:
+    p = (virtual_path or "").replace("\\", "/").strip()
+    rel = p[len("/projects/") :] if p.startswith("/projects/") else p
+    return rel.split("/", 1)[1] if "/" in rel else rel
+
+
+def _vol_title(project_id: str, vol_id: str) -> str:
+    """卷名（volumes.yaml 事实源）；读不到返回空串。"""
+    try:
+        from app.services import files
+
+        vol = files.find_volume(files.read_volumes(project_id), vol_id)
+        return str((vol or {}).get("title") or "")
+    except Exception:  # pragma: no cover - 工作区缺失等异常不阻断审批文案
+        return ""
+
+
+def _ch_title(project_id: str, vol_id: str, ch_id: str) -> str:
+    """章名（章节 frontmatter 事实源）；读不到返回空串。"""
+    try:
+        from app.services import files
+
+        return str(files.read_chapter_meta(project_id, vol_id, ch_id).get("title") or "")
+    except Exception:  # pragma: no cover
+        return ""
+
+
+def _humanize_rel(project_id: str | None, rel: str) -> str:
+    """项目内相对路径 → 人话（带真实序号与卷章名）。
+
+    目录名是**短 ID**（如 `v1`/`c10`）而非序号，故序号一律取
+    `volumes.yaml` 的 `sort_order` 与章节 frontmatter 的 `sort_order`；
+    名称取各自 title。任一项读不到时省略该部分，绝不编造。
+    """
+    m = re.match(r"^chapters/v([^/]+)/c([^/]+)\.md$", rel)
+    if m:
+        vol_id, ch_id = m.group(1), m.group(2)
+        if project_id is None:
+            return "某一章的正文"
+        vol_ord = _sort_order_of_volume(project_id, vol_id)
+        ch_ord, ch_title = _chapter_facts(project_id, vol_id, ch_id)
+        vol_part = f"第{_cn_num(vol_ord)}卷" if vol_ord else ""
+        ch_part = f"第{_cn_num(ch_ord)}章" if ch_ord else "某一章"
+        title_part = f"《{ch_title}》" if ch_title else ""
+        return f"{vol_part}{ch_part}{title_part}的正文"
+    m = re.match(r"^chapters/v([^/]+)/?$", rel)
+    if m:
+        if project_id is None:
+            return "某一卷的全部章节"
+        vol_id = m.group(1)
+        vol_ord = _sort_order_of_volume(project_id, vol_id)
+        vol_title = _vol_title(project_id, vol_id)
+        head = f"第{_cn_num(vol_ord)}卷" if vol_ord else "某一卷"
+        title_part = f"《{vol_title}》" if vol_title else ""
+        return f"{head}{title_part}的全部章节"
+    if rel.startswith("outline/"):
+        return "小说大纲"
+    if rel.startswith("summaries/"):
+        return "章节摘要"
+    if rel.endswith("volumes.yaml"):
+        return "卷目录"
+    if rel.endswith("novel.yaml"):
+        return "书籍信息"
+    return rel.rsplit("/", 1)[-1] or rel
+
+
+def _sort_order_of_volume(project_id: str, vol_id: str) -> int:
+    try:
+        from app.services import files
+
+        vol = files.find_volume(files.read_volumes(project_id), vol_id)
+        return int((vol or {}).get("sort_order") or 0)
+    except Exception:  # pragma: no cover
+        return 0
+
+
+def _chapter_facts(project_id: str, vol_id: str, ch_id: str) -> tuple[int, str]:
+    """(sort_order, title)；读不到返回 (0, "")。"""
+    try:
+        from app.services import files
+
+        meta = files.read_chapter_meta(project_id, vol_id, ch_id)
+        return int(meta.get("sort_order") or 0), str(meta.get("title") or "")
+    except Exception:  # pragma: no cover
+        return 0, ""
+
+
+def humanize_virtual_path(virtual_path: str) -> str:
+    """把内部虚拟路径转成人话（审批卡/提示文案用，不暴露文件名与目录结构）。
+
+    - `chapters/v2/c3.md` → 「第二卷第三章《章名》的正文」（序号/名称取事实源）
+    - `chapters/v2/`（目录）→ 「第二卷《卷名》的全部章节」
+    - `outline/*.md` → 「小说大纲」；`summaries/*` → 「章节摘要」
+    - `volumes.yaml` → 「卷目录」；`novel.yaml` → 「书籍信息」
+    - 其余 → 末段文件名
+    """
+    return _humanize_rel(_project_of(virtual_path), _rel_of(virtual_path))
+
+
+def humanize_delete_reason(virtual_path: str) -> str:
+    """删除类审批的一句话人话文案：「删除第二卷第三章《章名》的正文，删除后不可恢复」。"""
+    return f"删除{humanize_virtual_path(virtual_path)}，删除后不可恢复"
+
+
 def classify_risk(
     tool_name: str,
     args: dict[str, Any],
@@ -72,9 +200,7 @@ def classify_risk(
     if tool_name == "delete":
         path = str(args.get("file_path") or args.get("path") or "")
         if path.startswith("/projects/"):
-            host = virtual_to_host(path)
-            is_dir = bool(host and host.is_dir())
-            return "delete", f"删除{'目录' if is_dir else '文件'}不可逆：{path}"
+            return "delete", humanize_delete_reason(path)
 
     return None, ""
 
@@ -134,6 +260,9 @@ class WriteApprovalMiddleware(AgentMiddleware):
             "args": _truncate_args(args),
             "tool_call_id": tool_call_id,
             "decisions": self.allowed_decisions,
+            # 批量卡片用：原始路径（后端汇总人话）+ 单条人话标签
+            "path": str(args.get("file_path") or args.get("path") or ""),
+            "item_label": humanize_virtual_path(str(args.get("file_path") or args.get("path") or "")),
         }
 
         interrupt_id = await self._create_interrupt(context, payload)
@@ -148,6 +277,9 @@ class WriteApprovalMiddleware(AgentMiddleware):
                     "decisions": self.allowed_decisions,
                     "risk": risk_kind,
                     "reason": reason,
+                    # 同类批量审批卡片：单条人话标签 + 原始路径（前端分组展示用）
+                    "item_label": payload.get("item_label"),
+                    "path": payload.get("path"),
                 },
             )
         await self._set_run_status(context, "awaiting_approval")
