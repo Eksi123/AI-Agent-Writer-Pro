@@ -348,6 +348,8 @@ export interface AgentMessageDto {
   branch_index: number
   branch_count: number
   role: 'user' | 'assistant' | 'tool' | 'system'
+  /** normal|steer|notice：普通消息 / 运行中引导消息 / Agent 默认收尾回复 */
+  kind?: 'normal' | 'steer' | 'notice'
   content: string
   tool_calls?: { name: string; args?: Record<string, unknown>; id?: string }[] | null
   status: string

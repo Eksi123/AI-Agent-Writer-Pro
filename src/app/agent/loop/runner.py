@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from langgraph.errors import GraphRecursionError
@@ -44,7 +45,8 @@ from app.agent.loop.resolve import (
     resolve_models,
     session_context_of,
 )
-from app.agent.loop.streaming import interrupt_status, stream_graph
+from app.agent.loop.netprobe import classify_failure, notice_text_for, probe_provider
+from app.agent.loop.streaming import StreamResult, interrupt_status, stream_graph
 from app.agent.tracing.messages.message_sync import MessageSyncer
 from app.agent.tracing.messages.tree import add_message, history_messages_for_seed
 from app.agent.tracing.sse.emitter import Emitter
@@ -63,6 +65,11 @@ logger = get_logger(__name__)
 #: 其它会话发消息时不排队不报错——AI 直接以该文案回复（用户消息与回复均落消息树）。
 GLOBAL_BUSY_REPLY = "当前已有其他会话在进行AI思考哦，等任务完成后再聊吧~"
 
+#: 网络/模型接口异常后的宽限窗口（秒）与探测间隔（秒）：
+#: 窗口内每间隔探测一次 provider，恢复则 checkpoint 续跑原任务；超时落库 notice。
+GRACE_WINDOW_SEC = 30
+GRACE_PROBE_INTERVAL = 3
+
 
 class RunManager:
     """管理进行中的 run（进程内单例，单用户本地应用）。"""
@@ -72,8 +79,10 @@ class RunManager:
         self._cancel_flags: dict[str, dict[str, bool]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._sessions: dict[str, str] = {}
-        #: 运行中「通过消息引导发送」的引导消息队列（run 级，中间件每次模型调用前取用）
-        self._steer_queues: dict[str, list[str]] = {}
+        #: 运行中「通过消息引导发送」的引导消息队列（run 级，中间件每次模型调用前取用）。
+        #: 项 = {"message_id": 落库消息 id, "content": 引导文本}；message_id 为 None 表示
+        #: 系统内部纠正（不入树、不展示），用户引导在 API 层先落库（kind=steer）再入队。
+        self._steer_queues: dict[str, list[dict[str, str | None]]] = {}
         #: run 级隐藏上下文（选区润色提示词等）——只注入模型请求，不落库不展示
         self._hidden_contexts: dict[str, str] = {}
         #: run 级用户消息原文与「写作意图」标记（读取授权守卫判定用）
@@ -95,13 +104,38 @@ class RunManager:
 
     # ---- 引导消息（steer） ----
 
-    def push_steer(self, run_id: str, text: str) -> None:
-        """运行中追加引导消息（SteerInjectionMiddleware 在下次模型调用前注入）。"""
-        self._steer_queues.setdefault(run_id, []).append(text)
+    def push_steer(self, run_id: str, text: str, *, message_id: str | None = None) -> None:
+        """运行中追加引导消息（SteerInjectionMiddleware 在下次模型调用前注入）。
 
-    def take_steer(self, run_id: str) -> list[str]:
+        用户引导：API 层先落库（kind=steer）拿到 message_id 再入队；
+        系统内部纠正（熔断提醒等）：message_id=None，注入时不落树不展示。
+        """
+        self._steer_queues.setdefault(run_id, []).append({"message_id": message_id, "content": text})
+
+    def take_steer(self, run_id: str) -> list[dict[str, str | None]]:
         """取出并清空该 run 的引导消息（中间件调用）。"""
         return self._steer_queues.pop(run_id, [])
+
+    def steer_pending(self, run_id: str) -> list[dict[str, str | None]]:
+        """尚未被消费的引导消息（编辑/删除接口校验用）。"""
+        return list(self._steer_queues.get(run_id, []))
+
+    def update_steer(self, run_id: str, message_id: str, content: str) -> bool:
+        """编辑未消费的引导消息；返回是否命中队列项。"""
+        for item in self._steer_queues.get(run_id, []):
+            if item.get("message_id") == message_id:
+                item["content"] = content
+                return True
+        return False
+
+    def remove_steer(self, run_id: str, message_id: str) -> bool:
+        """删除未消费的引导消息；返回是否命中队列项。"""
+        queue = self._steer_queues.get(run_id)
+        if not queue:
+            return False
+        before = len(queue)
+        self._steer_queues[run_id] = [i for i in queue if i.get("message_id") != message_id]
+        return len(self._steer_queues[run_id]) != before
 
     # ---- run 级隐藏上下文（润色提示词等，不入消息树/不展示） ----
 
@@ -271,6 +305,10 @@ class RunManager:
             sess = await db.get(AgentSession, session_id)
             if sess is not None and sess.status == "running":
                 sess.status = "idle"
+        # 主动停止 → 未消费引导收养进活跃路径 + 落一条 Agent 默认收尾回复
+        await _adopt_pending_steers(session_id, run_id)
+        await _append_notice(session_id, run_id, notice_text_for("cancelled"))
+        await sse_bus.publish(run_id, session_id, "run.notice", {"content": notice_text_for("cancelled"), "kind": "cancelled"})
         # 取消同样释放「AI 编辑锁」（finalize 不会为取消路径执行）
         try:
             from app.services.content_lock import content_locks
@@ -386,6 +424,14 @@ async def _execute_run(
     final_status = "completed"
     error_text: str | None = None
     fallback_count = 0
+    #: 宽限续跑可用的运行期对象（异常发生在装配前时为 None，跳过宽限）
+    graph: Any = None
+    config: dict[str, Any] | None = None
+    context: AgentContext | None = None
+    emitter: Emitter | None = None
+    resolved_ref: str | None = None
+    #: 本轮是否已落库 notice（run.end 携带 notice 标记，前端据此隐藏灰卡）
+    run_notice = False
 
     try:
         async with session_scope() as db:
@@ -536,6 +582,7 @@ async def _execute_run(
         final_status = "completed"
         error_text = None
         logger.warning("agent_run_recursion_limit_reached", run_id=run_id, error=str(exc)[:200])
+        await _adopt_pending_steers(session_id, run_id)
         await _append_recursion_notice(session_id, run_id)
         await sse_bus.publish(
             run_id,
@@ -552,6 +599,46 @@ async def _execute_run(
         error_code, error_text = error_of(exc)
         logger.error("agent_run_failed", run_id=run_id, code=error_code, error=error_text)
         await sse_bus.publish(run_id, session_id, "error", {"code": error_code, "message": error_text})
+        # ---- 网络/模型接口异常：30s 宽限，每 3s 探测一次，恢复则 checkpoint 续跑 ----
+        fkind = classify_failure(exc)
+        if (
+            fkind in ("network", "llm")
+            and graph is not None
+            and config is not None
+            and not cancel_flag.get("cancelled")
+        ):
+            result2 = await _grace_resume(
+                run_id=run_id,
+                session_id=session_id,
+                graph=graph,
+                config=config,
+                context=context,
+                emitter=emitter,
+                model_ref=resolved_ref or model_ref,
+                cancel_flag=cancel_flag,
+                first_kind=fkind,
+            )
+            if result2 is not None:
+                tokens_in += result2.tokens_in
+                tokens_out += result2.tokens_out
+                cached_in += result2.cached_in
+                recursion_used += result2.recursion_used
+                fallback_count += result2.fallback_count
+                if result2.interrupted:
+                    final_status = await interrupt_status(run_id)
+                elif result2.cancelled:
+                    final_status = "cancelled"
+                else:
+                    final_status = "completed"
+                error_text = None
+            else:
+                run_notice = True
+                notice = notice_text_for(fkind, error_text)
+                await _adopt_pending_steers(session_id, run_id)
+                await _append_notice(session_id, run_id, notice)
+                await sse_bus.publish(
+                    run_id, session_id, "run.notice", {"content": notice, "kind": fkind}
+                )
     finally:
         try:
             await finalize(
@@ -569,12 +656,147 @@ async def _execute_run(
         except Exception as exc:  # pragma: no cover
             logger.error("run_finalize_failed", run_id=run_id, error=str(exc))
 
-        await publish_run_end(run_id, session_id, final_status, tokens_in, tokens_out, error_text)
+        await publish_run_end(
+            run_id, session_id, final_status, tokens_in, tokens_out, error_text, notice=run_notice
+        )
         await sse_bus.close(run_id)
 
 
 #: 进程内单例
 run_manager = RunManager()
+
+
+async def _adopt_pending_steers(session_id: str, run_id: str) -> None:
+    """run 收尾时把**未进入活跃路径**的引导消息收养进活跃路径。
+
+    steer 行落库时不推进 active_leaf（兄弟节点）；若 run 在消费前停止/失败，
+    这些行会游离在活跃路径之外（重进会话不可见）。收尾时按落库顺序把它们
+    接到当前 active_leaf 之后并推进 leaf，保证「用户消息 + 引导 + 默认回复」完整可见。
+    已消费的引导本就在活跃路径上（MessageSyncer 衔接），自动跳过。
+    """
+    try:
+        async with session_scope() as db:
+            sess = await db.get(AgentSession, session_id)
+            if sess is None:
+                return
+            rows = (
+                (
+                    await db.execute(
+                        select(Message)
+                        .where(
+                            Message.session_id == session_id,
+                            Message.run_id == run_id,
+                            Message.kind == "steer",
+                        )
+                        .order_by(Message.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not rows:
+                return
+            parent_of = dict(
+                (
+                    await db.execute(
+                        select(Message.id, Message.parent_id).where(Message.session_id == session_id)
+                    )
+                ).all()
+            )
+            on_path: set[str] = set()
+            cur = sess.active_leaf_id
+            while cur:
+                on_path.add(cur)
+                cur = parent_of.get(cur)
+            changed = False
+            for row in rows:
+                if row.id in on_path:
+                    continue
+                row.parent_id = sess.active_leaf_id
+                row.branch_index = 0
+                sess.active_leaf_id = row.id
+                on_path.add(row.id)
+                changed = True
+            if changed:
+                sess.updated_at = utcnow()
+    except Exception as exc:  # pragma: no cover - 收养失败不阻断收尾
+        logger.warning("steer_adopt_failed", run_id=run_id, error=str(exc))
+
+
+async def _append_notice(session_id: str, run_id: str, content: str) -> None:
+    """落一条 Agent 默认收尾回复（kind=notice）：暂停/网络异常/模型接口异常话术。
+
+    落库即「重进会话/重启服务仍可见」；前端经 run.notice 事件即时展示，
+    run.end 的 notice 标记用于隐藏灰色报错卡片（避免一条回复 + 灰卡双显示）。
+    """
+    try:
+        async with session_scope() as db:
+            await add_message(
+                db,
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                run_id=run_id,
+                kind="notice",
+            )
+    except Exception as exc:  # pragma: no cover - 落库失败不阻断收尾
+        logger.warning("run_notice_persist_failed", run_id=run_id, error=str(exc))
+
+
+async def _grace_resume(
+    *,
+    run_id: str,
+    session_id: str,
+    graph: Any,
+    config: dict[str, Any],
+    context: AgentContext | None,
+    emitter: Emitter | None,
+    model_ref: str | None,
+    cancel_flag: dict[str, bool],
+    first_kind: str,
+) -> StreamResult | None:
+    """网络/模型接口异常后的宽限续跑：30s 内每 3s 探测 provider。
+
+    - 探测恢复 → `stream_graph(stream_input=None)` 从 checkpoint 续跑原任务，返回结果；
+    - 窗口耗尽 → 返回 None（调用方落库 notice）；
+    - 续跑再次失败：网络类继续探测（共享同一窗口），模型接口类不再续跑（避免烧 token）。
+    """
+    if context is None or emitter is None:
+        return None
+    deadline = time.monotonic() + GRACE_WINDOW_SEC
+    kind = first_kind
+    while time.monotonic() < deadline:
+        await asyncio.sleep(GRACE_PROBE_INTERVAL)
+        if cancel_flag.get("cancelled"):
+            return None
+        async with session_scope() as db:
+            reachable = await probe_provider(db, model_ref)
+        if not reachable:
+            continue
+        logger.info("grace_resume_probing_ok", run_id=run_id, kind=kind)
+        await sse_bus.publish(run_id, session_id, "run.resuming", {"kind": kind})
+        try:
+            return await stream_graph(
+                graph=graph,
+                config=config,
+                context=context,
+                stream_input=None,  # checkpoint 续跑：不追加新输入，从断点继续
+                run_id=run_id,
+                session_id=session_id,
+                emitter=emitter,
+                cancel_flag=cancel_flag,
+                syncer=MessageSyncer(session_id=session_id),
+                user_message_id=None,
+                resumed=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc2:  # noqa: BLE001 - 续跑再失败：网络类继续探测
+            kind = classify_failure(exc2)
+            logger.warning("grace_resume_retry_failed", run_id=run_id, kind=kind, error=str(exc2)[:200])
+            if kind != "network":
+                return None
+    return None
 
 #: 步数触顶时的用户可见说明（落库 + SSE 双通道）
 _RECURSION_NOTICE = (

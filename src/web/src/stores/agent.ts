@@ -168,20 +168,49 @@ export const useAgentStore = defineStore('agent', () => {
 
   /**
    * 运行中「通过消息引导发送」的引导消息（会话内可见，展示在队列消息之前）。
-   * 后端语义不变：run 的每个节点完成后、下一次模型调用前注入提示词；
-   * run 结束后清空（引导已被消费，最终回复即其效果）。
+   * 后端语义：发送时即落库（kind=steer），run 的每次模型调用前注入提示词；
+   * `consumed` 由 `steer.consumed` 事件置真——未消费的引导气泡显示在「AI 思考」下方
+   * 且可编辑/删除，已消费的显示在「AI 思考」上方。run 结束后清空（持久化行仍可见）。
    */
-  const steered = ref<{ id: number; content: string; sentAt: string }[]>([])
-  let steerSeq = 0
+  const steered = ref<{ messageId: string; content: string; sentAt: string; consumed: boolean }[]>([])
 
-  function addSteered(content: string): void {
-    steerSeq += 1
-    steered.value = [...steered.value, { id: steerSeq, content, sentAt: new Date().toISOString() }]
+  function addSteered(messageId: string, content: string): void {
+    steered.value = [
+      ...steered.value,
+      { messageId, content, sentAt: new Date().toISOString(), consumed: false },
+    ]
+  }
+
+  /** `steer.consumed`：引导已被注入下一次模型调用（位置切换到「AI 思考」上方） */
+  function markSteerConsumed(messageIds: string[]): void {
+    const ids = new Set(messageIds)
+    steered.value = steered.value.map((s) => (ids.has(s.messageId) ? { ...s, consumed: true } : s))
+  }
+
+  function updateSteerLocal(messageId: string, content: string): void {
+    steered.value = steered.value.map((s) => (s.messageId === messageId ? { ...s, content } : s))
+  }
+
+  function removeSteerLocal(messageId: string): void {
+    steered.value = steered.value.filter((s) => s.messageId !== messageId)
   }
 
   function clearSteered(): void {
     steered.value = []
   }
+
+  /**
+   * Agent 默认收尾回复（暂停/网络异常/模型接口异常）——run.notice 事件即时展示；
+   * run 结束 refreshMessages 后由持久化 kind=notice 行接管，本地副本清空。
+   */
+  const noticeMessage = ref<{ content: string; kind: string } | null>(null)
+
+  function clearNotice(): void {
+    noticeMessage.value = null
+  }
+
+  /** 最近一次 run.end 的 status（onClose 据此决定队列是否自动发送） */
+  const lastRunEndStatus = ref<string | null>(null)
   /**
    * 当前「AI 思考执行中」的会话 id 集合（全局单飞：至多 1 个）。
    * 会话列表条目右侧据此显示灰色小字「AI思考执行中……」；
@@ -379,6 +408,8 @@ export const useAgentStore = defineStore('agent', () => {
     currentSessionId.value = null
     messages.value = []
     steered.value = []
+    noticeMessage.value = null
+    lastRunEndStatus.value = null
     lastUsage.value = { tokens_in: 0, tokens_out: 0 }
     pendingInterrupts.value = []
     pendingConsult.value = null
@@ -435,6 +466,8 @@ export const useAgentStore = defineStore('agent', () => {
     runPaused.value = false
     streaming.value = []
     steered.value = []
+    noticeMessage.value = null
+    lastRunEndStatus.value = null
     todos.value = []
     workflowStage.value = null
     workflowRetryCount.value = 0
@@ -601,14 +634,18 @@ export const useAgentStore = defineStore('agent', () => {
         // run.end 后收尾：把流式消息合入正式列表
         running.value = false
         void refreshMessages()
-        // 引导消息已被本轮消费（最终回复即其效果）→ 清空展示
+        // 引导消息已随 run 落库（kind=steer）：清空本地副本，持久化行接管展示
         clearSteered()
-        // run 结束后自动发送队列中的首条消息（「添加到队列」）
-        if (queued.value.length) {
+        // 收尾 notice 同样已落库（kind=notice）：本地副本清空，避免双显示
+        clearNotice()
+        // run **正常完成**后才自动发送队列首条（「添加到队列」）；
+        // 停止/失败后保留队列不发送——会话里只留「用户消息 +（引导）+ 默认回复」。
+        if (lastRunEndStatus.value === 'completed' && queued.value.length) {
           const next = queued.value[0]
           queued.value = queued.value.slice(1)
           void sendMessage(next.content, next.modelRef, next.hiddenContext)
         }
+        lastRunEndStatus.value = null
         // 会话标题/用量随运行结束刷新（首问总结、token 累计）
         void loadUsage()
         void refreshSessionsLight()
@@ -757,8 +794,20 @@ export const useAgentStore = defineStore('agent', () => {
       case 'error':
         setRawError(String(data.message ?? '运行出错'), Number(data.code ?? 0) || null)
         break
+      case 'steer.consumed':
+        markSteerConsumed((data.message_ids as string[] | undefined) ?? [])
+        break
+      case 'run.notice':
+        noticeMessage.value = {
+          content: String(data.content ?? ''),
+          kind: String(data.kind ?? ''),
+        }
+        // 已有落库收尾回复 → 撤掉灰色报错卡片（避免一条回复 + 灰卡双显示）
+        clearError()
+        break
       case 'run.end':
         running.value = false
+        lastRunEndStatus.value = String(data.status ?? '')
         runPaused.value =
           String(data.status ?? '') === 'awaiting_approval' ||
           String(data.status ?? '') === 'awaiting_consult'
@@ -778,12 +827,18 @@ export const useAgentStore = defineStore('agent', () => {
             .then((tree) => restorePendingCards(tree.latest_run?.pending_interrupts ?? []))
             .catch(() => undefined)
         }
-        // 运行以 failed 结束时，把后端错误转成中文提示（灰色异常态）
+        // 运行以 failed 结束时，把后端错误转成中文提示（灰色异常态）；
+        // 已落库收尾 notice（暂停/网络/模型异常）时不显示灰卡——notice 气泡即回复
         if (String(data.status ?? '') === 'failed') {
-          const msg = String(data.error ?? '') || 'AI 运行已中断'
-          // error 事件已给出更精确的文案/错误码时不覆盖
-          if (!error.value) setRawError(msg)
+          if (data.notice) clearError()
+          else {
+            const msg = String(data.error ?? '') || 'AI 运行已中断'
+            // error 事件已给出更精确的文案/错误码时不覆盖
+            if (!error.value) setRawError(msg)
+          }
         }
+        // 宽限探测恢复续跑成功（error 事件先于续跑发出）→ 撤掉过期的灰色报错卡片
+        if (String(data.status ?? '') === 'completed') clearError()
         break
     }
   }
@@ -871,12 +926,26 @@ export const useAgentStore = defineStore('agent', () => {
       return
     }
     try {
-      await agentApi.steerRun(currentRunId, content)
-      addSteered(content)
+      const res = await agentApi.steerRun(currentRunId, content)
+      addSteered(res.message_id, content)
     } catch (err) {
       setError(err)
       throw err
     }
+  }
+
+  /** 编辑未消费的引导消息（后端同步更新落库行与队列项） */
+  async function editSteer(messageId: string, content: string): Promise<void> {
+    if (!currentRunId) return
+    await agentApi.updateSteer(currentRunId, messageId, content)
+    updateSteerLocal(messageId, content)
+  }
+
+  /** 删除未消费的引导消息（后端同步删落库行与队列项） */
+  async function removeSteer(messageId: string): Promise<void> {
+    if (!currentRunId) return
+    await agentApi.deleteSteer(currentRunId, messageId)
+    removeSteerLocal(messageId)
   }
 
   function stopStream(): void {
@@ -918,6 +987,10 @@ export const useAgentStore = defineStore('agent', () => {
     queued,
     steered,
     clearSteered,
+    noticeMessage,
+    clearNotice,
+    editSteer,
+    removeSteer,
     runningSessionIds,
     pendingSelectionBlocks,
     attachSelection,

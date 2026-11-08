@@ -98,6 +98,11 @@ class MessageSyncer:
                 self._index += 1
                 continue
             if role == "user" and _is_internal_human(msg):
+                # 用户引导（kind=steer）在 API 层已落库：不重复写入，但把落库行接进
+                # 活跃路径（后续 assistant 消息挂在其后），保证重进会话仍能看到引导。
+                sid = (getattr(msg, "additional_kwargs", None) or {}).get("steer_message_id")
+                if sid:
+                    self._last_leaf = sid
                 self._index += 1
                 continue
             if role == "user" and self._api_user_text is not None and _text_of(msg) == self._api_user_text:
@@ -184,8 +189,12 @@ _INTERNAL_HUMAN_PREFIXES = ("（系统守护", "（系统修复", "（用户补�
 
 
 def _is_internal_human(msg: Any) -> bool:
-    """内部注入的 human（steer 引导 / 守护纠正 / nudge）不入消息树、不展示。"""
-    if getattr(msg, "name", None) == "steer":
+    """内部注入的 human（steer 引导 / 守护纠正 / nudge）不重复落库、不另作展示。
+
+    - name=steer：用户引导，API 层已落库（kind=steer），sync 仅衔接活跃路径；
+    - name=steer_internal：系统内部纠正（熔断提醒等），完全不入树。
+    """
+    if getattr(msg, "name", None) in ("steer", "steer_internal"):
         return True
     text = _text_of(msg)
     return any(text.startswith(p) for p in _INTERNAL_HUMAN_PREFIXES)

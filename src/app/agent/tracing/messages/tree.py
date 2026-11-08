@@ -48,12 +48,18 @@ async def add_message(
     run_id: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
     status: str = "complete",
+    kind: str = "normal",
+    advance_leaf: bool = True,
     tokens_in: int = 0,
     tokens_out: int = 0,
     cached_in: int = 0,
     model: str | None = None,
 ) -> Message:
-    """追加一条消息。`parent_id` 为空时自动接在当前 active_leaf 之后。"""
+    """追加一条消息。`parent_id` 为空时自动接在当前 active_leaf 之后。
+
+    `advance_leaf=False`：落库但不移动 active_leaf（steer 引导消息用——
+    挂在当前 leaf 下作兄弟节点，不干扰运行中 assistant 消息的落库链路）。
+    """
     row_session = await session.get(AgentSession, session_id)
     if row_session is None:
         raise ValueError(f"会话不存在：{session_id}")
@@ -80,6 +86,7 @@ async def add_message(
         parent_id=parent_id,
         branch_index=branch_index,
         role=role,
+        kind=kind,
         content_json=content_json,
         tool_calls_json=json.dumps(tool_calls, ensure_ascii=False, default=str) if tool_calls else None,
         status=status,
@@ -93,8 +100,9 @@ async def add_message(
     session.add(row)
     await session.flush()
 
-    row_session.active_leaf_id = row.id
-    row_session.updated_at = utcnow()
+    if advance_leaf:
+        row_session.active_leaf_id = row.id
+        row_session.updated_at = utcnow()
     return row
 
 
@@ -149,6 +157,7 @@ async def load_tree(session: AsyncSession, session_id: str) -> dict[str, Any]:
                 "branch_index": r.branch_index,
                 "branch_count": len(siblings),
                 "role": r.role,
+                "kind": r.kind,
                 "content": _content_of(r),
                 "tool_calls": _json_of(r.tool_calls_json),
                 "status": r.status,

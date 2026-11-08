@@ -129,11 +129,17 @@ class TestHappyPath:
 
 
 class TestFailureAndRecovery:
-    async def test_provider_permanent_failure_marks_failed(self, client, novel_id):
+    async def test_provider_permanent_failure_marks_failed(self, client, novel_id, monkeypatch):
         _, model_ref = await setup_provider_model(client)
         sid = await new_session(client, novel_id)
         install_fake(model_ref, [])
         from app.agent.loop.llm.factory import register_model_override
+
+        # 模型接口异常会进入 30s 探测宽限（新语义）；测试压缩窗口避免等待
+        from app.agent.loop import runner as _runner
+
+        monkeypatch.setattr(_runner, "GRACE_WINDOW_SEC", 1)
+        monkeypatch.setattr(_runner, "GRACE_PROBE_INTERVAL", 0.2)
 
         register_model_override(model_ref, _AlwaysFailChatModel(responses=[]))
         run_id = await post_message(client, sid, "写点什么")
@@ -142,6 +148,10 @@ class TestFailureAndRecovery:
         assert run["status"] == "failed"
         assert "RuntimeError" in (run.get("error") or "")
         assert any(e["event"] == "error" for e in events)
+        # 宽限超时 → 落库 notice（模型接口异常话术）
+        tree = await _tree(client, sid)
+        notices = [m for m in tree["items"] if m.get("kind") == "notice"]
+        assert notices and "当前大模型接口请求异常" in notices[-1]["content"]
         # 会话状态回落 error（finalize）
         sess = (await client.get("/api/v1/agent/sessions")).json()["data"]
         target = next(s for s in sess if s["id"] == sid)
@@ -660,10 +670,24 @@ class TestSubagentConclusionRoundtrip:
 
 class TestRunManagerUnits:
     def test_steer_queue_lifecycle(self):
-        run_manager.push_steer("r-x", "引导一")
+        run_manager.push_steer("r-x", "引导一", message_id="m-1")
         run_manager.push_steer("r-x", "引导二")
-        assert run_manager.take_steer("r-x") == ["引导一", "引导二"]
+        assert run_manager.take_steer("r-x") == [
+            {"message_id": "m-1", "content": "引导一"},
+            {"message_id": None, "content": "引导二"},
+        ]
         assert run_manager.take_steer("r-x") == []
+
+    def test_steer_pending_update_remove(self):
+        run_manager.push_steer("r-y", "原文", message_id="m-9")
+        assert run_manager.steer_pending("r-y")[0]["content"] == "原文"
+        assert run_manager.update_steer("r-y", "m-9", "改后") is True
+        assert run_manager.steer_pending("r-y")[0]["content"] == "改后"
+        assert run_manager.remove_steer("r-y", "m-9") is True
+        assert run_manager.steer_pending("r-y") == []
+        # 未命中（已消费/不存在）返回 False
+        assert run_manager.update_steer("r-y", "m-9", "x") is False
+        assert run_manager.remove_steer("r-y", "m-9") is False
 
     def test_hidden_context_lifecycle(self):
         run_manager.set_hidden_context("r-h", "润色提示")

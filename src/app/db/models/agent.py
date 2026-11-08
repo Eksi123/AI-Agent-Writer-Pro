@@ -53,6 +53,8 @@ class Message(Base):
     branch_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: user|assistant|tool|system
     role: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: normal|steer|notice：普通消息 / 运行中引导消息 / Agent 默认收尾回复
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
     content_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_calls_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: streaming|complete|error|cancelled

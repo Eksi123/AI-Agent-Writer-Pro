@@ -387,10 +387,13 @@ async def steer_run(
 ) -> dict:
     """运行中「通过消息引导发送」。
 
-    引导文本入 run 级队列，由 `SteerInjectionMiddleware` 在**下次模型调用前**注入，
+    引导文本**先落库**（kind=steer，重进会话/重启服务仍可见，不推进 active_leaf），
+    再入 run 级队列，由 `SteerInjectionMiddleware` 在**下次模型调用前**注入，
     不中断当前 run、不新建 run。run 已结束 → 409/40902（前端回落为普通发送）。
+    响应返回 `message_id`，供前端编辑/删除未消费引导。
     """
     from app.agent.loop.runner import run_manager  # 延迟导入
+    from app.agent.tracing.messages.tree import add_message
 
     run = await session.get(AgentRun, run_id)
     if run is None:
@@ -403,9 +406,69 @@ async def steer_run(
             code=ErrorCode.RUN_STATE_CONFLICT,
             data={"run_id": run_id, "status": run.status},
         )
-    run_manager.push_steer(run_id, body.content)
-    logger.info("run_steered", run_id=run_id, chars=len(body.content))
-    return ok({"run_id": run_id, "steered": True})
+    row = await add_message(
+        session,
+        session_id=run.session_id,
+        role="user",
+        content=body.content,
+        run_id=run_id,
+        kind="steer",
+        advance_leaf=False,
+    )
+    await session.commit()
+    run_manager.push_steer(run_id, body.content, message_id=row.id)
+    logger.info("run_steered", run_id=run_id, chars=len(body.content), message_id=row.id)
+    return ok({"run_id": run_id, "steered": True, "message_id": row.id})
+
+
+@router.patch("/runs/{run_id}/steer/{message_id}")
+async def update_steer(
+    run_id: str, message_id: str, body: AgentSteerIn, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """编辑**尚未被消费**的引导消息（仍在 run 队列中）。已消费/不存在 → 409/40902。"""
+    from app.agent.loop.runner import run_manager  # 延迟导入
+    from app.db.models import Message
+
+    row = await session.get(Message, message_id)
+    if row is None or row.kind != "steer" or row.run_id != run_id:
+        raise NotFoundError(f"引导消息不存在：{message_id}")
+    if not run_manager.is_running(run_id) or not run_manager.update_steer(run_id, message_id, body.content):
+        from app.core.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            "引导消息已被消费或运行已结束，无法编辑",
+            code=ErrorCode.RUN_STATE_CONFLICT,
+            data={"run_id": run_id, "message_id": message_id},
+        )
+    row.content_json = body.content
+    await session.commit()
+    logger.info("run_steer_updated", run_id=run_id, message_id=message_id, chars=len(body.content))
+    return ok({"run_id": run_id, "message_id": message_id, "updated": True})
+
+
+@router.delete("/runs/{run_id}/steer/{message_id}")
+async def delete_steer(
+    run_id: str, message_id: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """删除**尚未被消费**的引导消息（落库行 + 队列项）。已消费/不存在 → 409/40902。"""
+    from app.agent.loop.runner import run_manager  # 延迟导入
+    from app.db.models import Message
+
+    row = await session.get(Message, message_id)
+    if row is None or row.kind != "steer" or row.run_id != run_id:
+        raise NotFoundError(f"引导消息不存在：{message_id}")
+    if not run_manager.is_running(run_id) or not run_manager.remove_steer(run_id, message_id):
+        from app.core.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            "引导消息已被消费或运行已结束，无法删除",
+            code=ErrorCode.RUN_STATE_CONFLICT,
+            data={"run_id": run_id, "message_id": message_id},
+        )
+    await session.delete(row)
+    await session.commit()
+    logger.info("run_steer_deleted", run_id=run_id, message_id=message_id)
+    return ok({"run_id": run_id, "message_id": message_id, "deleted": True})
 
 
 # ---------------------------------------------------------------------------

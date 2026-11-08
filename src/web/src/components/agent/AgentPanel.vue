@@ -202,6 +202,8 @@ interface DisplayMessage {
   createdAt?: string | null
   /** 用户消息携带的添加文件标签（仿 VS Code Copilot，展示在气泡上方） */
   attachments?: string[]
+  /** normal|steer|notice：引导消息渲染为引导样式气泡 */
+  kind?: 'normal' | 'steer' | 'notice'
 }
 
 /**
@@ -224,11 +226,16 @@ function isInternalMessage(m: { role: string; content?: string | null }): boolea
 }
 
 const displayMessages = computed<DisplayMessage[]>(() => {
+  // 本 run 本地持有的引导消息 id：其展示位置/可编辑性由本地副本控制
+  // （未消费在「AI 思考」下方、已消费在其上方），持久化行此时不参与展示，避免双显示。
+  const localSteerIds = new Set(agent.steered.map((s) => s.messageId))
   const persisted: DisplayMessage[] = agent.messages
     // 中间件注入的 system（前情提要等）属内部上下文，绝不渲染成气泡
     .filter((m) => m.role !== 'system')
-    // 内部注入消息（系统守护/引导/nudge）绝不渲染——含历史遗留落库数据
+    // 内部注入消息（系统守护/守护纠正/nudge）绝不渲染——含历史遗留落库数据
     .filter((m) => !isInternalMessage(m))
+    // 本 run 本地持有的 steer 行由本地副本渲染（位置/编辑态），此处排除
+    .filter((m) => !(m.kind === 'steer' && localSteerIds.has(m.id)))
     .map((m) => ({
       key: m.id,
       // tool 消息保留独立角色——collapseTurns 视其为中间过程，
@@ -240,26 +247,22 @@ const displayMessages = computed<DisplayMessage[]>(() => {
       createdAt: m.created_at,
       // 用户气泡上方展示发送时携带的添加文件
       attachments: m.role === 'user' ? attachmentLabels.value[String(m.content ?? '')] : undefined,
+      // 引导消息（kind=steer）渲染为引导样式气泡；notice 为普通 assistant 气泡
+      kind: m.kind ?? 'normal',
     }))
   // AI 思考结束后只展示每轮问答的**最后回复**——中间的思考过程、
   // 工具调用卡片、工具结果一律折叠不显示；运行中的实时过程由下方 live 流式消息展示。
   // 暂停态（审批/咨询卡片等待答复）视同运行中：不落库的中间消息不会进来，
   // 但持久化里若残留本轮中间文本也一并隐藏，只留卡片。
   const shown = collapseTurns(persisted, agent.running || agent.runPaused)
-  // 去重：steered 消息若内容已出现在持久化消息中（后端已将其作为普通用户消息
-  // 持久化），则从 shown 中移除，避免同一条内容同时以「引导」气泡和普通气泡展示。
-  const steeredContents = new Set(agent.steered.map((s) => s.content))
-  const deduped = shown.filter(
-    (m) => !(m.role === 'user' && steeredContents.has(m.content)),
-  )
   // 乐观回显——刚发出、后端消息树还没回来的用户消息先本地展示；
   // 后端已持久化同一条（末尾 user 消息内容一致）时不再重复显示。
   // pending 带本地发送时间戳，乐观回显的用户消息下方同样显示日期时间。
   const pending = agent.pendingUserMessage
   if (pending) {
-    const lastUser = [...deduped].reverse().find((m) => m.role === 'user')
+    const lastUser = [...shown].reverse().find((m) => m.role === 'user' && m.kind !== 'steer')
     if (lastUser?.content !== pending.content) {
-      deduped.push({
+      shown.push({
         key: 'pending-user',
         role: 'user',
         content: pending.content,
@@ -267,12 +270,13 @@ const displayMessages = computed<DisplayMessage[]>(() => {
         streaming: false,
         createdAt: pending.sentAt,
         attachments: attachmentLabels.value[pending.content],
+        kind: 'normal',
       })
     }
   }
   // 中间思考/工具调用/子代理过程**永不展示在会话框中**（用户要求）；
   // 气泡里只保留每轮问答的最终总结回复。
-  return deduped
+  return shown
 })
 
 /**
@@ -310,6 +314,12 @@ function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessa
     turn = []
   }
   for (const m of list) {
+    // 引导消息（kind=steer）**不分割轮次**：原位插入展示，其前后的中间过程仍属同一轮，
+    // 避免引导把一轮问答拆成两轮（中间思考文本被当成「最终回复」展示）。
+    if (m.kind === 'steer') {
+      out.push(m)
+      continue
+    }
     if (m.role === 'user') {
       flush(isRunning)
       out.push(m)
@@ -320,6 +330,35 @@ function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessa
   flush(isRunning)
   return out
 }
+
+/**
+ * 已被消费的本地引导消息（`steer.consumed` 事件置真、持久化行尚未刷新进来）：
+ * 展示在「AI 思考」上方；run 结束 refreshMessages 后由持久化 kind=steer 行原位接管。
+ */
+const consumedSteerMessages = computed<DisplayMessage[]>(() =>
+  agent.steered
+    .filter((s) => s.consumed)
+    .map((s) => ({
+      key: s.messageId,
+      role: 'user' as const,
+      content: s.content,
+      toolCalls: [],
+      streaming: false,
+      createdAt: s.sentAt,
+      kind: 'steer' as const,
+    })),
+)
+
+/** 尚未被消费的引导消息（仍在后端队列）：展示在「AI 思考」下方，可编辑/删除 */
+const pendingSteerMessages = computed(() => agent.steered.filter((s) => !s.consumed))
+
+/** run.notice 的本地副本是否已被持久化 notice 行接管（避免双显示） */
+const noticeAlreadyPersisted = computed(() =>
+  agent.noticeMessage !== null &&
+  agent.messages.some(
+    (m) => m.kind === 'notice' && String(m.content ?? '') === (agent.noticeMessage?.content ?? ''),
+  ),
+)
 
 /** 每条问答下方的小字日期时间 */
 function stampOf(iso?: string | null): string {
@@ -636,6 +675,35 @@ function editQueuedFromChat(id: number): void {
 
 function removeQueueItem(id: number): void {
   agent.removeQueued(id)
+}
+
+// ---------------------------------------------------------------------------
+// 引导消息——未消费前可编辑/删除（与排队消息同交互）
+// ---------------------------------------------------------------------------
+
+/** 点击未消费引导气泡：内容回到聊天输入框（后端删落库行+队列项），用户编辑后重新发送 */
+function editSteerFromChat(messageId: string): void {
+  const item = agent.steered.find((s) => s.messageId === messageId)
+  if (!item) return
+  void agent
+    .removeSteer(messageId)
+    .then(() => {
+      input.value = item.content
+      void nextTick(() => {
+        const box = document.querySelector<HTMLTextAreaElement>('.chat-input textarea')
+        box?.focus()
+      })
+    })
+    .catch((err: unknown) => {
+      ElMessage.error(errorMessage(err))
+    })
+}
+
+/** 删除未消费引导气泡（后端删落库行+队列项） */
+function removeSteerFromChat(messageId: string): void {
+  agent.removeSteer(messageId).catch((err: unknown) => {
+    ElMessage.error(errorMessage(err))
+  })
 }
 
 async function onStop(): Promise<void> {
@@ -1060,7 +1128,14 @@ watch(
               {{ label }}
             </el-tag>
           </div>
-          <div class="msg-content">
+          <div class="msg-content" :class="{ 'steer-content': msg.kind === 'steer' }">
+            <el-tag
+              v-if="msg.kind === 'steer'"
+              size="small"
+              type="warning"
+              effect="plain"
+              class="steer-tag"
+            >引导</el-tag>
             <template v-if="msg.toolCalls?.length">
               <div v-for="(tc, i) in msg.toolCalls" :key="i" class="tool-card">
                 <code>{{ formatToolCall(tc) }}</code>
@@ -1100,6 +1175,18 @@ watch(
           </div>
         </div>
 
+        <!-- 已消费的引导消息（本地副本，等持久化 kind=steer 行原位接管）：
+             展示在「AI 正在思考…」上方 -->
+        <div v-for="msg in consumedSteerMessages" :key="msg.key" class="msg msg-user">
+          <div class="msg-content steer-content">
+            <el-tag size="small" type="warning" effect="plain" class="steer-tag">引导</el-tag>
+            <span class="msg-text">{{ msg.content }}</span>
+          </div>
+          <div class="msg-foot">
+            <span class="msg-time">{{ stampOf(msg.createdAt) }}</span>
+          </div>
+        </div>
+
         <!-- 「AI 正在思考…」放进会话内部（模仿主流 AI Agent），
              不再占用会话框最上方一整行
              [停止] 从状态条移到底部发送按键（三形态：发送 / 停止 / 追加消息）
@@ -1128,10 +1215,18 @@ watch(
           </div>
         </div>
 
-        <!-- 运行中「通过消息引导发送」的引导消息（展示在队列消息之前；
-             已注入正在跑的 run，不可编辑/删除；run 结束后清空） -->
-        <div v-for="s in agent.steered" :key="`s-${s.id}`" class="queue-bubble msg-user">
-          <div class="msg-content steer-content">
+        <!-- 未消费的引导消息（仍在后端队列）：展示在「AI 正在思考…」下方；
+             点击气泡回聊天框编辑/再发送，× 在右上角删除；
+             被下一次模型调用消费后自动移到「AI 思考」上方（consumed 切换） -->
+        <div v-for="s in pendingSteerMessages" :key="`s-${s.messageId}`" class="queue-bubble msg-user">
+          <button
+            class="queue-del"
+            :title="t('common.delete')"
+            @click.stop="removeSteerFromChat(s.messageId)"
+          >
+            ×
+          </button>
+          <div class="msg-content steer-content" @click="editSteerFromChat(s.messageId)">
             <el-tag size="small" type="warning" effect="plain" class="steer-tag">引导</el-tag>
             <span class="msg-text">{{ s.content }}</span>
           </div>
@@ -1161,9 +1256,21 @@ watch(
              过程区整块移除；会话里只留用户消息、最终总结回复、审批/咨询卡片与状态行 -->
 
 
+        <!-- Agent 默认收尾回复（暂停/网络异常/模型接口异常）：run.notice 即时展示；
+             持久化 kind=notice 行刷新进来后本地副本清空（noticeAlreadyPersisted 防双显示） -->
+        <div
+          v-if="agent.noticeMessage && !noticeAlreadyPersisted"
+          class="msg msg-assistant"
+        >
+          <div class="msg-content">
+            <span class="msg-text">{{ agent.noticeMessage.content }}</span>
+          </div>
+        </div>
+
         <!-- Agent / 大模型运行报错 → 中文提示 + 应该怎么做，
-             整块灰色（代表异常不可用），像一条助手消息一样留在会话里 -->
-        <div v-if="errorInfo" class="msg msg-assistant msg-error" role="alert">
+             整块灰色（代表异常不可用），像一条助手消息一样留在会话里；
+             已落库收尾 notice（暂停/网络/模型异常）时不显示灰卡——notice 气泡即唯一回复 -->
+        <div v-if="errorInfo && !agent.noticeMessage" class="msg msg-assistant msg-error" role="alert">
           <div class="msg-content error-content">
             <div class="error-title">{{ errorInfo.title }}</div>
             <div class="error-advice">{{ errorInfo.advice }}</div>

@@ -51,6 +51,7 @@ async def publish_run_end(
     tokens_in: int,
     tokens_out: int,
     error_text: str | None,
+    notice: bool = False,
 ) -> None:
     if final_status in ("awaiting_approval", "awaiting_consult"):
         await sse_bus.publish(run_id, session_id, "run.end", {"status": final_status, "paused": True})
@@ -63,6 +64,8 @@ async def publish_run_end(
                 "status": final_status,
                 "usage": {"tokens_in": tokens_in, "tokens_out": tokens_out},
                 "error": error_text,
+                # 已落库 Agent 默认收尾回复（暂停/网络/模型异常）→ 前端隐藏灰色报错卡片
+                "notice": notice,
             },
         )
 

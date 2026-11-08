@@ -438,7 +438,7 @@ window.addEventListener('beforeunload', (e) => {
 
     <!-- 右栏：Agent 面板（可收起、可向左拉伸，拉伸后铺满右侧不留空白） -->
     <template v-if="agentOpen">
-      <div class="resize-handle" :title="t('agent.resizeHint')" @mousedown="onDragStart">
+      <div class="resize-handle" @mousedown="onDragStart">
         <span class="resize-grip" aria-hidden="true" />
       </div>
       <aside class="agent-aside" :style="{ width: `${agentWidth}px` }">

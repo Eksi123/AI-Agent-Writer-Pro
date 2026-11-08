@@ -507,7 +507,16 @@ export const agentApi = {
 
   /** 运行中「通过消息引导发送」（把引导文本注入正在跑的 run） */
   steerRun: (runId: string, content: string) =>
-    post<{ run_id: string; steered: boolean }>(`/agent/runs/${runId}/steer`, { content }),
+    post<{ run_id: string; steered: boolean; message_id: string }>(`/agent/runs/${runId}/steer`, { content }),
+  /** 编辑未消费的引导消息（已消费/运行结束 → 40902） */
+  updateSteer: (runId: string, messageId: string, content: string) =>
+    patch<{ run_id: string; message_id: string; updated: boolean }>(
+      `/agent/runs/${runId}/steer/${messageId}`,
+      { content },
+    ),
+  /** 删除未消费的引导消息（已消费/运行结束 → 40902） */
+  deleteSteer: (runId: string, messageId: string) =>
+    del<{ run_id: string; message_id: string; deleted: boolean }>(`/agent/runs/${runId}/steer/${messageId}`),
 
   resolveInterrupt: (
     interruptId: string,
