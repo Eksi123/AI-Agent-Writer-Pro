@@ -1,7 +1,7 @@
 请为《{{ volume_title }} · {{ chapter_title }}》补写大纲小节。
 
 要求：
-1. **委派 planner 子代理**执行（主 Agent 只做调度）：用 read_file 读大纲文件，在卷节「# {{ volume_title }}」下追加章小节「## {{ chapter_title }}」；若小节已存在但简介为空，用 edit_file 填写；
+1. 用 read_file 读大纲文件，在卷节「# {{ volume_title }}」下追加章小节「## {{ chapter_title }}」；若小节已存在但简介为空，用 edit_file 填写；
 2. 小节格式：
    - 简介：（必填）本章剧情要点 3-6 条
    - 衔接要点：与上一章的承接、伏笔、人物状态变化

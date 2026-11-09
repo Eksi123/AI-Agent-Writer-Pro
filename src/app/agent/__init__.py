@@ -3,16 +3,16 @@
 模块: app.agent
 文件名: __init__.py
 作者: xionggaoqing
-时间: 2026-10-27
+时间: 2026-11-09
 说明: AI Agent 全部代码逻辑（手册「三、(1) 目录边界」，架构优化 ）。
 
     子包（顶层只有 7 个目录）：
     - `loop/`：Agent 运行核心——装配（builder）、运行（runner）、事件流（streaming）、
       上下文处理（knowledge/）、LLM 调用（llm/）、系统提示词（prompts/）、
       功能性中间件（middleware/）、checkpoint 持久化；
-    - `subagents/`：子代理——builtin/（4 个内置：planner/writer/reviewer/web-searcher，
+    - `subagents/`：子代理——builtin/（3 个内置：writer/reviewer/recaller，
       各含 spec.py + prompt.md）+ user/（用户自建装载）+ builder.py（装配）；
-    - `tools/`：工具与技能合并——builtin/（**只放内置工具实现**：web_search）
+    - `tools/`：工具与技能合并——builtin/（**只放内置工具实现**：web_search/outline_grep/ask_user/create_structure）
       + registry.py（自定义工具装配清单，非工具本体）
       + users/（用户自建技能装载；技能 = 用户自建，无随包出厂技能目录）；
     - `workflows/`：写作固定流程，按分类分目录——chapter_workflow/（章节生成四阶段

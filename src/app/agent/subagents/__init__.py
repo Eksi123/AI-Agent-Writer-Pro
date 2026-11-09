@@ -1,16 +1,19 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.subagents
 文件名: __init__.py
 作者: xionggaoqing
-时间: 2026-10-27
+时间: 2026-11-09
 说明: 写作子代理配置与构建（手册「二、(3) Sub-agents」，架构优化 ）。
 
-    4 个内置子代理 planner / writer / reviewer / web-searcher
-    （UI 展示名 Planner / Writer / Reviewer / Web_Searcher）：
+    3 个内置执行类子代理 writer / reviewer / recaller
+    （UI 展示名 Writer / Reviewer / Recaller）：
     - `builtin/{name}/`：出厂定义（spec.py）+ 系统提示词（prompt.md，独立文件）；
     - `user/`：用户自建子代理装载（配置数据在 DB，经 services/subagents CRUD）；
     - `builder.py`：SubAgent 装配（模型覆盖 / 提示词覆盖 / 工具收窄 / workflows 绑定查询）。
+
+    规划（大纲结构/分卷节奏/伏笔布局）与联网检索由主 Agent 亲自完成，
+    不再设独立子代理。
 
     每个可配置模型覆盖（model_ref）、专属提示词、工具白名单、可用技能、
     上下文模式（mode，默认 isolated；fork 禁用 skills）。

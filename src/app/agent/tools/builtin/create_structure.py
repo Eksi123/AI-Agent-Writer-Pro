@@ -3,9 +3,9 @@
 模块: app.agent.tools.builtin.create_structure
 文件名: create_structure.py
 作者: xionggaoqing
-时间: 2026-11-08
-说明: Agent 内置工具：卷/章的**建**与**改名**（`create_volume` / `create_chapter` /
-     `rename_volume` / `rename_chapter`）。
+时间: 2026-11-09
+说明: Agent 内置工具：卷/章的**结构操作**（`create_volume` / `create_chapter` /
+     `rename_volume` / `rename_chapter` / `delete_volume` / `delete_chapter`）。
 
     为什么需要它们——这是对边界约定（手册「二、(3)」：写作业务函数不作为 Agent 工具）
     的一次**有意收窄的例外**。原约定让 Agent 用文件工具直接建卷建章，后果是：
@@ -15,9 +15,11 @@
         实际表现为「卷建不出来」或「建出孤儿目录等 `register_orphan_volumes` 兜底」；
       · 改名 = 改文件里的 frontmatter title，但 `volumes.yaml` 里的卷名不会跟着变，
         于是目录树与正文标题不一致；
-      · 两者都绕过校验（重名、非法标题字符）、审计、索引刷新与前端热更新。
+      · 删除 = 直接 `unlink` 章节文件，绕过回收站归档、修订快照清理、卷内重编号，
+        留下空卷或孤儿目录；
+      · 以上都绕过校验（重名、非法标题字符）、审计、索引刷新与前端热更新。
 
-    所以这四个工具**只做结构操作**（建/改名），不碰正文内容——正文仍然一律走
+    所以这六个工具**只做结构操作**（建/改名/删除），不碰正文内容——正文仍然一律走
     文件工具（`write_file`/`edit_file`），由 `FileChangeNotifyMiddleware` 登记。
     工具本体只是 `services/volumes.py` 里既有函数的薄封装，业务规则不重复实现。
 
@@ -25,12 +27,15 @@
       （后者会把标题里的「第X章」序数词按位置重写，等于把改名改回去）。
       底层用的是 `update_volume` / `update_chapter_meta`，二者均已核对为纯改名。
 
+    ★ `delete_*` 走 `services/volumes.delete_volume` / `delete_chapter`：
+      章节归档回收站（可恢复）+ 清修订快照 + 空卷级联删除 + 卷内重编号 + 刷新索引 + 落审计。
+      删除需审批（`WriteApprovalMiddleware` 拦截 `delete_volume`/`delete_chapter`）。
+
     ★ 改名能生效的前提是 `register_orphan_volumes` 不再纠偏已登记卷的卷名
       （旧实现会在每次 `GET /volumes` 时把卷名改回大纲里的名字）。该纠偏已收窄为
       「仅对首次发现的孤儿卷目录取名」，见 `services/volumes.py`。
 
-    这些工具不需要审批（审批只保留给 `delete` 与「整篇读大纲」两处），
-    也**只挂主 Agent**：结构变更影响全局目录，不应由 writer 之类的子代理自行决定。
+    这些工具**只挂主 Agent**：结构变更影响全局目录，不应由 writer 之类的子代理自行决定。
 """
 
 from __future__ import annotations
@@ -411,4 +416,134 @@ async def rename_chapter(
     )
 
 
-__all__ = ["create_chapter", "create_volume", "rename_chapter", "rename_volume"]
+# ---------------------------------------------------------------------------
+# 删除
+# ---------------------------------------------------------------------------
+
+
+@tool("delete_volume", parse_docstring=True)
+async def delete_volume(runtime: ToolRuntime, volume: str) -> str:
+    """删除一整卷及其下全部章节。**删除后不可恢复**（章节归档回收站，可人工恢复）。
+
+    不要用 `delete` 工具直接删卷目录或章节文件——那样 `volumes.yaml` 不会更新、
+    回收站找不到、修订快照不清理、其余卷编号不重排。
+
+    删除前会弹风险确认卡（需用户批准）。卷下所有章节一并删除。
+
+    Args:
+        volume: 目标卷（卷 id 或卷名）。
+
+    Returns:
+        JSON 字符串：`{ok, volume_id, title, chapters_deleted}`。
+    """
+    project_id, _run_id, _emit = _context(runtime)
+    if not project_id:
+        return _err("缺少项目上下文")
+
+    vol_id, err = await _resolve_volume(project_id, volume)
+    if vol_id is None:
+        return _err(err)
+
+    from app.services import volumes as volumes_service
+    from app.services import files as files_service
+
+    try:
+        # 先读取卷元信息用于返回
+        volumes_list = files_service.read_volumes(project_id)
+        vol_meta = files_service.find_volume(volumes_list, vol_id) or {}
+        vol_title = str(vol_meta.get("title") or "")
+
+        async with session_scope() as db:
+            result = await volumes_service.delete_volume(db, vol_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("agent_delete_volume_failed", project_id=project_id, error=str(exc))
+        return _err(f"删卷失败：{exc}")
+
+    chapters_deleted = int(result.get("chapters_deleted") or 0)
+    await _notify(
+        runtime,
+        project_id,
+        virtual_path=f"/projects/{project_id}/chapters/v{vol_id}/",
+        change_kind="delete",
+    )
+    return json.dumps(
+        {
+            "ok": True,
+            "volume_id": vol_id,
+            "title": vol_title,
+            "chapters_deleted": chapters_deleted,
+            "note": "该卷及其下全部章节已删除（章节已归档回收站，可人工恢复）。",
+        },
+        ensure_ascii=False,
+    )
+
+
+@tool("delete_chapter", parse_docstring=True)
+async def delete_chapter(
+    runtime: ToolRuntime, chapter: str, volume: str = ""
+) -> str:
+    """删除一章。**删除后不可恢复**（章节归档回收站，可人工恢复）。
+
+    不要用 `delete` 工具直接删章节文件——那样 `volumes.yaml` 不会更新、回收站找不到、
+    修订快照不清理、卷内其余章编号不重排；若该卷章节删空，卷也不会自动删除。
+
+    删除前会弹风险确认卡（需用户批准）。若该卷下所有章节都被删除，卷也会一并删除。
+
+    Args:
+        chapter: 目标章（章 id 或章名）。
+        volume: 章所在卷（卷 id 或卷名）。同名章跨卷时必填，用于消歧。
+
+    Returns:
+        JSON 字符串：`{ok, chapter_id, title, volume_id, volume_deleted?}`。
+    """
+    project_id, _run_id, _emit = _context(runtime)
+    if not project_id:
+        return _err("缺少项目上下文")
+
+    from app.services import volumes as volumes_service
+
+    try:
+        async with session_scope() as db:
+            chapter_id, vol_id, err = await _resolve_chapter(db, project_id, chapter, volume)
+            if chapter_id is None or vol_id is None:
+                return _err(err)
+            # 读取章元信息用于返回
+            _pid, _vid, meta, _content = volumes_service.locate_chapter(chapter_id, project_id)
+            ch_title = str(meta.get("title") or "")
+            result = await volumes_service.delete_chapter(
+                db, chapter_id, project_id=project_id
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("agent_delete_chapter_failed", project_id=project_id, error=str(exc))
+        return _err(f"删章失败：{exc}")
+
+    volume_deleted = bool(result.get("volume_deleted"))
+    await _notify(
+        runtime,
+        project_id,
+        virtual_path=f"/projects/{project_id}/chapters/v{vol_id}/c{chapter_id}.md",
+        change_kind="delete",
+        chapter_id=chapter_id,
+    )
+    note = "该卷已无章节，卷目录一并删除。" if volume_deleted else ""
+    return json.dumps(
+        {
+            "ok": True,
+            "chapter_id": chapter_id,
+            "title": ch_title,
+            "volume_id": vol_id,
+            "volume_deleted": volume_deleted,
+            "note": f"该章已删除（已归档回收站，可人工恢复）。{note}",
+        },
+        ensure_ascii=False,
+    )
+
+
+__all__ = [
+    "create_chapter",
+    "create_volume",
+    "delete_chapter",
+    "delete_volume",
+    "rename_chapter",
+    "rename_volume",
+]

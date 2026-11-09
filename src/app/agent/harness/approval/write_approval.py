@@ -3,15 +3,15 @@
 模块: app.agent.harness.approval.write_approval
 文件名: write_approval.py
 作者: xionggaoqing
-时间: 2026-10-27
+时间: 2026-11-09
 说明: `WriteApprovalMiddleware`：按**参数**判定高危写入 → `langgraph.types.interrupt()` 转人工审批。
 
     手册「二、(2) 人为介入」第 2 层：`interrupt_on` 只能做工具级开关、无法按参数判定，
     故高危写入由本中间件在 `awrap_tool_call` 内触发中断。
 
-    ★ 高危判定**只有 delete 一种**（`classify_risk`）：本应用是 AI 写小说，
-    编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，一律不审批。
-    「整章覆盖会触发审批」是**从未实现过的承诺**，相关阈值参数已于 2026-11 移除；
+    ★ 高危判定**只有删除卷章**（`classify_risk`）：拦截 `delete_volume` / `delete_chapter`
+    两个结构工具。本应用是 AI 写小说，编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，
+    一律不审批。「整章覆盖会触发审批」是**从未实现过的承诺**，相关阈值参数已于 2026-11 移除；
     AI 改稿的安全网是 `volumes.record_agent_write` 落的 `source="agent"` 修订快照
     （可在 UI 回退），不是事前审批。
 
@@ -190,24 +190,30 @@ def humanize_delete_reason(virtual_path: str) -> str:
 
 
 def classify_risk(tool_name: str, args: dict[str, Any]) -> tuple[str | None, str]:
-    """判定是否高危。**只有 delete 一种**。
+    """判定是否高危。**只有删除卷章**（`delete_volume` / `delete_chapter`）。
 
     本应用是 AI 写小说，编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，
-    **一律不审批**；仅当 Agent 要删除项目内文件（`delete` 工具）时提示风险操作，
-    由用户三选一：批准 / 拒绝 / 补充要求。
+    **一律不审批**；仅当 Agent 调用 `delete_volume` / `delete_chapter` 结构工具时
+    提示风险操作，由用户三选一：批准 / 拒绝 / 补充要求。
 
-    ★ 路径必须先归一化再匹配前缀：框架 `validate_path` 会把
-    `projects/{pid}/...`、`\\projects\\{pid}\\...` 归一成 `/projects/{pid}/...`
-    后照常执行 `unlink`/`shutil.rmtree`。若这里按字面入参判定，模型（或附件里的
-    提示注入）只要换个路径写法就能绕过**唯一**的人工删除闸门。
+    卷/章的标识从工具参数里取（`volume` / `chapter`），用于生成人话文案。
 
     Returns:
         (risk_kind, reason)；`risk_kind` 为 None 表示放行。
     """
-    if tool_name == "delete":
-        path = normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
-        if path.startswith("/projects/"):
-            return "delete", humanize_delete_reason(path)
+    if tool_name == "delete_volume":
+        volume = str(args.get("volume") or "").strip()
+        reason = f"删除卷「{volume}」及其下全部章节，删除后不可恢复" if volume else "删除卷及其下全部章节，删除后不可恢复"
+        return "delete", reason
+
+    if tool_name == "delete_chapter":
+        chapter = str(args.get("chapter") or "").strip()
+        volume = str(args.get("volume") or "").strip()
+        if volume:
+            reason = f"删除卷「{volume}」中的章「{chapter}」，删除后不可恢复" if chapter else f"删除卷「{volume}」中的某一章，删除后不可恢复"
+        else:
+            reason = f"删除章「{chapter}」，删除后不可恢复" if chapter else "删除章节，删除后不可恢复"
+        return "delete", reason
 
     return None, ""
 
@@ -253,6 +259,10 @@ class WriteApprovalMiddleware(AgentMiddleware):
         if existing is not None:
             return await self._apply(existing, request, handler, tool_name, args)
 
+        # 结构工具（delete_volume/delete_chapter）没有虚拟路径参数，用工具名+参数构造人话
+        path = normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
+        item_label = self._humanize_structure_tool(tool_name, args) if not path else humanize_virtual_path(path)
+
         payload = {
             "kind": INTERRUPT_KIND,
             "risk": risk_kind,
@@ -261,11 +271,9 @@ class WriteApprovalMiddleware(AgentMiddleware):
             "args": _truncate_args(args),
             "tool_call_id": tool_call_id,
             "decisions": self.allowed_decisions,
-            # 批量卡片用：归一化路径（后端汇总人话）+ 单条人话标签
-            "path": normalize_virtual_path(str(args.get("file_path") or args.get("path") or "")),
-            "item_label": humanize_virtual_path(
-                normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
-            ),
+            # 批量卡片用：归一化路径（结构工具为空）+ 单条人话标签
+            "path": path,
+            "item_label": item_label,
         }
 
         interrupt_id = await self._create_interrupt(context, payload)
@@ -292,6 +300,19 @@ class WriteApprovalMiddleware(AgentMiddleware):
 
         record = await self._record_decision(run_id, tool_call_id, interrupt_id, decision)
         return await self._apply(record, request, handler, tool_name, args)
+
+    def _humanize_structure_tool(self, tool_name: str, args: dict[str, Any]) -> str:
+        """结构工具的人话标签（审批卡展示用）。"""
+        if tool_name == "delete_volume":
+            volume = str(args.get("volume") or "").strip()
+            return f"卷「{volume}」" if volume else "某一卷"
+        if tool_name == "delete_chapter":
+            chapter = str(args.get("chapter") or "").strip()
+            volume = str(args.get("volume") or "").strip()
+            if volume:
+                return f"卷「{volume}」中的章「{chapter}」" if chapter else f"卷「{volume}」中的某一章"
+            return f"章「{chapter}」" if chapter else "某一章"
+        return tool_name
 
     # ---- 决定应用 ----
 

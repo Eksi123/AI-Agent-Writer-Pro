@@ -3,7 +3,7 @@
 模块: app.agent.workflows
 文件名: __init__.py
 作者: xionggaoqing
-时间: 2026-11-02
+时间: 2026-11-09
 说明: 写作固定流程（架构优化 ，手册「二、(6)」）。
 
     收纳写作过程中**服务层硬编排**的固定流程（非 Agent 自觉执行）：
@@ -16,7 +16,7 @@
       E3 格式可用性 → E4 汇总 checklist；纯规则不调 LLM）。
 
     子代理与流程的绑定关系声明在 `subagents/builtin/{name}/spec.py` 的 `workflows` 字段
-    （planner/writer/reviewer → ["writing_steps"]；reviewer 的审查维度与
+    （writer/reviewer → ["writing_steps"]；reviewer 的审查维度与
     book_consistency 同域），经 `subagents.builder.workflows_of()` 查询。
 """
 

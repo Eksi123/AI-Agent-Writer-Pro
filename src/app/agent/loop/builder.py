@@ -3,7 +3,7 @@
 模块: app.agent.loop.builder
 文件名: builder.py
 作者: xionggaoqing
-时间: 2026-10-27
+时间: 2026-11-09
 说明: `create_deep_agent` 装配（手册「二、(2) Agent-Loop」+「二、(5)」）。
 
     装配要点（架构优化后）：
@@ -19,7 +19,7 @@
       → PairingRepair → WastefulLoopGuard（分级熔断）→ Steer → ReadScopeGuard
       → WorkspaceGuard（harness/guard）→ FileChangeNotify → ContentLock（harness/lock）
     - `skills`：`["/skills/user/"]`（虚拟路径）+ 会话精选 `/skills/session-{sid}/`
-    - `subagents`：4 个内置写作子代理 planner/writer/reviewer/web-searcher
+    - `subagents`：3 个内置执行类子代理 writer/reviewer/recaller
       （subagents/builtin/*/spec.py + prompt.md；general-purpose 由 deepagents 自动追加）
       - 无预设降级链——当前模型连续失败达阈值才切换备用模型
       （ModelSwitchOnFailureMiddleware）；删除卷章弹风险确认，编辑/生成不审批
@@ -99,8 +99,8 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
 
 
 #: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search），
-#: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_grep`
-#: 走自研 registry（非文件工具，作为 extra 工具实例下发）。
+#: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_grep` /
+#: `ask_user` / 结构工具走自研 registry（非文件工具，作为 extra 工具实例下发）。
 _FS_TOOL_ALIASES = {
     "read_file": "read_file",
     "read": "read_file",
@@ -116,12 +116,27 @@ _FS_TOOL_ALIASES = {
     "web_serach": "web_search",  # 容错：文档里的拼写
     "outline_recall": "outline_grep",  # 兼容旧名（历史子代理配置/提示词残留）
     "outline_grep": "outline_grep",
+    "ask_user": "ask_user",
+    # 结构工具（create/rename/delete volume/chapter）
+    "create_volume": "create_volume",
+    "create_chapter": "create_chapter",
+    "rename_volume": "rename_volume",
+    "rename_chapter": "rename_chapter",
+    "delete_volume": "delete_volume",
+    "delete_chapter": "delete_chapter",
 }
 
 #: 非文件类自研工具（名字 → 惰性导入路径）
 _EXTRA_TOOL_MODULES = {
     "web_search": "app.agent.tools.builtin.web_search",
     "outline_grep": "app.agent.tools.builtin.outline_grep",
+    "ask_user": "app.agent.tools.builtin.ask_user",
+    "create_volume": "app.agent.tools.builtin.create_structure",
+    "create_chapter": "app.agent.tools.builtin.create_structure",
+    "rename_volume": "app.agent.tools.builtin.create_structure",
+    "rename_chapter": "app.agent.tools.builtin.create_structure",
+    "delete_volume": "app.agent.tools.builtin.create_structure",
+    "delete_chapter": "app.agent.tools.builtin.create_structure",
 }
 
 
@@ -411,8 +426,8 @@ _GP_NAME = "general-purpose"
 
 _GP_DISABLED_PROMPT = (
     "你已被停用：不要执行任何操作，不要调用任何工具。\n"
-    "立即用一句话回复——「通用子代理已停用，请改用 planner（拆解步骤）/ writer（写正文）/ "
-    "reviewer（审稿）/ web_searcher（联网检索）/ recaller（查设定与前情）之一，并说明具体任务。」"
+    "立即用一句话回复——「通用子代理已停用，请改用 writer（写正文）/ "
+    "reviewer（审稿）/ recaller（查设定与前情）之一，并说明具体任务。」"
 )
 
 
@@ -447,8 +462,8 @@ def _inert_general_purpose_spec(backend: Any, permissions: Any) -> dict[str, Any
     return {
         "name": _GP_NAME,
         "description": (
-            "（已停用）通用子代理不可用。请改用 planner / writer / reviewer / "
-            "web_searcher / recaller 之一。"
+            "（已停用）通用子代理不可用。请改用 writer / reviewer / "
+            "recaller 之一。"
         ),
         "system_prompt": _GP_DISABLED_PROMPT,
         "tools": [],

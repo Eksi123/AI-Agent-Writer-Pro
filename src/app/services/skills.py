@@ -158,18 +158,26 @@ async def list_skills(
 
 
 #: 内置基础工具（展示名用文档口径 read/write/edit/list/grep/glob/web_search，
-#: 值为 deepagents FilesystemMiddleware / registry 里的真实工具名；不展示描述，UI 置灰）
+#: 值为 deepagents FilesystemMiddleware / registry 里的真实工具名；UI 置灰恒启用）
 BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
-    {"tool": "read_file", "label": "read"},
-    #: 子代理落盘必备（writer/planner 需要写文件；UI 展示名 write，紧随 read 便于对照）
-    {"tool": "write_file", "label": "write"},
-    {"tool": "edit_file", "label": "edit"},
-    {"tool": "ls", "label": "list"},
-    {"tool": "grep", "label": "grep"},
-    {"tool": "glob", "label": "glob"},
-    #: 大纲按需摘录（自研 registry 工具，与 web_search 同类）
-    {"tool": "outline_grep", "label": "outline_grep"},
-    {"tool": "web_search", "label": "web_search"},
+    # ---- 文件类工具（deepagents FilesystemMiddleware 提供）----
+    {"tool": "read_file", "label": "read", "description": "读取文件内容"},
+    {"tool": "write_file", "label": "write", "description": "创建或覆盖写入文件"},
+    {"tool": "edit_file", "label": "edit", "description": "局部编辑文件（替换指定文本）"},
+    {"tool": "ls", "label": "list", "description": "列出目录内容"},
+    {"tool": "grep", "label": "grep", "description": "在文件内容中搜索关键词"},
+    {"tool": "glob", "label": "glob", "description": "按通配符模式查找文件路径"},
+    # ---- 自研工具（registry 提供）----
+    {"tool": "web_search", "label": "web_search", "description": "联网搜索（Wikipedia + DuckDuckGo 免 Key 双源）"},
+    {"tool": "outline_grep", "label": "outline_grep", "description": "按需摘录大纲（精确摘录某章简介 + 关键词检索，渐进式披露省 token）"},
+    {"tool": "ask_user", "label": "ask_user", "description": "多问题卡片向用户提问并等待回答（暂停 run，前端弹卡片）"},
+    # ---- 结构工具（只挂主 Agent，子代理不可用）----
+    {"tool": "create_volume", "label": "create_volume", "description": "新建卷（同时建好卷内各章，原子操作）"},
+    {"tool": "create_chapter", "label": "create_chapter", "description": "在已有卷里新建一章"},
+    {"tool": "rename_volume", "label": "rename_volume", "description": "改卷名（只改名字，不动顺序/正文）"},
+    {"tool": "rename_chapter", "label": "rename_chapter", "description": "改章名（只改名字，不动顺序/正文）"},
+    {"tool": "delete_volume", "label": "delete_volume", "description": "删除卷及其下全部章节（需审批，归档回收站可恢复）"},
+    {"tool": "delete_chapter", "label": "delete_chapter", "description": "删除一章（需审批，归档回收站可恢复；卷空时级联删除卷）"},
 ]
 
 #: 真实工具名集合（子代理多选勾选后按此解析为工具实例）
@@ -192,7 +200,7 @@ def _builtin_skill_dtos(*, only_web_search: bool = False) -> list[dict[str, Any]
             {
                 "id": f"builtin:{item['tool']}",
                 "name": item["label"],
-                "description": "",  # 内置工具不展示描述
+                "description": item.get("description", ""),  # 内置工具展示功能介绍
                 "content_md": "",
                 "allowed_tools": [],
                 "assets": [],
