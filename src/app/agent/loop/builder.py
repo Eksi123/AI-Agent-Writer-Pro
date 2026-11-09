@@ -44,6 +44,7 @@ from app.agent.harness.llm.prompt_cache import PromptCacheMiddleware
 from app.agent.harness.llm.resilience import build_resilience_middleware
 from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware
 from app.agent.harness.sandbox import build_backend, build_permissions
+from app.agent.harness.sandbox.safe_delete import SafeDeleteMiddleware
 from app.agent.loop.checkpointer import get_checkpointer
 from app.agent.loop.context import AgentContext
 from app.agent.loop.llm.factory import get_chat_model
@@ -132,6 +133,7 @@ def build_subagents_from_specs(
     permissions: Any = None,
     default_model: BaseChatModel | None = None,
     subagent_call_limit: int = 20,
+    write_approval_enabled: bool = True,
 ) -> list[Any]:
     """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
 
@@ -167,6 +169,44 @@ def build_subagents_from_specs(
                 steer_sink=_push_steer,
             )
         )
+        # ★ 防护/通知中间件必须同样挂到子代理栈上，且要与主栈**同构**。
+        #
+        # 提示词铁律要求「正文一律委派 writer 子代理」（main_agent.md.j2:14-18、
+        # workflow_generate.md.j2:21），也就是说**正文生成的主路径在子代理里**。
+        # 而 deepagents 只按中间件 name 把主栈中间件继承给子代理的基座槽位，
+        # 自建的这几个都不在其中 → 曾经出现：writer 写完章节文件后
+        #   ① 不发 `file.changed`（前端热更新链断、目录树/索引/FTS 全不同步）；
+        #   ② 生成期间该章无「AI 编辑锁」（用户并发保存与 AI 整文件覆盖互相吃掉）；
+        #   ③ 文件读写删零审计、零路径校验、零 tool.start/tool.result 事件；
+        #   ④ `delete` 是 unlink/rmtree 永久删除，不进回收站；
+        #   ⑤ **删除不弹审批卡**：`INTERRUPT_ON` 是空字典（见本文件 :80），框架层
+        #      不拦任何工具，删除审批的唯一来源是 `WriteApprovalMiddleware`；
+        #      子代理栈上没有它，writer 就能静默删章。
+        #   ⑥ 子代理可整篇读大纲而不触发授权卡（`ReadScopeGuardMiddleware` 同理）。
+        #
+        # ★ 为什么「主↔子上下文隔离」不妨碍这些中间件生效：隔离切断的只是**消息**
+        #   （子代理的中间步骤不回传主图，收尾还会被 SubagentContextScrub 清空），
+        #   而这些中间件依赖的三样东西都**不在消息里**——
+        #     · `runtime.context`（run_id / session_id / emit）：同一次 graph 调用内
+        #       主图与 isolated 子图共享同一个 context 对象，emit 指向同一个按
+        #       run_id 寻址的 SSE 总线，所以子代理发的事件前端照样收得到；
+        #     · `content_locks`：进程级单例，按 run_id 加解锁，run 收尾统一释放，
+        #       与「哪个栈加的锁」无关；
+        #     · DB / 文件系统：各自 `session_scope()` 直连，不经对话上下文。
+        #   反过来，**依赖 interrupt() 的闸门**（删除审批、读大纲授权）之所以也能跨
+        #   隔离生效，是因为 LangGraph 的 GraphInterrupt 会从 isolated 子图**冒泡**
+        #   到主图（同 ModelCallBudget 的既有注释），前端弹的是同一张卡片。
+        #
+        # 相对顺序须与主栈一致：WriteApproval 最外（其 interrupt 不得被吞），
+        # ReadScope → WorkspaceGuard → FileChangeNotify → SafeDelete → ContentLock
+        # （FileChangeNotify 在 SafeDelete 外层：后者不调 handler、自行返回成功结果，
+        #  前者要靠该结果发 file.changed）。
+        middleware.append(WriteApprovalMiddleware(enabled=write_approval_enabled))
+        middleware.append(ReadScopeGuardMiddleware())
+        middleware.append(WorkspaceGuardMiddleware())
+        middleware.append(FileChangeNotifyMiddleware())
+        middleware.append(SafeDeleteMiddleware())
+        middleware.append(ContentLockMiddleware())
         if selected["selected"]:
             # 显式勾选 → 收窄工具集：文件类工具经 FilesystemMiddleware(tools=[...]) 限定
             # （deepagents 按中间件 name 原位替换基座 FilesystemMiddleware）。
@@ -356,11 +396,64 @@ def build_middleware_stack(
     stack.append(ReadScopeGuardMiddleware())
     stack.append(WorkspaceGuardMiddleware())
     stack.append(FileChangeNotifyMiddleware())
+    # 删除改为可恢复语义（章节走回收站、其它走 trash 留底），须在 FileChangeNotify
+    # **内层**：它不调用 handler 而自行返回成功结果，外层要靠该结果发 file.changed
+    stack.append(SafeDeleteMiddleware())
     stack.append(ContentLockMiddleware())
     # 最内层：所有注入完成后给稳定前缀打显式缓存断点（未打标记的模型原样透传）
     stack.append(PromptCacheMiddleware())
 
     return stack
+
+
+#: deepagents 默认通用子代理的名字（提供同名 spec 即可阻止自动注入）
+_GP_NAME = "general-purpose"
+
+_GP_DISABLED_PROMPT = (
+    "你已被停用：不要执行任何操作，不要调用任何工具。\n"
+    "立即用一句话回复——「通用子代理已停用，请改用 planner（拆解步骤）/ writer（写正文）/ "
+    "reviewer（审稿）/ web_searcher（联网检索）/ recaller（查设定与前情）之一，并说明具体任务。」"
+)
+
+
+def _inert_general_purpose_spec(backend: Any, permissions: Any) -> dict[str, Any]:
+    """顶替 deepagents 默认 general-purpose 子代理的**惰性壳**（等同停用）。
+
+    - `tools=[]`：`graph.py:787` 是 `spec.get("tools") if "tools" in spec else tools`，
+      显式给空列表即**不继承**主 Agent 工具——否则默认 GP 会拿到含 `delete` 的全部工具；
+    - 文件工具经 `FilesystemMiddleware(tools=["read_file"])` 按 name 原位替换基座，只留只读；
+    - 仍带上与自建子代理相同的防护/通知中间件，避免出现「零防护执行体」。
+    """
+    middleware: list[Any] = [
+        SubagentContextScrubMiddleware(),
+        # 与自建子代理同构的防护链。这个壳只有 read_file，删除/写入类闸门
+        # （WriteApproval / SafeDelete / ContentLock）用不上，但读取授权与
+        # 路径校验/审计仍必须在——否则它成了唯一能「零审计整篇读大纲」的入口。
+        ReadScopeGuardMiddleware(),
+        WorkspaceGuardMiddleware(),
+        FileChangeNotifyMiddleware(),
+        SafeDeleteMiddleware(),
+        ContentLockMiddleware(),
+    ]
+    if backend is not None:
+        try:
+            from deepagents.middleware.filesystem import FilesystemMiddleware
+
+            middleware.append(
+                FilesystemMiddleware(backend=backend, tools=["read_file"], _permissions=permissions)
+            )
+        except Exception as exc:  # pragma: no cover - deepagents 版本差异兜底
+            logger.warning("gp_fs_middleware_failed", error=str(exc))
+    return {
+        "name": _GP_NAME,
+        "description": (
+            "（已停用）通用子代理不可用。请改用 planner / writer / reviewer / "
+            "web_searcher / recaller 之一。"
+        ),
+        "system_prompt": _GP_DISABLED_PROMPT,
+        "tools": [],
+        "middleware": middleware,
+    }
 
 
 def _build_summarization(model: BaseChatModel, *, max_context: int | None) -> Any | None:
@@ -484,7 +577,14 @@ async def build_agent(
             specs = [s for s in specs if s["name"] in subagent_names]
         resolved = await resolve_subagent_models(session, {s["model_ref"] for s in specs if s.get("model_ref")})
         subagents = build_subagents_from_specs(
-            specs, resolved, backend=backend, permissions=permissions, default_model=model
+            specs,
+            resolved,
+            backend=backend,
+            permissions=permissions,
+            default_model=model,
+            # 删除审批开关必须与主栈同源：否则「关掉审批」只关掉了主 Agent 的，
+            # 子代理那边照旧弹卡（或反过来，主栈弹、子代理静默删）
+            write_approval_enabled=write_approval_enabled,
         )
 
     middleware_stack = build_middleware_stack(
@@ -538,8 +638,22 @@ async def build_agent(
         "checkpointer": checkpointer,
         "name": f"writer-{project_id[:8]}",
     }
-    if subagents:
-        kwargs["subagents"] = subagents
+    # ★ 始终显式提供 `general-purpose` spec。
+    #
+    # deepagents 在「调用方未提供同名 spec」时会自动注入一个默认通用子代理，
+    # 其 `tools` = **主 Agent 全部工具（含 delete）**、且不携带本仓任何防护中间件
+    # （graph.py:817-886）。而出厂 `subagents/builtin/` 里没有它 → 「子代理管理」
+    # 界面既看不到也停不掉，用户把子代理**全部停选**时 `subagents` 为空列表，
+    # 旧代码 `if subagents:` 干脆不传该键 → GP 照样被注入。
+    #
+    # 0.7.23 只在 harness profile 级提供 `GeneralPurposeSubagentProfile(enabled=False)`
+    # 开关，而 profile 是按 `provider:identifier` 从全局注册表解析的
+    # （graph.py:610,631），覆盖它需要注册自定义 profile 并丢掉内置 profile 的其余
+    # 设定，跨版本脆弱。故改用**文档明确支持的稳定契约**：提供同名 spec 即不自动
+    # 注入（graph.py:459-461），且显式 `tools=[]` 不会继承主工具（graph.py:787）。
+    if not any(s.get("name") == _GP_NAME for s in subagents):
+        subagents = [*subagents, _inert_general_purpose_spec(backend, permissions)]
+    kwargs["subagents"] = subagents
 
     graph = create_deep_agent(**kwargs)
 

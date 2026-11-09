@@ -4,6 +4,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
+import { confirmLeaveUnsaved } from '@/utils/unsavedGuard'
+
 export type MainMode = 'read' | 'edit'
 /** 目录树的特殊节点：大纲固定在第一卷之前 */
 export type TocNodeKind = 'outline' | 'volume' | 'chapter'
@@ -24,12 +26,20 @@ export const useReaderStore = defineStore('reader', () => {
     mode.value = next
   }
 
-  function openOutline(): void {
+  /**
+   * ★ 导航入口一律**先问后改**：切走会卸载当前编辑器组件，而大纲正文是
+   *   `OutlineEditor.vue` 的组件内局部状态且无自动保存，事后回滚救不回来。
+   *   拦截逻辑集中在 `utils/unsavedGuard`（store 不直接依赖 element-plus 弹窗）。
+   *   返回 Promise 以便调用方需要时 await；现有调用点多为即发即忘，不受影响。
+   */
+  async function openOutline(): Promise<void> {
+    if (!(await confirmLeaveUnsaved())) return
     activeOutline.value = true
     activeChapterId.value = null
   }
 
-  function openChapter(id: string): void {
+  async function openChapter(id: string): Promise<void> {
+    if (!(await confirmLeaveUnsaved())) return
     activeOutline.value = false
     activeChapterId.value = id
   }

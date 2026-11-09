@@ -40,6 +40,7 @@ from app.agent.harness.approval.write_approval import (
     record_decision,
     set_run_status,
 )
+from app.agent.harness.sandbox.virtual_path import normalize_virtual_path
 from app.core.logging import get_logger
 from app.services.read_grant import mentions_explicit_read
 
@@ -52,7 +53,11 @@ _CHAPTERS_PREFIX = "/projects/{pid}/chapters/"
 
 
 def _scope_of(virtual_path: str, project_id: str) -> str | None:
-    p = (virtual_path or "").replace("\\", "/")
+    """判定路径属于哪个受控读取域（None = 不受控，放行）。
+
+    入参须为**已归一化**的虚拟路径（见 `normalize_virtual_path`）。
+    """
+    p = virtual_path or ""
     if not project_id:
         return None
     if p.startswith(_OUTLINE_PREFIX.format(pid=project_id)):
@@ -77,7 +82,12 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
             return await handler(request)
 
         args = dict(request.tool_call.get("args") or {})
-        path = str(args.get("file_path") or args.get("path") or args.get("pattern") or "")
+        # ★ 先归一化再判 scope：框架 `validate_path` 会把 `projects/{pid}/chapters/...`
+        #   （相对路径）、`\projects\...`（反斜杠）补成 `/projects/{pid}/chapters/...`
+        #   后照常读取。按字面入参判定会让整章正文**无确认卡**进入上下文，
+        #   而本守卫存在的理由正是「正文 token 成本高、默认不主动读」。
+        #   grep/glob 的 `pattern` 是搜索正则而非路径，不再当路径兜底（语义混乱）。
+        path = normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
         context = getattr(request.runtime, "context", None)
         project_id = str(getattr(context, "project_id", "") or "")
         session_id = str(getattr(context, "session_id", "") or "")

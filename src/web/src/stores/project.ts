@@ -6,8 +6,10 @@ import { computed, ref } from 'vue'
 import { novelsApi, volumesApi } from '@/api'
 import { ApiError, errorMessage } from '@/api/http'
 import { t } from '@/i18n'
+import { useEditorStore } from '@/stores/editor'
 import { useReaderStore } from '@/stores/reader'
 import type { Chapter, Novel, Volume } from '@/types'
+import { confirmLeaveUnsaved } from '@/utils/unsavedGuard'
 
 export const useProjectStore = defineStore('project', () => {
   const novels = ref<Novel[]>([])
@@ -40,13 +42,17 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function selectNovel(id: string | null): Promise<void> {
+    // ★ 切项目会同时销毁章正文与大纲两个编辑器（大纲正文是组件内局部状态、无自动保存），
+    //   故在改动任何状态之前先拦未保存的修改；用户选择留下时，项目**不得**被切走。
+    if (id !== currentNovelId.value && !(await confirmLeaveUnsaved())) return
     currentNovelId.value = id
     volumes.value = []
     if (!id) return
     await loadVolumes()
     // 切换小说后默认展示大纲页，避免残留旧章节 id 导致「章节不存在」
     const reader = useReaderStore()
-    reader.openOutline()
+    // 此处脏标志已在上面的拦截中清掉，不会重复弹窗
+    await reader.openOutline()
   }
 
   async function loadVolumes(): Promise<void> {
@@ -86,6 +92,11 @@ export const useProjectStore = defineStore('project', () => {
     if (currentNovelId.value === id) {
       currentNovelId.value = null
       volumes.value = []
+      // ★ 被删项目的编辑器缓冲已无意义（正文随项目进了回收站），必须连脏标志一起清掉。
+      //   否则随后「回落到列表首个」的 `selectNovel` 会被未保存拦截挡住，并试图把稿子
+      //   保存到一个**已删除**的项目上 → 保存必然失败 → 拦截判定「留在原地」→
+      //   界面卡在已删除的项目上切不走。
+      useEditorStore().reset()
     }
     await loadNovels()
   }

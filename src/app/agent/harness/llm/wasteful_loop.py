@@ -74,6 +74,45 @@ class WastefulLoopGuardMiddleware(AgentMiddleware):
         self._steer_sink = steer_sink
         #: run 级已推送签名（防同一纠正重复刷屏）：{run_id: set(sig)}
         self._pushed: dict[str, set[str]] = {}
+        #: run 级统计基线：{run_id: 该 run 开始时的消息条数}，见 `_scoped_messages`
+        self._baseline: dict[str, int] = {}
+
+    # ---- 统计范围 ----
+
+    #: `_pushed` / `_baseline` 按 run_id 累积，进程长命会无界增长；只保留最近若干个 run
+    _MAX_TRACKED_RUNS = 64
+
+    def _scoped_messages(self, messages: list[Any], run_id: str) -> list[Any]:
+        """把统计范围收窄到「本轮 run 期间新产生的消息」。
+
+        ★ 必须收窄：graph 带 checkpointer 且 thread_id 按会话续接，
+        `state["messages"]` 会累积**同一会话历次 run** 的全部消息。按全量统计时，
+        长会话里新一轮 run 一开头就可能已达 `READ_HARD_LIMIT`，于是 Agent 本轮
+        **第一次**读某文件就被 `awrap_tool_call` 直接阻断（回「已达 N 次，本次被
+        阻断、未执行」），而那 N 次全是上一轮读的。表现为 AI 莫名拒绝读文件、
+        绕路、答非所问，且用户无从察觉原因。
+
+        基线取「首次见到该 run_id 时的消息条数」——`abefore_model` 每轮 run 的第一次
+        调用发生在任何工具调用之前，此时消息全是历史，正好作为切分点。
+        摘要/裁剪可能让消息数变短，此时重置基线（宁可少计，不可误阻断）。
+        """
+        if not run_id:
+            return messages
+        base = self._baseline.get(run_id)
+        if base is None or base > len(messages):
+            base = len(messages)
+            self._baseline[run_id] = base
+            self._forget_old_runs(run_id)
+        return messages[base:]
+
+    def _forget_old_runs(self, current_run_id: str) -> None:
+        """超出 `_MAX_TRACKED_RUNS` 时丢弃最早登记的 run（dict 保持插入序）。"""
+        for store in (self._baseline, self._pushed):
+            while len(store) > self._MAX_TRACKED_RUNS:
+                oldest = next(iter(store))
+                if oldest == current_run_id:
+                    break
+                store.pop(oldest, None)
 
     # ---- 统计 ----
 
@@ -122,7 +161,9 @@ class WastefulLoopGuardMiddleware(AgentMiddleware):
         if not run_id:
             return None
         try:
-            kind, path, count = self.worst_repeat(list(state.get("messages") or []))
+            kind, path, count = self.worst_repeat(
+                self._scoped_messages(list(state.get("messages") or []), run_id)
+            )
         except Exception as exc:  # pragma: no cover - 统计失败不阻断生成
             logger.warning("wasteful_loop_count_failed", error=str(exc))
             return None
@@ -187,8 +228,14 @@ class WastefulLoopGuardMiddleware(AgentMiddleware):
             return await handler(request)
         state = getattr(request, "state", None)
         messages = list(state.get("messages") or []) if isinstance(state, dict) else []
+        # ★ 统计范围同样收窄到本轮 run：这里是**硬阻断**，按全量历史计数会让长会话里
+        #   本轮第一次读文件就被拦掉（详见 `_scoped_messages`）。拿不到 run_id 时退回
+        #   全量统计（宁可少拦，不可错拦的取舍在此处反过来——但实际两个调用点都能拿到）。
+        runtime = getattr(request, "runtime", None)
+        context = getattr(runtime, "context", None)
+        run_id = str(getattr(context, "run_id", "") or "")
         try:
-            counts = self.count_repeats(messages)
+            counts = self.count_repeats(self._scoped_messages(messages, run_id))
         except Exception:  # pragma: no cover
             return await handler(request)
         n = counts.get(key, 0)

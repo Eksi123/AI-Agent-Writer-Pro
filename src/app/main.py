@@ -205,12 +205,23 @@ def _mount_frontend(app: FastAPI) -> None:
     if dist.is_dir():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
 
+        dist_resolved = dist.resolve()
+
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str) -> Any:
-            """SPA history 回落：非 API 路径一律返回 index.html。"""
-            candidate = dist / full_path
-            if full_path and candidate.is_file():
-                return FileResponse(candidate)
+            """SPA history 回落：非 API 路径一律返回 index.html。
+
+            ★ 必须校验解析后的路径仍落在 `dist` 内。`full_path` 是未经净化的 URL
+            路径，两种写法都能逃出 dist：
+              · 绝对路径——`Path(dist) / "/etc/passwd"` 按 pathlib 语义会被右操作数
+                **整个替换**，直接变成 `/etc/passwd`；
+              · `..%2f` 解码后的 `../` 上跳。
+            不校验就等于把整个磁盘挂在了 `GET /` 上（可读到 `.env` 里的模型密钥）。
+            """
+            if full_path:
+                candidate = (dist / full_path).resolve()
+                if candidate.is_relative_to(dist_resolved) and candidate.is_file():
+                    return FileResponse(candidate)
             return FileResponse(dist / "index.html")
 
         logger.info("frontend_mounted", path=str(dist))

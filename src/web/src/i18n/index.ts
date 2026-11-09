@@ -179,7 +179,15 @@ export const zh = {
     title: '内容冲突',
     message: 'AI 或其它端已修改本章，请选择如何处理。',
     viewDiff: '查看差异',
-    merge: '合并',
+    /**
+     * ★ 原名 `merge`（「合并」）是**误导**：`onAcceptServer` 走的是
+     * `editorStore.acceptServerVersion()`，即整体丢弃本地 draft、载入服务端版本，
+     * 全程没有任何三方合并/逐段取舍。用户点「合并」以为两边都保住了，
+     * 实际本地修改直接没了。故改名为 `acceptServer` 并把动作说清楚。
+     * 「查看差异」弹窗仍在，想手动取舍可以先看差异再自行复制。
+     */
+    acceptServer: '采用服务端版本（放弃本地修改）',
+    acceptedServer: '已放弃本地修改，载入服务端版本',
     overwrite: '覆盖',
     overwritten: '已用本地内容覆盖（基于最新版本）',
     serverVersion: '服务端版本',

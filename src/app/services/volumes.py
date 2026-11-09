@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.volumes
 文件名: volumes.py
@@ -137,15 +137,18 @@ def register_orphan_volumes(project_id: str) -> list[str]:
     取错来源（如误用首章标题）→ 目录里「卷」显示成章名。
 
     卷名的唯一权威来源是**大纲的卷节（H1）**：按「卷目录内章节名 ∩ 大纲卷节章名」
-    匹配；匹配不到才回落「卷 N」。已登记但卷名不在大纲卷节集合内的，同样纠偏。
+    匹配；匹配不到才回落「卷 N」。
+
+    ★ **只登记，不改已登记卷的卷名**：卷名一旦登记就是用户的资产，UI 改名与
+    Agent 的 `rename_volume` 都可能给出与大纲不同的名字，本函数不得把它们改回去
+    （旧实现会，导致「改名后一刷新就自动还原」）。
 
     Returns:
-        本次新登记的卷 id 列表（空 = 无需登记；纠偏不计入返回值）。
+        本次新登记的卷 id 列表（空 = 无需登记）。
     """
     volumes = files.read_volumes(project_id)
     registered = {str(v.get("id")) for v in volumes}
     sections = _outline_volume_sections(project_id)
-    outline_titles = {normalize_title(t) for t, _ in sections}
     chapters_root = workspaces_root() / project_id / "chapters"
     if not chapters_root.is_dir():
         return []
@@ -169,28 +172,19 @@ def register_orphan_volumes(project_id: str) -> list[str]:
 
     added: list[dict[str, Any]] = []
     now = utcnow()
-    changed = False
 
-    # ① 纠偏：已登记卷名不在大纲卷节集合内 → 按章节交集改回大纲卷名
-    for vol in volumes:
-        vid = str(vol.get("id"))
-        vdir = chapters_root / f"v{vid}"
-        if not vdir.is_dir():
-            continue
-        if normalize_title(str(vol.get("title") or "")) in outline_titles:
-            continue
-        norms, _order, _title = _volume_facts(vdir)
-        matched = _match_outline_volume(norms, sections)
-        if matched and matched != vol.get("title"):
-            logger.warning(
-                "volume_title_corrected", project_id=project_id, volume_id=vid,
-                old=vol.get("title"), new=matched,
-            )
-            vol["title"] = matched
-            vol["updated_at"] = now
-            changed = True
-
-    # ② 登记：未登记的卷目录补进 volumes.yaml（卷名取大纲卷节）
+    # 登记：未登记的卷目录补进 volumes.yaml（卷名取大纲卷节）
+    #
+    # ★ 这里**不再纠偏已登记卷的卷名**。旧实现对 `volumes` 里每个已登记卷做
+    #   「卷名不在大纲卷节集合内 → 按章节交集改回大纲卷名」，而 `list_volumes`
+    #   每次读取都会先跑一遍本函数（见下方 `list_volumes` 的自愈调用）。后果是：
+    #   任何来源的改名（UI 改名、Agent 的 `rename_volume`）只要没有同时改大纲，
+    #   下一次 `GET /volumes` 就被静默改回大纲里的旧名——用户看到的现象是
+    #   「改了个名，刷新一下自己变回去了」。
+    #
+    #   大纲是**参考资料**，不是卷名的唯一权威（正文以工作区文件为事实源）。
+    #   纠偏只应作用于「首次发现、尚无名字可言」的孤儿卷目录，也就是下面这段
+    #   登记逻辑本身——它的 title 已经取 `_match_outline_volume`，语义不变。
     for vdir in sorted(chapters_root.iterdir()):
         if not vdir.is_dir() or not vdir.name.startswith("v"):
             continue
@@ -212,9 +206,8 @@ def register_orphan_volumes(project_id: str) -> list[str]:
             }
         )
 
-    if added or changed:
-        files.write_volumes(project_id, volumes + added if added else volumes)
     if added:
+        files.write_volumes(project_id, volumes + added)
         ids = [str(v["id"]) for v in added]
         logger.warning("orphan_volumes_registered", project_id=project_id, volume_ids=ids)
         return ids
@@ -274,13 +267,21 @@ async def create_volume(
     summary: str = "",
     ordinal: int | None = None,
     first_chapter_title: str | None = None,
+    chapters: list[str] | None = None,
 ) -> dict[str, Any]:
     """新建卷：**显式命名**。
 
     - 不传 `ordinal` → 追加到末尾（`sort_order = max+1`，兼容旧行为）；
     - 传 `ordinal`→ 插入到该位置，其后各卷顺延 +1；
-    - 传 `first_chapter_title` → 卷建立后立刻在它里面建第一章
-      （**不支持空卷**，插入卷必须同时给出第一章的章节名）。
+    - `chapters` → 建卷后按顺序在卷内建这些章（1..N），**一次调用完成卷+N章**；
+    - 传 `first_chapter_title` → 等价于 `chapters=[first_chapter_title]`（旧入口，保留）；
+    - **不支持空卷**：两者都不给则只建卷目录、不建章（保持旧行为，供 REST 用），
+      Agent 侧的建卷工具强制要求至少一章。
+
+    `chapters` 路径是**原子**的：任一章创建失败即回滚——已建的章文件删除、
+    卷登记从 `volumes.yaml` 摘除、空卷目录移除，工作区回到调用前的状态。
+    不留「半截卷」是因为卷与卷内章在业务上同生共死，半个卷会立刻被
+    `register_orphan_volumes` / `prune_empty_volumes` 反复拉扯。
     """
     await novels.get_novel(session, project_id)
     clean = validate_volume_title(title)
@@ -322,15 +323,71 @@ async def create_volume(
     )
     logger.info("volume_created", project_id=project_id, volume_id=vol_id, title=clean)
 
-    # 插入卷时一并创建它的第一章（避免空卷）
-    first_chapter: dict[str, Any] | None = None
-    if first_chapter_title and first_chapter_title.strip():
-        first_chapter = await create_chapter(
-            session, vol_id, title=first_chapter_title, content="", ordinal=1
+    # 建卷同时建章（避免空卷）。`chapters` 优先，`first_chapter_title` 是等价的旧入口。
+    wanted = [str(t).strip() for t in (chapters or []) if str(t or "").strip()]
+    if not wanted and first_chapter_title and first_chapter_title.strip():
+        wanted = [first_chapter_title.strip()]
+
+    created: list[dict[str, Any]] = []
+    for idx, ch_title in enumerate(wanted, start=1):
+        try:
+            created.append(
+                await create_chapter(session, vol_id, title=ch_title, content="", ordinal=idx)
+            )
+        except Exception as exc:
+            # 原子性：任一章失败 → 撤掉已建的章与本卷登记，绝不留「半截卷」
+            await _rollback_volume_create(project_id, vol_id, created)
+            raise BadRequestError(
+                f"建卷《{clean}》失败，已回滚（撤销本卷及其已建的 {len(created)} 章）：{exc}"
+            ) from exc
+
+    return _vol_dto(vol, created)
+
+
+async def _rollback_volume_create(
+    project_id: str, vol_id: str, created_chapters: list[dict[str, Any]]
+) -> None:
+    """建卷中途失败的回滚：删已建章文件 → 摘卷登记 → 清空卷目录。
+
+    尽力而为、逐步吞异常并留痕：回滚本身再失败也不能掩盖原始错误
+    （调用方紧接着要 `raise ... from exc`）。
+    """
+    guard = WorkspaceGuard(project_id)
+    for ch in created_chapters:
+        cid = str(ch.get("id") or "")
+        if not cid:
+            continue
+        try:
+            guard.delete(f"chapters/v{vol_id}/c{cid}.md")
+        except Exception as exc:  # noqa: BLE001 - 回滚尽力而为
+            logger.warning(
+                "volume_rollback_chapter_failed",
+                project_id=project_id, volume_id=vol_id, chapter_id=cid, error=str(exc),
+            )
+
+    try:
+        volumes = files.read_volumes(project_id)
+        keep = [v for v in volumes if str(v.get("id")) != vol_id]
+        if len(keep) != len(volumes):
+            files.write_volumes(project_id, keep)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "volume_rollback_registry_failed", project_id=project_id, volume_id=vol_id, error=str(exc)
         )
 
-    chapters = [first_chapter] if first_chapter is not None else []
-    return _vol_dto(vol, chapters)
+    try:
+        vdir = volume_dir(project_id, vol_id)
+        if vdir.is_dir() and not any(vdir.iterdir()):
+            vdir.rmdir()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "volume_rollback_dir_failed", project_id=project_id, volume_id=vol_id, error=str(exc)
+        )
+
+    logger.warning(
+        "volume_create_rolled_back",
+        project_id=project_id, volume_id=vol_id, chapters_undone=len(created_chapters),
+    )
 
 
 async def update_volume(
@@ -517,15 +574,31 @@ def _to_cn_ordinal(n: int) -> str:
     return str(n)
 
 
-def _locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+def _iter_workspaces(project_id: str | None = None) -> list[Path]:
+    """待扫描的工作区目录。
+
+    给了 `project_id` 就只看那一个——既免去「遍历所有小说工作区」的全局扫描，
+    也让调用方无法凭一个裸 id 摸到别的项目（跨项目隔离）。
+    """
+    root = workspaces_root()
+    if project_id:
+        ws = root / project_id
+        return [ws] if ws.is_dir() else []
+    if not root.exists():
+        return []
+    return [p for p in root.iterdir() if p.is_dir()]
+
+
+def _locate_volume(
+    vol_id: str, project_id: str | None = None
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """由 vol_id 反查 project_id 与卷记录。
 
-    卷 ID 全局唯一（uuid 前 8 位），扫描各工作区的 volumes.yaml 定位。
+    卷 ID 全局唯一（uuid 前 8 位）。`project_id` 给定时只扫该工作区；
+    未给定时退回扫描全部工作区（供只有裸 id 的旧入口使用）。
     """
 
-    for ws in workspaces_root().iterdir() if workspaces_root().exists() else []:
-        if not ws.is_dir():
-            continue
+    for ws in _iter_workspaces(project_id):
         vfile = ws / "volumes.yaml"
         if not vfile.exists():
             continue
@@ -533,17 +606,22 @@ def _locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, An
         vol = files.find_volume(volumes, vol_id)
         if vol is not None:
             return ws.name, volumes, vol
-    raise NotFoundError(f"卷不存在：{vol_id}")
+    scope = f"（项目 {project_id} 下）" if project_id else ""
+    raise NotFoundError(f"卷不存在{scope}：{vol_id}")
 
 
-def locate_volume(vol_id: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+def locate_volume(
+    vol_id: str, project_id: str | None = None
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """公开入口：由 vol_id 反查 `(project_id, volumes, volume)`。"""
-    return _locate_volume(vol_id)
+    return _locate_volume(vol_id, project_id)
 
 
-def locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
+def locate_chapter(
+    chapter_id: str, project_id: str | None = None
+) -> tuple[str, str, dict[str, Any], str]:
     """公开入口：由 chapter_id 反查 `(project_id, vol_id, meta, content)`。"""
-    return _locate_chapter(chapter_id)
+    return _locate_chapter(chapter_id, project_id)
 
 
 # ---------------------------------------------------------------------------
@@ -829,16 +907,16 @@ async def renumber_all(session: AsyncSession, project_id: str) -> dict[str, Any]
     }
 
 
-def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
-    """由 chapter_id 反查 `(project_id, vol_id, meta, content)`。"""
+def _locate_chapter(
+    chapter_id: str, project_id: str | None = None
+) -> tuple[str, str, dict[str, Any], str]:
+    """由 chapter_id 反查 `(project_id, vol_id, meta, content)`。
 
-    root = workspaces_root()
-    if not root.exists():
-        raise NotFoundError(f"章节不存在：{chapter_id}")
+    `project_id` 给定时只扫该工作区（跨项目隔离 + 免全局扫描），
+    未给定时退回扫描全部工作区。
+    """
 
-    for ws in root.iterdir():
-        if not ws.is_dir():
-            continue
+    for ws in _iter_workspaces(project_id):
         chapters_root = ws / "chapters"
         if not chapters_root.exists():
             continue
@@ -850,7 +928,8 @@ def _locate_chapter(chapter_id: str) -> tuple[str, str, dict[str, Any], str]:
                 vol_id = vdir.name[1:]
                 meta, content = files.read_chapter(ws.name, vol_id, chapter_id)
                 return ws.name, vol_id, meta, content
-    raise NotFoundError(f"章节不存在：{chapter_id}")
+    scope = f"（项目 {project_id} 下）" if project_id else ""
+    raise NotFoundError(f"章节不存在{scope}：{chapter_id}")
 
 
 async def update_chapter_meta(
@@ -959,15 +1038,21 @@ async def reposition_chapter(session: AsyncSession, chapter_id: str, *, position
     return moved
 
 
-async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, Any]:
+async def delete_chapter(
+    session: AsyncSession, chapter_id: str, *, project_id: str | None = None
+) -> dict[str, Any]:
     """删除章文件。不提供跨卷移动——换卷需新建同名章复制正文再删旧章。
     
     - 删除后卷内其余章重新连续编号（1..N）；
     - **某一卷下所有章节都删除后，该卷一并删除**（卷层同样重新连续编号）。
 
     删除的章节先进回收站（可回收 / 彻底删除）。
+
+    `project_id` 给定时只在该工作区内定位章节——Agent 的 `delete` 走
+    `SafeDeleteMiddleware`，它从虚拟路径里已经知道项目，传进来即可免全局扫描
+    并杜绝跨项目误删。
     """
-    project_id, vol_id, meta, _content = _locate_chapter(chapter_id)
+    project_id, vol_id, meta, _content = _locate_chapter(chapter_id, project_id)
     guard = WorkspaceGuard(project_id)
 
     # 归档到回收站（带书名 / 卷名快照）
@@ -1022,6 +1107,9 @@ async def delete_chapter(session: AsyncSession, chapter_id: str) -> dict[str, An
         "deleted": True,
         "volume_id": vol_id,
         "volume_deleted": volume_deleted,
+        #: 章名快照：Agent 的 delete 走 SafeDeleteMiddleware 复用本函数，
+        #: 需要它拼「已删除章节《X》」的工具结果（见 harness/sandbox/safe_delete.py）
+        "title": str(meta.get("title") or ""),
     }
 
 
@@ -1048,7 +1136,48 @@ async def read_content(session: AsyncSession, chapter_id: str) -> dict[str, Any]
     }
 
 
+#: 章级写入互斥锁：`write_content`（REST 手动/自动保存）与 `record_agent_write`
+#: （Agent 直写文件后的登记）共用。两者都是「读 frontmatter version → 比对 →
+#: 改 meta → 整体写回」，无互斥时并发写会互相吃掉（后写者用陈旧 version 覆盖
+#: 先写者的正文，且乐观锁形同虚设——TOCTOU）。
+_chapter_locks: dict[str, asyncio.Lock] = {}
+_chapter_locks_mu = asyncio.Lock()
+
+
+async def _chapter_lock(chapter_id: str) -> asyncio.Lock:
+    """取（或惰性创建）某章的写入互斥锁。"""
+    async with _chapter_locks_mu:
+        lock = _chapter_locks.get(chapter_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _chapter_locks[chapter_id] = lock
+        return lock
+
+
 async def write_content(
+    session: AsyncSession,
+    chapter_id: str,
+    *,
+    content: str,
+    base_version: int,
+    source: str = "manual",
+    is_autosave: bool = False,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """写正文（乐观锁）。章级互斥，避免与 Agent 直写互相吃掉。"""
+    async with await _chapter_lock(chapter_id):
+        return await _write_content_locked(
+            session,
+            chapter_id,
+            content=content,
+            base_version=base_version,
+            source=source,
+            is_autosave=is_autosave,
+            run_id=run_id,
+        )
+
+
+async def _write_content_locked(
     session: AsyncSession,
     chapter_id: str,
     *,
@@ -1130,6 +1259,152 @@ async def write_content(
 # ---------------------------------------------------------------------------
 # 修订快照
 # ---------------------------------------------------------------------------
+
+
+#: 章节摘要去抖：chapter_id → 待执行任务。Agent 一个 run 内可能反复改写同一章
+#: （write_file 落初稿 + 多次 edit_file 润色），逐次触发摘要会白烧 LLM 调用。
+_pending_summary: dict[str, asyncio.Task] = {}
+
+#: 摘要触发的静默期（秒）：期间内的后续写入只会把计时器往后推
+_SUMMARY_DEBOUNCE_SEC = 20.0
+
+
+def _schedule_summary(project_id: str, vol_id: str, chapter_id: str) -> None:
+    """合并同一章的摘要触发——静默期结束才真正跑，期间被新写入打断则重新计时。"""
+    previous = _pending_summary.get(chapter_id)
+    if previous is not None and not previous.done():
+        previous.cancel()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - 无事件循环时退化为不摘要
+        logger.warning("summary_schedule_no_loop", chapter_id=chapter_id)
+        return
+    _pending_summary[chapter_id] = loop.create_task(
+        _delayed_summary(project_id, vol_id, chapter_id)
+    )
+
+
+async def _delayed_summary(project_id: str, vol_id: str, chapter_id: str) -> None:
+    try:
+        await asyncio.sleep(_SUMMARY_DEBOUNCE_SEC)
+        await _summarize_after_save(project_id, vol_id, chapter_id)
+    except asyncio.CancelledError:  # 被更新的写入打断，属正常
+        raise
+    except Exception as exc:  # noqa: BLE001 - 后台任务不得冒泡
+        logger.warning("agent_summary_failed", chapter_id=chapter_id, error=str(exc))
+    finally:
+        _pending_summary.pop(chapter_id, None)
+
+
+async def record_agent_write(
+    session: AsyncSession,
+    project_id: str,
+    vol_id: str,
+    chapter_id: str,
+    *,
+    run_id: str | None = None,
+    pre_content: str | None = None,
+    pre_version: int | None = None,
+) -> dict[str, Any] | None:
+    """登记 Agent 对章节文件的**直写**：补快照 + 抬 version + 重算字数 + 触发摘要。
+
+    为什么需要它：Agent 写正文走的是文件系统工具（`write_file` / `edit_file`），
+    **不经过** `write_content`，于是漏掉了修订快照、`version` 递增、`word_count`
+    重算、章节摘要与审计。后果有两层——
+
+      ① 用户端 buffer 里的 `base_version` 永远等不到变化，AI 改过的章节保存时
+         **不报 409 冲突**，直接整章覆盖掉 AI 的产出；
+      ② AI 的产出没有任何快照，覆盖之后不可回退。
+
+    本函数在文件**已落盘之后**调用（见 `loop/middleware/file_change.py`），
+    以磁盘内容为事实源；正文原样保留，只重写 frontmatter 中与 `write_content`
+    相同的那四个键（version / word_count / updated_at / last_writer）。
+
+    Args:
+        pre_content: 本次写入**之前**的正文。为 `None` 时不快照（例如中间件未能
+            预读到旧内容），其余登记动作照常执行。
+        pre_version: 本次写入**之前**磁盘上的 `version`，用作新 version 的下界
+            （`max(文件值, pre_version) + 1`）。防止整文件覆盖携带陈旧 frontmatter
+            把 version 打回去、导致两次写入撞同一个 version 而乐观锁漏判。
+            为 `None` / 0 时退化为「只从文件值 +1」。
+
+    Returns:
+        `{"version", "word_count", "snapshotted"}`；文件不存在或解析失败返回 `None`。
+    """
+    async with await _chapter_lock(chapter_id):
+        path = chapter_file(project_id, vol_id, chapter_id)
+        if not path.exists():
+            return None
+        try:
+            meta, content = files.read_chapter(project_id, vol_id, chapter_id)
+        except Exception as exc:  # noqa: BLE001 - 脏文件不应打断 Agent
+            logger.warning(
+                "agent_write_read_failed", project_id=project_id, chapter_id=chapter_id, error=str(exc)
+            )
+            return None
+
+        # ① 快照旧内容——一个 run 内对同一章只留**最初**那版（防快照爆炸）。
+        #    须在抬 version 之前调用：`_snapshot` 取的是 meta 里的当前 version，
+        #    与 `write_content` 的调用次序一致，快照才对应「被覆盖掉的那一版」。
+        snapshotted = False
+        if pre_content is not None and run_id:
+            already = (
+                await session.execute(
+                    select(ChapterRevision.id)
+                    .where(ChapterRevision.chapter_id == chapter_id)
+                    .where(ChapterRevision.run_id == run_id)
+                    .limit(1)
+                )
+            ).first()
+            if already is None:
+                await _snapshot(
+                    session, project_id, chapter_id, meta, pre_content, source="agent", run_id=run_id
+                )
+                snapshotted = True
+
+        # ② 抬 version + 重算字数（用户端据此触发 409 冲突对话框）
+        #
+        # ★ 以「写入前的 version」为下界取 max：Agent 的 `write_file` 是**整文件覆盖**，
+        #   模型给出的 frontmatter 往往来自它早先 `read_file` 到的旧内容。若那一版
+        #   version 比磁盘上的旧（同一轮里已经写过一次），覆盖就会把 version **打回去**；
+        #   此时只从文件值 +1 会让两次写入得到**同一个** version → 乐观锁漏判，
+        #   用户端陈旧 buffer 保存时不再报 409，静默覆盖掉 AI 的产出。
+        #   `pre_version` 由 FileChangeNotify 在 handler **之前**读取并传入。
+        file_version = meta_int(meta, "version", 1)
+        new_version = max(file_version, int(pre_version or 0)) + 1
+        word_count = files.count_words(content)
+        meta.update(
+            {
+                "version": new_version,
+                "word_count": word_count,
+                "updated_at": utcnow(),
+                "last_writer": "agent",
+            }
+        )
+        files.write_chapter(project_id, vol_id, chapter_id, meta, content)
+
+        # ③ 审计：与 REST 保存同一动作名，detail 里标明来自 Agent 直写
+        await audit.record(
+            session,
+            "chapter.content.write",
+            entity_type="chapter",
+            entity_id=f"{project_id}:{chapter_id}",
+            detail={
+                "version": new_version,
+                "source": "agent",
+                "autosave": False,
+                "word_count": word_count,
+                "run_id": run_id,
+                "via": "agent_file_write",
+                "snapshotted": snapshotted,
+            },
+            commit=True,
+        )
+
+        # ④ 章节摘要（AI「前情提要」的记忆来源）：去抖后台执行，不阻断工具调用
+        _schedule_summary(project_id, vol_id, chapter_id)
+
+        return {"version": new_version, "word_count": word_count, "snapshotted": snapshotted}
 
 
 async def _summarize_after_save(project_id: str, volume_id: str, chapter_id: str) -> None:

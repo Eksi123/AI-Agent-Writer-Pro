@@ -16,6 +16,7 @@ import { errorMessage } from '@/api/http'
 import { useEditorStore } from '@/stores/editor'
 import { useProjectStore } from '@/stores/project'
 import { t } from '@/i18n'
+import { registerOutlineSaver } from '@/utils/unsavedGuard'
 import type { OutlineValidate } from '@/types'
 
 const emit = defineEmits<{ (e: 'saved'): void }>()
@@ -75,9 +76,18 @@ watch(
   },
 )
 
+/**
+ * ★ 把落盘函数登记给切换拦截器：大纲正文是本组件的**局部状态**，卸载即销毁，
+ *   而导航入口在 `reader` / `project` store 里、拿不到组件实例。登记之后
+ *   `utils/unsavedGuard` 才能在用户选「保存并切换」时真正把大纲写回服务端；
+ *   卸载时必须注销，避免拦截器拿着已销毁组件的闭包去保存（那会写到错误的项目上）。
+ */
+onMounted(() => registerOutlineSaver(save))
+
 onBeforeUnmount(() => {
   clearOutlineUndoTimer()
   outlinePendingSnapshot = null
+  registerOutlineSaver(null)
 })
 
 /** 大纲被 AI 编辑中（锁键 `outline:{projectId}`）→ 只读 + 禁保存 */
@@ -143,10 +153,14 @@ async function renumber(): Promise<void> {
   }
 }
 
-async function save(): Promise<void> {
-  if (!project.currentNovelId) return
+/**
+ * 落盘大纲。返回是否成功——`utils/unsavedGuard` 在「保存并切换」时据此决定
+ * 是放行切换还是留在原地（失败时放行等于静默丢稿）。
+ */
+async function save(): Promise<boolean> {
+  if (!project.currentNovelId) return false
   // AI 正在写大纲时拒绝用户保存（后端 PUT 同样 409 兜底）
-  if (outlineLocked.value) return
+  if (outlineLocked.value) return false
   saving.value = true
   error.value = null
   try {
@@ -157,9 +171,11 @@ async function save(): Promise<void> {
     await validateOnly()
     await project.loadVolumes()
     emit('saved')
+    return true
   } catch (err) {
     error.value = errorMessage(err)
     ElMessage.error(error.value)
+    return false
   } finally {
     saving.value = false
   }

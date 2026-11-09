@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.harness.guard.workspace_guard
 文件名: workspace_guard.py
@@ -23,6 +23,7 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
 from langgraph.errors import GraphBubbleUp
 
+from app.agent.harness.sandbox.virtual_path import normalize_virtual_path
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -77,11 +78,18 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
         """校验虚拟路径。返回错误文案（None = 放行）。"""
         if not virtual_path:
             return None  # 无路径参数（如 web_search）
-        p = virtual_path.replace("\\", "/")
-        if ".." in p.split("/"):
+        raw = virtual_path.replace("\\", "/")
+        if ".." in raw.split("/"):
             return f"路径包含 ..，拒绝访问：{virtual_path}"
-        if not p.startswith("/"):
-            return None  # 相对路径由 backend 解析，permissions 已覆盖
+        # ★ 归一化后再判前缀。框架 `validate_path` 是「先归一再执行」：
+        #   `projects/{pid}/chapters/...`（相对路径）、`\projects\...`（反斜杠）
+        #   都会被补成 `/projects/{pid}/...` 后照常读写。按字面判定会让这些写法
+        #   绕过跨项目写保护与审计（旧实现在这里对相对路径直接 return None）。
+        p = normalize_virtual_path(virtual_path)
+        if not raw.startswith("/") and not p.startswith(("/projects/", "/skills/")):
+            # 相对路径且归一后不落在项目区/技能区（如 StateBackend 的临时虚拟文件）
+            # → 保持既有宽松行为，交框架 permissions 判定
+            return None
 
         # 项目区：写操作只允许当前项目
         if p.startswith("/projects/"):
@@ -111,6 +119,19 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
         args_hash = hashlib.sha1(args_repr.encode("utf-8")).hexdigest()[:16]
         err_hash = hashlib.sha1(error.strip().encode("utf-8")).hexdigest()[:16]
         return tool_name, args_hash, err_hash
+
+    def note_success(self, tool_name: str, args: dict[str, Any]) -> None:
+        """成功即清空**同一调用**（tool + args）的失败计数与阻断标记。
+
+        旧实现这里只有一句注释、代码是 `pass`，导致失败计数在 run 内**只增不减**：
+        间歇性故障（网络抖动、瞬时 DB busy）累计到 `_BLOCK_AFTER` 就把本来能成功的
+        调用永久阻断，与注释承诺的「连续失败」语义相反。
+        """
+        ident = self._fingerprint(tool_name, args, "")[:2]
+        for key in [k for k in self._error_counts if k[:2] == ident]:
+            del self._error_counts[key]
+        for key in [k for k in self._blocked if k[:2] == ident]:
+            self._blocked.discard(key)
 
     def note_error(self, tool_name: str, args: dict[str, Any], error: str) -> str | None:
         """记录一次失败。返回 `None` 放行、字符串则为**阻断提示**（注入到工具结果）。"""
@@ -218,8 +239,8 @@ class WorkspaceGuardMiddleware(AgentMiddleware):
                     status="error",
                 )
         else:
-            # 成功即清空该工具的失败计数键（参数不同则键不同，天然隔离）
-            pass
+            # 成功即清空该调用的失败计数键（参数不同则键不同，天然隔离）
+            self.note_success(tool_name, args)
 
         await self._log_tool_call(context, tool_name, args, excerpt, status, error_text, duration_ms)
         if emit is not None:

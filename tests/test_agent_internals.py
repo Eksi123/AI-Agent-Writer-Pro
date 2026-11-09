@@ -19,8 +19,6 @@ import pytest
 
 import app.agent.more.langfuse as tracing
 from app.agent.harness.approval.write_approval import (
-    DEFAULT_EDIT_THRESHOLD,
-    DEFAULT_OVERWRITE_THRESHOLD,
     _normalize_decision,
     classify_risk,
     virtual_to_host,
@@ -74,9 +72,13 @@ class TestClassifyRisk:
         )
         files.write_chapter(pid, "bb", "cc", {"title": "夜宴", "sort_order": 3}, "正文。")
 
-        assert humanize_virtual_path(f"/projects/{pid}/chapters/bb/cc.md") == "第二卷第三章《夜宴》的正文"
-        assert humanize_virtual_path(f"/projects/{pid}/chapters/bb/") == "第二卷《醉锦城》的全部章节"
-        reason = classify_risk("delete", {"file_path": f"/projects/{pid}/chapters/bb/cc.md"})[1]
+        # ★ 目录名/文件名带 `v`/`c` 前缀（`core/paths.py:61,66`：`v{vol_id}` / `c{chapter_id}.md`）。
+        #   此前这里按无前缀的 `chapters/bb/cc.md` 断言，与真实布局不符，
+        #   `_humanize_rel` 的 `^chapters/v([^/]+)/c([^/]+)\.md$` 永远匹配不上，
+        #   只会走到「末段文件名」兜底 → 该用例在本批改动之前就一直是红的。
+        assert humanize_virtual_path(f"/projects/{pid}/chapters/vbb/ccc.md") == "第二卷第三章《夜宴》的正文"
+        assert humanize_virtual_path(f"/projects/{pid}/chapters/vbb/") == "第二卷《醉锦城》的全部章节"
+        reason = classify_risk("delete", {"file_path": f"/projects/{pid}/chapters/vbb/ccc.md"})[1]
         assert reason == "删除第二卷第三章《夜宴》的正文，删除后不可恢复"
 
     def test_delete_outside_project_allowed(self):
@@ -84,10 +86,15 @@ class TestClassifyRisk:
         assert kind is None
 
     def test_large_edit_allowed(self):
-        """大范围 edit 不再审批（写小说常规操作）。"""
+        """大范围 edit 不再审批（写小说常规操作）。
+
+        旧实现有 `DEFAULT_EDIT_THRESHOLD`（按 old_string 长度触发审批），现已删除：
+        审批只保留 `delete` 与「整篇读大纲」两类。这里用足够大的字面量确保
+        即使阈值被恢复，本用例也仍能抓住回归。
+        """
         args = {
             "file_path": "/projects/abc/chapters/v1/c1.md",
-            "old_string": "x" * (DEFAULT_EDIT_THRESHOLD + 1),
+            "old_string": "x" * 200_000,
             "new_string": "y",
         }
         kind, _reason = classify_risk("edit_file", args)
@@ -99,11 +106,15 @@ class TestClassifyRisk:
         assert kind is None
 
     def test_overwrite_existing_chapter_allowed(self, tmp_path, monkeypatch):
-        """整章覆盖不再审批（生成/改写正文是常规操作）。"""
+        """整章覆盖不再审批（生成/改写正文是常规操作）。
+
+        `DEFAULT_OVERWRITE_THRESHOLD` 已随「审批只留 delete + 整篇读大纲」的决定删除，
+        这里改用足够大的既有正文，确保阈值若被恢复本用例仍会失败。
+        """
         pid = "testpid"
         ch = workspace_dir(pid) / "chapters" / "v1" / "c1.md"
         ch.parent.mkdir(parents=True, exist_ok=True)
-        ch.write_text("---\ntitle: 第一章\n---\n" + "旧" * (DEFAULT_OVERWRITE_THRESHOLD + 10), encoding="utf-8")
+        ch.write_text("---\ntitle: 第一章\n---\n" + "旧" * 200_000, encoding="utf-8")
 
         kind, _reason = classify_risk(
             "write_file", {"file_path": f"/projects/{pid}/chapters/v1/c1.md", "content": "全新内容"}

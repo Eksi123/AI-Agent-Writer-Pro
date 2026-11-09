@@ -20,7 +20,7 @@ import yaml
 
 from app.core.logging import get_logger
 from app.core.paths import chapter_file, novel_meta_file, volumes_file
-from app.services.workspace import WorkspaceGuard
+from app.services.workspace import WorkspaceGuard, atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -129,11 +129,17 @@ def write_chapter(
     meta: dict[str, Any],
     content: str,
 ) -> Path:
-    """写章节文件：frontmatter + 正文。父目录自动创建。"""
+    """写章节文件：frontmatter + 正文。父目录自动创建。
+
+    ★ 走 `atomic_write_text`（临时文件 + `os.replace`）。这里不走 `WorkspaceGuard.write`
+      是因为 `chapter_file()` 已给出绝对宿主路径，而 guard 收的是工作区相对路径；
+      但**原子性要求完全一致，甚至更高**——章节正文是用户的手稿，一次写坏的代价
+      远大于 `volumes.yaml`。`record_agent_write` 让每个 AI 写过的章节多了一次
+      整文件重写，非原子写的暴露面随之放大，故必须收口到同一个原子写助手。
+    """
     path = chapter_file(project_id, vol_id, chapter_id)
     post = frontmatter.Post(content, **meta)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+    atomic_write_text(path, frontmatter.dumps(post) + "\n")
     return path
 
 

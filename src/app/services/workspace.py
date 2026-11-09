@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.workspace
 文件名: workspace.py
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from app.core.errors import ForbiddenError
@@ -35,6 +36,45 @@ logger = get_logger(__name__)
 
 #: 允许写入的白名单根（相对 data/）
 _WRITABLE_ROOTS = ("workspaces", "skills", "exports", "trash", "logs")
+
+
+def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """原子写文本：先写**同目录**临时文件并 fsync，再 `os.replace` 覆盖目标。
+
+    ★ 直接 `path.write_text` 不是原子的：它先把目标**截断为零长**再写入。进程在
+      写入途中被杀（重启、崩溃、磁盘满、Ctrl+C）就会留下一个半截文件——
+      对章节正文即**丢稿**；更糟的是 frontmatter 被截断后 `files.read_chapter`
+      的 `frontmatter.load` 直接抛异常，该章在 UI 上完全打不开，只能手工修文件。
+      `os.replace` 在同一文件系统内是原子重命名：读者要么看到旧内容、要么看到
+      新内容，绝不会看到中间态。临时文件必须与目标同目录，否则跨设备 rename
+      会退化成「复制 + 删除」，原子性失效。
+
+    ★ 有意**不**复制原文件的权限位：Windows 上 `os.chmod` 只能切换只读标志，
+      若原文件恰为只读，把临时文件也置只读会让随后的 `os.replace` 失败。
+
+    ★ 有意**不**传 `newline=""`：被本函数替换掉的 `Path.write_text(content, encoding=...)`
+      默认 `newline=None`，写模式下会把 `\n` 翻译成 `os.linesep`（Windows 即 CRLF）。
+      `os.fdopen` 的默认 `newline` 与之相同，故保持不传——本次改动的目标只是
+      「原子性」，不该顺手改掉既有文件的行尾。若写成 LF，`record_agent_write`
+      会在每次 AI 写入后把章节文件整体翻成 LF，而 deepagents 的 `edit_file`
+      靠**字面量匹配**改写文件，行尾突变可能让模型基于旧内容给出的 `old_string`
+      匹配失败。
+
+    失败时清掉临时文件再抛，不留 `.tmp` 垃圾（`list_chapter_files` 只 glob
+    `c*.md`，但仍应避免污染工作区）。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -124,8 +164,7 @@ class WorkspaceGuard:
             raise ForbiddenError("summaries/ 只允许 summarize_chapter 服务写入")
 
         path = self.resolve(rel)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
         logger.debug("workspace_write", project_id=self.project_id, path=rel)
         return path
 
@@ -151,8 +190,7 @@ class WorkspaceGuard:
     @staticmethod
     def write_shared(rel_path: str | Path, content: str) -> Path:
         path = WorkspaceGuard("").resolve_shared(rel_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
         return path
 
     @staticmethod

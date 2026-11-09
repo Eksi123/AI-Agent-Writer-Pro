@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.streaming
 文件名: streaming.py
@@ -206,11 +206,18 @@ async def _handle_update(
             for msg in update.get("messages") or []:
                 await _emit_message_complete(msg, emitter, subagent_name)
 
-    # plan.update：write_todos 的结果由 TodoListMiddleware 写入 state["todos"]
-    if "TodoListMiddleware" in payload or "write_todos" in payload:
-        todos = _extract_todos(payload)
-        if todos is not None:
-            await emitter.publish("plan.update", {"todos": todos})
+    # plan.update：write_todos 的结果由 TodoListMiddleware 写入 state["todos"]。
+    #
+    # ★ 这里**不能**再加 `"TodoListMiddleware" in payload or "write_todos" in payload`
+    #   之类的外层门控。payload 的键是 LangGraph 的**节点名**（"model" / "tools" /
+    #   中间件的私有名），既不会等于 "write_todos"（那是工具名），也不会等于
+    #   "TodoListMiddleware"（中间件 name 是注册用的，不进 stream 的 update 键），
+    #   所以旧门控恒为 False —— `plan.update` 从来没发出去过，前端待办面板永远空白。
+    #   `_extract_todos` 自己已经做了完整判定（遍历 payload 各节点的 update，
+    #   只在真的出现 `todos` 列表时返回，否则 None），直接调它就够了。
+    todos = _extract_todos(payload)
+    if todos is not None:
+        await emitter.publish("plan.update", {"todos": todos})
 
     return out
 

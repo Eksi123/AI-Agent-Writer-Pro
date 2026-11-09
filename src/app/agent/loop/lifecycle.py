@@ -280,9 +280,12 @@ async def finalize(
             from app.services.content_lock import content_locks
 
             freed = await content_locks.release_for_run(run_id)
-            for cid in freed:
+            for cid, pid in freed:
                 await sse_bus.publish(
-                    run_id, session_id, "content.lock", {"chapter_id": cid, "run_id": run_id, "locked": False}
+                    run_id,
+                    session_id,
+                    "content.lock",
+                    {"chapter_id": cid, "run_id": run_id, "locked": False, "project_id": pid},
                 )
         except Exception as exc:  # pragma: no cover
             logger.warning("content_lock_release_failed", run_id=run_id, error=str(exc))

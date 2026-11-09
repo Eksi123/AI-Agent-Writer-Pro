@@ -7,10 +7,21 @@
 说明: `WriteApprovalMiddleware`：按**参数**判定高危写入 → `langgraph.types.interrupt()` 转人工审批。
 
     手册「二、(2) 人为介入」第 2 层：`interrupt_on` 只能做工具级开关、无法按参数判定，
-    故「整章覆盖 / 大范围 edit / 批量 delete」由本中间件在 `awrap_tool_call` 内触发中断。
+    故高危写入由本中间件在 `awrap_tool_call` 内触发中断。
 
-    高危判定：本应用是 AI 写小说，编辑大纲 / 生成卷章正文不审批；
-    仅 `delete` 项目内卷/章文件 → 风险操作中断（批准 / 拒绝 / 补充要求 三选一）。
+    ★ 高危判定**只有 delete 一种**（`classify_risk`）：本应用是 AI 写小说，
+    编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，一律不审批。
+    「整章覆盖会触发审批」是**从未实现过的承诺**，相关阈值参数已于 2026-11 移除；
+    AI 改稿的安全网是 `volumes.record_agent_write` 落的 `source="agent"` 修订快照
+    （可在 UI 回退），不是事前审批。
+
+    另有两处需要人为介入，但**不归本中间件**：
+    - 读大纲全文 → `guard/read_scope.py`（避免一次性注入过多上下文）；
+    - 调用预算超限 → `llm/call_budget.py`。
+
+    ★ 路径判定必须先过 `normalize_virtual_path`：框架 `validate_path` 是
+    「先归一再执行」，按字面入参匹配前缀会被 `projects/...`（相对路径）、
+    `\\projects\\...`（反斜杠）绕过，等于把唯一的删除闸门打开。
 
     恢复语义（`decision`）：
     - `approve` → 原样执行；
@@ -29,6 +40,7 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
 from langgraph.types import interrupt
 
+from app.agent.harness.sandbox.virtual_path import normalize_virtual_path
 from app.core.logging import get_logger
 from app.core.paths import workspaces_root
 from app.db.base import new_id, utcnow
@@ -38,14 +50,10 @@ logger = get_logger(__name__)
 #: 中断标记（runner 据此区分自定义中断与 langchain HITL 批量中断）
 INTERRUPT_KIND = "writer_approval"
 
-#: 默认阈值
-DEFAULT_EDIT_THRESHOLD = 800
-DEFAULT_OVERWRITE_THRESHOLD = 200
-
 
 def virtual_to_host(virtual_path: str) -> Path | None:
     """`/projects/{pid}/...` → 宿主路径（仅用于**只读**探测，不做写入）。"""
-    p = (virtual_path or "").replace("\\", "/")
+    p = normalize_virtual_path(virtual_path)
     if not p.startswith("/projects/"):
         return None
     rel = p[len("/projects/") :]
@@ -181,24 +189,23 @@ def humanize_delete_reason(virtual_path: str) -> str:
     return f"删除{humanize_virtual_path(virtual_path)}，删除后不可恢复"
 
 
-def classify_risk(
-    tool_name: str,
-    args: dict[str, Any],
-    *,
-    edit_threshold: int = DEFAULT_EDIT_THRESHOLD,
-    overwrite_threshold: int = DEFAULT_OVERWRITE_THRESHOLD,
-) -> tuple[str | None, str]:
-    """判定是否高危。
+def classify_risk(tool_name: str, args: dict[str, Any]) -> tuple[str | None, str]:
+    """判定是否高危。**只有 delete 一种**。
 
-    本应用是 AI 写小说，编辑大纲 / 生成卷章正文属常规操作，**不再审批**；
-    仅当 Agent 要**删除项目内卷/章文件**（`delete` 工具）时提示风险操作，
+    本应用是 AI 写小说，编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，
+    **一律不审批**；仅当 Agent 要删除项目内文件（`delete` 工具）时提示风险操作，
     由用户三选一：批准 / 拒绝 / 补充要求。
+
+    ★ 路径必须先归一化再匹配前缀：框架 `validate_path` 会把
+    `projects/{pid}/...`、`\\projects\\{pid}\\...` 归一成 `/projects/{pid}/...`
+    后照常执行 `unlink`/`shutil.rmtree`。若这里按字面入参判定，模型（或附件里的
+    提示注入）只要换个路径写法就能绕过**唯一**的人工删除闸门。
 
     Returns:
         (risk_kind, reason)；`risk_kind` 为 None 表示放行。
     """
     if tool_name == "delete":
-        path = str(args.get("file_path") or args.get("path") or "")
+        path = normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
         if path.startswith("/projects/"):
             return "delete", humanize_delete_reason(path)
 
@@ -214,15 +221,11 @@ class WriteApprovalMiddleware(AgentMiddleware):
         self,
         *,
         enabled: bool = True,
-        edit_threshold: int = DEFAULT_EDIT_THRESHOLD,
-        overwrite_threshold: int = DEFAULT_OVERWRITE_THRESHOLD,
         allowed_decisions: tuple[str, ...] = ("approve", "reject", "respond"),
         skip_tools: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.enabled = enabled
-        self.edit_threshold = edit_threshold
-        self.overwrite_threshold = overwrite_threshold
         self.allowed_decisions = list(allowed_decisions)
         #: 已由工具级 `interrupt_on` 覆盖的工具，避免同一调用双重审批
         self.skip_tools = set(skip_tools)
@@ -238,9 +241,7 @@ class WriteApprovalMiddleware(AgentMiddleware):
         args = dict(request.tool_call.get("args") or {})
         tool_call_id = request.tool_call.get("id") or ""
 
-        risk_kind, reason = classify_risk(
-            tool_name, args, edit_threshold=self.edit_threshold, overwrite_threshold=self.overwrite_threshold
-        )
+        risk_kind, reason = classify_risk(tool_name, args)
         if risk_kind is None:
             return await handler(request)
 
@@ -260,9 +261,11 @@ class WriteApprovalMiddleware(AgentMiddleware):
             "args": _truncate_args(args),
             "tool_call_id": tool_call_id,
             "decisions": self.allowed_decisions,
-            # 批量卡片用：原始路径（后端汇总人话）+ 单条人话标签
-            "path": str(args.get("file_path") or args.get("path") or ""),
-            "item_label": humanize_virtual_path(str(args.get("file_path") or args.get("path") or "")),
+            # 批量卡片用：归一化路径（后端汇总人话）+ 单条人话标签
+            "path": normalize_virtual_path(str(args.get("file_path") or args.get("path") or "")),
+            "item_label": humanize_virtual_path(
+                normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
+            ),
         }
 
         interrupt_id = await self._create_interrupt(context, payload)

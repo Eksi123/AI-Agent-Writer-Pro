@@ -1,6 +1,12 @@
 <script setup lang="ts">
 /**
- * 409 版本冲突提示条：AI 或其它端已修改本章，选择「查看差异合并」或「覆盖」。
+ * 409 版本冲突提示条：AI 或其它端已修改本章，用户三选一——
+ * 「查看差异」（只读对比，供手动取舍）、「采用服务端版本（放弃本地修改）」、
+ * 「覆盖」（用本地内容盖掉服务端）。
+ *
+ * ★ 这里**没有自动合并**。旧文案写「查看差异合并」且按钮叫「合并」，
+ *   但对应动作是 `acceptServerVersion()` —— 整体丢弃本地 draft，
+ *   用户会误以为两边都保住了。文案已改为如实描述，见 i18n `conflict.acceptServer`。
  *
  * 覆盖语义（手册「六」）：强制覆盖需再次带**最新** base_version，
  * 故这里用冲突响应回传的 version 重试，而不是继续用旧的 base_version。
@@ -46,7 +52,7 @@ async function onOverwrite(): Promise<void> {
 
 function onAcceptServer(): void {
   editorStore.acceptServerVersion()
-  ElMessage.info(t('conflict.serverVersion'))
+  ElMessage.info(t('conflict.acceptedServer'))
   emit('resolved')
 }
 </script>
@@ -61,7 +67,7 @@ function onAcceptServer(): void {
         </div>
         <div class="row">
           <el-button size="small" @click="showDiff = true">{{ t('conflict.viewDiff') }}</el-button>
-          <el-button size="small" @click="onAcceptServer">{{ t('conflict.merge') }}</el-button>
+          <el-button size="small" @click="onAcceptServer">{{ t('conflict.acceptServer') }}</el-button>
           <el-button size="small" type="warning" @click="onOverwrite">
             {{ t('conflict.overwrite') }}
           </el-button>

@@ -35,6 +35,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { t } from '@/i18n'
 import { recordRecentChapter } from '@/utils/recent'
 import { formatChapterTitle, formatVolumeTitle } from '@/utils/titles'
+import { saveOutlineNow } from '@/utils/unsavedGuard'
 import { countWords } from '@/utils/words'
 import type { Novel } from '@/types'
 
@@ -226,6 +227,12 @@ watch(
   () => reader.activeChapterId,
   async (id) => {
     if (!id) return
+    // ★ 未保存拦截已**上移到导航入口**（`reader.openChapter` / `reader.openOutline` /
+    //   `project.selectNovel` → `utils/unsavedGuard`），改成「先问后改」：
+    //     · 能同时覆盖**大纲**——大纲正文是 OutlineEditor 的组件内局部状态且无自动保存，
+    //       切走即随卸载销毁，此处原先的「事后 openChapter(previousId) 回滚」救不回来；
+    //     · 避免与入口拦截重复弹窗。
+    //   本 watcher 只在状态确实变化后触发，那时拦截已通过，无需再判一次。
     // 记录「最近打开的小说章节」（供添加文件页展示，最多 10 条）
     const found = project.findChapter(id)
     if (found && project.currentNovel) {
@@ -258,37 +265,105 @@ async function onOutlineSaved(): Promise<void> {
 
 /** Agent file.changed 热更新（手册「三、(3) 右侧栏」）：
  * - 目录树刷新（增删改章后）；
- * - 若改动的是正在编辑的章：无本地未保存修改 → 静默重载；有未保存修改 → 提示用户选择。 */
+ * - 若改动的是正在编辑的章：无本地未保存修改 → 静默重载；有未保存修改 → 提示用户选择。
+ *
+ * ★ 必须去抖合并。writer 子代理写一章的常态是 `write_file` 落初稿 + 多次
+ *   `edit_file` 润色，每次都发一条 `file.changed`；子代理栈补齐 FileChangeNotify
+ *   之后这些事件才真正到达前端，逐条处理会导致：
+ *     · 目录树被连续全量重载 N 次（每次都打后端 + 重排整棵树）；
+ *     · 用户正打开该章且有未保存修改时，弹出 **N 个连环确认框**，
+ *       而每个框都能选「载入 AI 版本」把用户正在写的稿子冲掉。
+ *   故对连续事件设静默期：期内后续事件只重置计时器，期满后按最后一次处理一遍。
+ *   弹窗另加 `prompting` 互斥，避免用户迟迟不点时新事件又叠一个框上来。 */
+const FILE_CHANGED_DEBOUNCE_MS = 1200
+let fileChangedTimer: ReturnType<typeof setTimeout> | null = null
+let pendingFileChanged: { chapterId: string | null; kind: string } | null = null
+let prompting = false
+
 watch(
   () => agentStore.fileChanged,
-  async (evt) => {
+  (evt) => {
     if (!evt) return
     agentStore.clearFileChanged()
-    await project.loadVolumes()
-
-    const openedId = editorStore.chapterId
-    if (evt.chapterId && evt.chapterId === openedId) {
-      if (!editorStore.dirty) {
-        await editorStore.openChapter(openedId)
-      } else {
-        try {
-          await ElMessageBox.confirm(
-            `AI 已修改本章正文（${evt.kind}）。你本地有未保存的修改，是否放弃本地修改并载入 AI 版本？`,
-            '正文已被 AI 更新',
-            { confirmButtonText: '载入 AI 版本', cancelButtonText: '保留本地修改', type: 'warning' },
-          )
-          await editorStore.openChapter(openedId)
-        } catch {
-          /* 用户选择保留本地修改；保存时会触发乐观锁 409 冲突流程 */
-        }
-      }
-    }
+    pendingFileChanged = { chapterId: evt.chapterId ?? null, kind: evt.kind }
+    if (fileChangedTimer) clearTimeout(fileChangedTimer)
+    fileChangedTimer = setTimeout(() => {
+      fileChangedTimer = null
+      const pending = pendingFileChanged
+      pendingFileChanged = null
+      if (pending) void applyFileChanged(pending)
+    }, FILE_CHANGED_DEBOUNCE_MS)
   },
 )
 
-/** 离开页面前把未保存的正文存一次（避免丢稿） */
+async function applyFileChanged(evt: { chapterId: string | null; kind: string }): Promise<void> {
+  await project.loadVolumes()
+
+  const openedId = editorStore.chapterId
+  if (!evt.chapterId || evt.chapterId !== openedId) return
+
+  if (!editorStore.dirty) {
+    await editorStore.openChapter(openedId)
+    return
+  }
+  if (prompting) return // 已有弹窗在等用户决定，不叠加
+  prompting = true
+  try {
+    await ElMessageBox.confirm(
+      `AI 已修改本章正文（${evt.kind}）。你本地有未保存的修改，是否放弃本地修改并载入 AI 版本？`,
+      '正文已被 AI 更新',
+      { confirmButtonText: '载入 AI 版本', cancelButtonText: '保留本地修改', type: 'warning' },
+    )
+    await editorStore.openChapter(openedId)
+  } catch {
+    /* 用户选择保留本地修改。
+       ★ 此后保存确实会走乐观锁 409 冲突流程——后端 `volumes.record_agent_write`
+         会为 Agent 的每次直写抬 `version`，于是这里选「保留本地修改」不再等于
+         「稍后静默覆盖掉 AI 的产出」，而是保存时弹冲突横幅让用户明确取舍。 */
+  } finally {
+    prompting = false
+  }
+}
+
+/** 离开/切后台时尽力把未保存的正文存一次（避免丢稿）。
+ *
+ *  ★ `beforeunload` 里**不能** await：浏览器只给同步代码的时间片，异步保存在页面
+ *    销毁前几乎必然被截断。所以此前那段「addEventListener('beforeunload') + 注释
+ *    写着把未保存的正文存一次」其实只弹了个原生确认框，一个字都没存。
+ *    真正的存盘时机改用 `visibilitychange → hidden` 与 `pagehide`：这两个时机
+ *    页面尚未销毁，仍允许发起 fetch（并用 keepalive 让请求在卸载后跑完）。
+ *    原生确认框保留，作为最后一道「你确定要走吗」的提醒。
+ *  ★ 保存失败（含 409 版本冲突）在此静默：页面正在卸载，无法与用户交互；
+ *    冲突会在下次打开该章时由 ConflictBanner 正常呈现。
+ */
+let savingOnHide = false
+async function saveOnHide(): Promise<void> {
+  if (savingOnHide) return
+  const chapterDirty = editorStore.dirty
+  const outlineDirty = editorStore.dirtyOutline
+  if (!chapterDirty && !outlineDirty) return
+  savingOnHide = true
+  try {
+    if (chapterDirty) await editorStore.save()
+    // ★ 大纲也要存：它的正文只在 OutlineEditor 的局部状态里，且没有自动保存，
+    //   关页面就彻底没了。落盘函数由 OutlineEditor 挂载时登记（见 unsavedGuard）。
+    if (outlineDirty) await saveOutlineNow()
+  } catch {
+    /* 见上：卸载中无法交互，留待下次打开时走冲突流程 */
+  } finally {
+    savingOnHide = false
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') void saveOnHide()
+})
+window.addEventListener('pagehide', () => {
+  void saveOnHide()
+})
 window.addEventListener('beforeunload', (e) => {
-  if (editorStore.dirty) {
+  // 大纲脏同样要提醒：此前只看章正文，改完大纲直接关标签页会一声不响地丢稿
+  if (editorStore.dirty || editorStore.dirtyOutline) {
     e.preventDefault()
     e.returnValue = ''
   }
@@ -409,14 +484,8 @@ window.addEventListener('beforeunload', (e) => {
             <ChapterReader v-else :chapter-id="reader.activeChapterId" />
           </template>
 
-          <!-- 章节正文加载窗口期（换章/刷新/热重载）→ 内容区居中动态蒙版，
-               避免看到上一章内容或空内容 -->
-          <div v-if="editorStore.chapterLoading" class="chapter-loading-mask">
-            <span class="loading-spinner" />
-            <span class="muted text-sm">{{ t('common.loading') }}</span>
-          </div>
-
-          <!-- 编辑模式 -->
+          <!-- 编辑模式（★ 这个 v-else 必须与上面「阅读模式」的 v-if 紧邻配对，
+               中间不能插入任何带 v-if 的兄弟节点，见下方加载蒙版的说明） -->
           <template v-else>
             <OutlineEditor v-if="editingOutline" @saved="onOutlineSaved" />
 
@@ -432,6 +501,18 @@ window.addEventListener('beforeunload', (e) => {
               </div>
             </template>
           </template>
+
+          <!-- 章节正文加载窗口期（换章/刷新/热重载）→ 内容区居中动态蒙版，
+               避免看到上一章内容或空内容。
+               ★ 必须放在 v-if/v-else 链**之外**（即上面两个 template 之后）。
+               此前它夹在「阅读模式 v-if」与「编辑模式 v-else」中间，Vue 的
+               v-else 只与**紧邻的上一个兄弟节点**配对，于是编辑模式变成了
+               「未在加载就渲染」——阅读模式下编辑器会跟着一起渲染出来，
+               两套内容叠在同一区域。 -->
+          <div v-if="editorStore.chapterLoading" class="chapter-loading-mask">
+            <span class="loading-spinner" />
+            <span class="muted text-sm">{{ t('common.loading') }}</span>
+          </div>
         </div>
       </div>
     </main>

@@ -1012,7 +1012,21 @@ class TestPromptSlimming:
         rules = re.findall(r"(?m)^\d+\.\s+\*\*", prompt)
         assert len(rules) == 10, f"铁律应为 10 条，实际 {len(rules)}"
         # 关键硬约束仍在
-        for required in ("备注", "outline_grep", "recaller", "任务没做完不要收尾", "不要新建/重命名章节文件"):
+        # ★ 铁律 5 已从「不要新建/重命名章节文件」升级为「结构变更只用结构工具」：
+        #   点名 create_volume / create_chapter / rename_volume / rename_chapter，
+        #   并明确禁止用 write_file/edit_file 改 volumes.yaml、frontmatter title
+        #   或新建/移动/重命名章节文件。断言随之改为校验新文案的关键片段
+        #   （避开 `**文件**` 这类 markdown 粗体标记，防止无谓的脆弱匹配）。
+        for required in (
+            "备注",
+            "outline_grep",
+            "recaller",
+            "任务没做完不要收尾",
+            "结构变更只用结构工具",
+            "create_volume",
+            "rename_chapter",
+            "新建/移动/重命名章节",
+        ):
             assert required in prompt, f"缺少硬约束：{required}"
         # 新增反浪费硬约束
         for required in ("续写", "重复全量读取"):
@@ -1228,11 +1242,50 @@ class TestWastefulLoopGuard:
 
         pushed: list[tuple[str, str]] = []
         mw = WastefulLoopGuardMiddleware(steer_sink=lambda rid, text: pushed.append((rid, text)))
-        state = {"messages": self._messages([("read_file", "/a.md")] * 3)}
         runtime = SimpleNamespace(context=SimpleNamespace(run_id="r1"))
+        # ★ 按真实时序模拟：run 开始时先调一次 abefore_model（此时 state 里全是历史，
+        #   中间件据此记下「本轮基线」），随后本轮内才产生 3 次重复读取，再调一次。
+        #   统计范围已收窄为「本轮新增消息」，若像从前那样把重复消息一次性塞进 state
+        #   只调一次，首次调用会把它们整体划为历史 → 不推送（用例假失败）。
+        state = {"messages": [SimpleNamespace(tool_calls=[])]}
+        assert await mw.abefore_model(state, runtime) is None
+        assert pushed == [], "本轮尚无重复，不应推送"
+        state = {"messages": state["messages"] + self._messages([("read_file", "/a.md")] * 3)}
         assert await mw.abefore_model(state, runtime) is None  # 不直接改 state
         assert len(pushed) == 1 and pushed[0][0] == "r1"
         assert "read_file" in pushed[0][1]
+
+    async def test_ignores_previous_run_history(self):
+        """★ 回归：统计范围必须限于本轮 run。
+
+        graph 带 checkpointer 且 thread_id 按会话续接，`state["messages"]` 会累积
+        **同一会话历次 run** 的全部消息。按全量统计时，长会话里新一轮 run 一开头
+        就会因上一轮的重复读取被推送纠正、甚至被工具层硬阻断（Agent 本轮第一次读
+        该文件即收到「已达 N 次，本次被阻断」），表现为 AI 莫名拒绝读文件、绕路。
+        """
+        from app.agent.harness.llm.wasteful_loop import READ_HARD_LIMIT, WastefulLoopGuardMiddleware
+
+        pushed: list[tuple[str, str]] = []
+        mw = WastefulLoopGuardMiddleware(steer_sink=lambda rid, text: pushed.append((rid, text)))
+        runtime = SimpleNamespace(context=SimpleNamespace(run_id="r2"))
+        # 上一轮对同一路径读了远超硬上限的次数
+        history = self._messages([("read_file", "/a.md")] * (READ_HARD_LIMIT + 3))
+        assert await mw.abefore_model({"messages": history}, runtime) is None
+        assert pushed == [], "新一轮 run 不应被上一轮的历史触发纠正"
+
+        # 本轮第一次读同一文件同样不该被触发
+        state = {"messages": history + self._messages([("read_file", "/a.md")])}
+        counts = mw.count_repeats(mw._scoped_messages(state["messages"], "r2"))
+        assert max(counts.values(), default=0) == 1, f"本轮应只计 1 次，实际 {counts}"
+        assert await mw.abefore_model(state, runtime) is None
+        assert pushed == []
+
+        # 但本轮内真的重复到上限时，守卫依然生效（不能因为收窄范围而失效）
+        msgs = list(state["messages"])
+        for _ in range(READ_HARD_LIMIT):
+            msgs += self._messages([("read_file", "/a.md")])
+            await mw.abefore_model({"messages": msgs}, runtime)
+        assert pushed, "本轮内重复到上限应当推送纠正"
 
     async def test_no_steer_without_repeat(self):
         from app.agent.harness.llm.wasteful_loop import WastefulLoopGuardMiddleware

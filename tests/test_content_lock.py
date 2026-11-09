@@ -295,6 +295,9 @@ async def test_lock_release_only_by_holder(client, chapter_id):
     assert content_locks.is_locked(chapter_id)
 
     freed = await content_locks.release_for_run("run-a")
-    assert freed == [chapter_id]
+    # ★ 返回形状是 `(chapter_id, project_id)` 而非裸 chapter_id：run 收尾要据此发
+    #   `content.lock` 解锁事件，而前端需要 project_id 才能把该项目移出
+    #   `lockedProjects`；缺它会一直显示「AI 编辑中」直到刷新页面。
+    assert freed == [(chapter_id, "p")]
     assert not content_locks.is_locked(chapter_id)
     assert (await client.get("/api/v1/chapters/locks")).json()["data"] == []

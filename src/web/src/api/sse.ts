@@ -53,7 +53,13 @@ export class SseClient {
 
     source.onmessage = (ev: MessageEvent<string>) => this.handleRaw(ev.data)
 
-    // 服务端以具名事件下发（event: xxx），这里统一注册常见事件类型
+    // 服务端以具名事件下发（event: xxx），这里统一注册常见事件类型。
+    //
+    // ★ EventSource 只对**已注册名字**的事件回调（未具名的才走 onmessage），
+    //   漏注册 = 事件被静默丢弃，且没有任何报错可查。下面这份清单必须与后端
+    //   实际 publish 的事件名保持一致（后端全量可用
+    //   `rg '^\s*"[a-z_]+\.[a-z_.]+",$' src/app/agent` 交叉核对，
+    //   注意排除 services/ 与 api/ 里的审计动作名——那些不是 SSE 事件）。
     for (const name of [
       'run.start',
       'message.delta',
@@ -72,6 +78,17 @@ export class SseClient {
       'usage',
       'error',
       'run.end',
+      // ↓ 曾漏注册的四类（后端一直在发，前端一直收不到）：
+      // 'content.lock' —— AI 编辑锁的加锁/解锁。丢了它，「AI编辑中，请稍后再试」
+      //   横幅与保存按钮禁用都不会出现，用户会照常保存并和 AI 互相覆盖；
+      //   解锁事件同样靠它，丢了会让章节一直显示锁定直到刷新页面。
+      'content.lock',
+      // 'run.notice' —— 取消/异常等收尾提示文案，丢了用户看不到「已取消」的说明。
+      'run.notice',
+      // 'steer.consumed' —— 插话被消费的回执，丢了前端插话气泡一直停在「待处理」。
+      'steer.consumed',
+      // 'run.resuming' —— 审批/咨询卡片解决后 run 恢复执行，丢了界面一直显示暂停态。
+      'run.resuming',
     ]) {
       source.addEventListener(name, (ev: MessageEvent<string>) => this.handleRaw(ev.data))
     }

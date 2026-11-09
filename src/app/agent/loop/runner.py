@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.loop.runner
 文件名: runner.py
@@ -309,14 +309,19 @@ class RunManager:
         await _adopt_pending_steers(session_id, run_id)
         await _append_notice(session_id, run_id, notice_text_for("cancelled"))
         await sse_bus.publish(run_id, session_id, "run.notice", {"content": notice_text_for("cancelled"), "kind": "cancelled"})
-        # 取消同样释放「AI 编辑锁」（finalize 不会为取消路径执行）
+        # 取消同样释放「AI 编辑锁」。`_execute_run` 的 finally 也会释放，
+        # 但取消可能发生在 run 尚未进入执行体时（此时不会有 finally），
+        # 故这里是必要的兜底；重复释放幂等无害。
         try:
             from app.services.content_lock import content_locks
 
             freed = await content_locks.release_for_run(run_id)
-            for cid in freed:
+            for cid, pid in freed:
                 await sse_bus.publish(
-                    run_id, session_id, "content.lock", {"chapter_id": cid, "run_id": run_id, "locked": False}
+                    run_id,
+                    session_id,
+                    "content.lock",
+                    {"chapter_id": cid, "run_id": run_id, "locked": False, "project_id": pid},
                 )
         except Exception as exc:  # pragma: no cover
             logger.warning("content_lock_release_on_cancel_failed", run_id=run_id, error=str(exc))
