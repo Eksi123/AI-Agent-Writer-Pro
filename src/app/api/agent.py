@@ -92,8 +92,14 @@ async def get_sessions(
 async def get_usage(
     novel_id: str = Query(...), session: AsyncSession = Depends(get_session)
 ) -> dict:
-    """项目用量。"""
+    """项目级用量（会话数量）。"""
     return ok(await agent_service.project_usage(session, novel_id))
+
+
+@router.get("/usage/app")
+async def get_app_usage(session: AsyncSession = Depends(get_session)) -> dict:
+    """应用级用量（Token 消耗跨所有项目累计）。"""
+    return ok(await agent_service.app_usage(session))
 
 
 @router.get("/sessions/{session_id}/usage")
@@ -495,6 +501,20 @@ async def resolve_interrupt(
         text=body.text,
     )
     await session.commit()
+
+    # 如果 run 已结束，不启动 resume 任务
+    if result.get("run_ended"):
+        return {
+            "code": 0,
+            "message": "accepted",
+            "data": {
+                "interrupt_id": interrupt_id,
+                "run_id": result["run_id"],
+                "resumed": False,
+                "run_ended": True,
+                "run_status": result.get("run_status"),
+            },
+        }
 
     # 异步续跑（不阻塞响应；失败会落 run.error 并发 error 事件）
     from app.agent.loop.runner import run_manager  # 延迟导入

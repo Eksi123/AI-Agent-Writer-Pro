@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.naming
 文件名: naming.py
@@ -108,7 +108,8 @@ def _validate_structural_title(title: str | None, *, kind: str) -> str:
     """卷名 / 章名校验。
 
     需求「卷名或章节名的命名规则和书名的命名规则一样」：
-    不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；可以出现标点符号。
+    不允许为空；不允许全部为阿拉伯数字；不允许出现 `#$%` 等特殊字符；
+    不允许纯序号名（如「第一章」「第一卷」）；可以出现标点符号。
     """
     if title is None:
         raise NamingInvalidError(f"{kind}不允许为空")
@@ -129,6 +130,11 @@ def _validate_structural_title(title: str | None, *, kind: str) -> str:
         raise NamingInvalidError(
             f"{kind}不允许出现特殊字符 {' '.join(bad)}（可以出现标点符号）"
         )
+
+    # 纯序号名：如「第 1 卷」「第三章」「12」「卷一」（含空白/全角空格变体）
+    collapsed = collapse_whitespace(name.lower())
+    if _ORDINAL_RE.match(name) or _PURE_ORDINAL_RE.match(name) or _ORDINAL_RE.match(collapsed):
+        raise NamingInvalidError(f"{kind}不允许使用纯序号名「{name}」，请填写具体名称")
 
     return name
 

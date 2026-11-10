@@ -436,7 +436,7 @@ export const agentApi = {
   listSessions: (novelId?: string) =>
     get<AgentSessionDto[]>('/agent/sessions', { params: novelId ? { novel_id: novelId } : undefined }),
 
-  /** 项目用量（会话数量 + 累计 token + 缓存命中） */
+  /** 项目用量（会话数量） */
   usage: (novelId: string) =>
     get<{
       project_id: string
@@ -446,6 +446,15 @@ export const agentApi = {
       tokens_total: number
       cached_in: number
     }>('/agent/usage', { params: { novel_id: novelId } }),
+
+  /** 应用级 Token 用量（跨所有项目累计） */
+  appUsage: () =>
+    get<{
+      tokens_in: number
+      tokens_out: number
+      tokens_total: number
+      cached_in: number
+    }>('/agent/usage/app'),
 
   /** 会话上下文占用（最近一次 run 的输入 token + 缓存命中） */
   sessionUsage: (sessionId: string) =>

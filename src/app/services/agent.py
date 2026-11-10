@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.agent
 文件名: agent.py
@@ -72,21 +72,28 @@ def summarize_session_title(content: str, *, max_len: int = 30) -> str:
 
 
 async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
-    """项目级用量。
+    """项目级用量（会话数量 + 该项目 token）。
 
     token 以 `agent_runs` 为准而非 `messages`——子代理默认走**独立上下文**，
     其消息不进主消息树，但运行级 `tokens_in/out` 已把子代理用量累计进去
     （见 `agent/loop/streaming.py` 对带 namespace 的 chunk 同样累加 usage），
     因此按 run 汇总才满足「和主 Agent 一起算 Token 消耗」。
     `run.tokens_in` 是收尾时整体赋值（非累加），逐 run 求和不会重复计数。
+
+    ★ 删除会话时 run 记录保留（session_id 清空），仍计入项目级 token 统计。
     """
+    # 统计所有会话（包括已删除会话的孤儿 run）
     sessions = (
         (await db.execute(select(AgentSession).where(AgentSession.project_id == project_id))).scalars().all()
     )
     session_ids = [s.id for s in sessions]
+
+    # 查询所有属于该项目的 run（包括孤儿 run，即 session_id 为空的）
     tokens_in = 0
     tokens_out = 0
     cached_in = 0
+
+    # 先查有 session 的 run
     if session_ids:
         rows = (
             await db.execute(
@@ -100,9 +107,52 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
         tokens_in = int(rows[0] or 0)
         tokens_out = int(rows[1] or 0)
         cached_in = int(rows[2] or 0)
+
+    # 再查孤儿 run（session_id 为空但 project_id 匹配的）
+    orphan_rows = (
+        await db.execute(
+            select(
+                func.sum(AgentRun.tokens_in),
+                func.sum(AgentRun.tokens_out),
+                func.sum(AgentRun.cached_in),
+            ).where(
+                AgentRun.project_id == project_id,
+                (AgentRun.session_id == "") | (AgentRun.session_id.is_(None))
+            )
+        )
+    ).first()
+    tokens_in += int(orphan_rows[0] or 0)
+    tokens_out += int(orphan_rows[1] or 0)
+    cached_in += int(orphan_rows[2] or 0)
+
     return {
         "project_id": project_id,
         "session_count": len(session_ids),
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "tokens_total": tokens_in + tokens_out,
+        "cached_in": cached_in,
+    }
+
+
+async def app_usage(db: AsyncSession) -> dict[str, Any]:
+    """应用级 Token 用量（跨所有项目累计）。
+
+    会话数量仍是项目级（前端传入 project_id 查询），但 Token 消耗是全局的。
+    """
+    rows = (
+        await db.execute(
+            select(
+                func.sum(AgentRun.tokens_in),
+                func.sum(AgentRun.tokens_out),
+                func.sum(AgentRun.cached_in),
+            )
+        )
+    ).first()
+    tokens_in = int(rows[0] or 0)
+    tokens_out = int(rows[1] or 0)
+    cached_in = int(rows[2] or 0)
+    return {
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "tokens_total": tokens_in + tokens_out,
@@ -200,6 +250,14 @@ async def delete_session(session: AsyncSession, session_id: str) -> dict[str, An
     if row.status == "running":
         raise ApiError("会话正在运行中，请先取消运行再删除", code=ErrorCode.RUN_STATE_CONFLICT)
     project_id = row.project_id
+    # 删除会话时保留其关联的 run 记录（token 消耗数据不随会话删除而丢失）
+    # 将 run 的 session_id 清空，标记为孤儿记录，仍计入项目级 token 统计
+    from app.db.models.agent import AgentRun
+    await session.execute(
+        AgentRun.__table__.update()
+        .where(AgentRun.session_id == session_id)
+        .values(session_id="")
+    )
     await session.delete(row)
     await session.flush()
     await audit.record(
@@ -471,11 +529,22 @@ async def resolve_interrupt(
     if run is None:
         raise NotFoundError(f"run 不存在：{row.run_id}")
     if run.status in _TERMINAL_RUN_STATUS:
-        raise ApiError(
-            f"运行已结束（{run.status}），无法处理中断",
-            code=ErrorCode.RUN_STATE_CONFLICT,
-            data={"run_id": run.id, "status": run.status},
+        # run 已结束，记录中断决定但不抛错，让用户重新发送消息
+        row.decision = decision
+        row.response_json = json.dumps(
+            {"decision": decision, "message": "run 已结束，请重新发送消息"},
+            ensure_ascii=False, default=str
         )
+        row.decided_by = "user"
+        row.decided_at = utcnow()
+        await session.flush()
+        # 返回一个特殊的 resume_value 告诉前端 run 已结束
+        return {
+            "run_id": run.id,
+            "resume_value": None,
+            "run_ended": True,
+            "run_status": run.status,
+        }
 
     if row.type == "approval":
         if decision not in _APPROVAL_DECISIONS:

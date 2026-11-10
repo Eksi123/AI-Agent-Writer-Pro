@@ -412,6 +412,8 @@ export const zh = {
     approvalRisk: '高危操作',
     approvalSubmit: '提交',
     approvalRespondPlaceholder: '回复补充（会作为工具结果返回给 AI）',
+    approvalRespondHint: '请在下方输入框填写补充说明',
+    approveAll: '全部批准',
     processToggle: '展开/收起模型思考和工具调用',
     approve: '批准',
     approveSession: '本次会话允许',

@@ -57,9 +57,9 @@ def _open_browser(url: str, port: int, *, timeout: float = 40.0) -> None:
                     print(f"[main] 已在浏览器打开 → {url}")
                     return
             except Exception as exc:  # 无 GUI / 浏览器未注册
-                print(f"[main] ⚠ 打开浏览器失败：{exc}")
+                print(f"[main] 警告: 打开浏览器失败：{exc}")
         else:
-            print(f"[main] ⚠ {url} 端口 {timeout:.0f}s 内未就绪，未自动打开浏览器")
+            print(f"[main] 警告: {url} 端口 {timeout:.0f}s 内未就绪，未自动打开浏览器")
         print(f"[main] 可手动访问 → {url}")
 
     threading.Thread(target=_worker, name="open-browser", daemon=True).start()
@@ -82,7 +82,11 @@ def _backend_cmd(port: int, prod: bool) -> list[str]:
                 "uv", "run", "python", "-m", "uvicorn", "app.main:app",
                 "--host", BACKEND_HOST, "--port", str(port),
             ]
-        return ["uv", "run", "writer", "dev", "--host", BACKEND_HOST, "--port", str(port)]
+        # ★ 直接用 uvicorn 启动，避免递归调用 `uv run writer dev` → cli.py → main.py 循环
+        return [
+            "uv", "run", "python", "-m", "uvicorn", "app.main:app",
+            "--host", BACKEND_HOST, "--port", str(port), "--reload",
+        ]
     return [
         sys.executable, "-m", "uvicorn", "app.main:app",
         "--host", BACKEND_HOST, "--port", str(port),
@@ -191,10 +195,10 @@ def run_dev(backend_port: int, *, open_browser: bool = True) -> int:
     backend = _spawn(_backend_cmd(backend_port, prod=False), ROOT, extra_env=_backend_env())
 
     if not _wait_port(backend_port, timeout=45):
-        print("[main] ⚠ 后端启动超时（仍继续拉起前端，可稍后自行检查日志）")
+        print("[main] 警告: 后端启动超时（仍继续拉起前端，可稍后自行检查日志）")
 
     if not _ensure_frontend_deps():
-        print("[main] ✗ 前端依赖安装失败，仅后端可用")
+        print("[main] 错误: 前端依赖安装失败，仅后端可用")
         _terminate(backend)
         return 1
 
@@ -238,7 +242,7 @@ def run_prod(backend_port: int, *, open_browser: bool = True) -> int:
             cmd = [npm, "run", "build"]
         result = subprocess.run(cmd, cwd=str(WEB_DIR) if not _is_windows() else None, check=False)  # noqa: S603,S607
         if result.returncode != 0:
-            print("[main] ✗ 前端构建失败")
+            print("[main] 错误: 前端构建失败")
             return 1
     print(f"[main] 单体模式 → http://{BACKEND_HOST}:{backend_port}  (Ctrl+C 停止)")
     backend = _spawn(_backend_cmd(backend_port, prod=True), ROOT, extra_env=_backend_env())

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Agent store（M3）：会话列表、消息树、流式运行状态、中断卡片。
  *
  * - 会话按小说项目隔离（右侧栏只显示当前项目）；
@@ -356,13 +356,16 @@ export const useAgentStore = defineStore('agent', () => {
     const id = novelId ?? (currentSession.value?.project_id ?? null)
     if (!id) return
     try {
+      // 会话数量：项目级
       const u = await agentApi.usage(id)
+      // Token 消耗：应用级（跨所有项目）
+      const appU = await agentApi.appUsage()
       usage.value = {
         session_count: u.session_count,
-        tokens_in: u.tokens_in,
-        tokens_out: u.tokens_out,
-        tokens_total: u.tokens_total,
-        cached_in: u.cached_in ?? 0,
+        tokens_in: appU.tokens_in,
+        tokens_out: appU.tokens_out,
+        tokens_total: appU.tokens_total,
+        cached_in: appU.cached_in ?? 0,
       }
     } catch {
       /* 用量读取失败不阻断会话 */
@@ -428,23 +431,32 @@ export const useAgentStore = defineStore('agent', () => {
     return sess
   }
 
-  /** 由未决中断清单恢复审批/咨询卡片（进入会话与暂停态 run.end 共用） */
+  /** 由未决中断清单恢复审批/咨询卡片（进入会话与暂停态 run.end 共用）。
+   * ★ 与现有 pendingInterrupts 合并去重，避免覆盖 SSE 新推送的中断。
+   */
   function restorePendingCards(items: AgentInterruptDto[]): void {
-    const approvals: PendingInterrupt[] = []
+    const existingIds = new Set(pendingInterrupts.value.map((p) => p.interruptId))
     for (const it of items) {
+      // 已存在的中断跳过（SSE 可能已推送）
+      if (existingIds.has(it.id)) continue
       const payload = (typeof it.payload === 'object' && it.payload !== null ? it.payload : {}) as Record<string, unknown>
       if (it.type === 'approval') {
-        approvals.push({
-          interruptId: it.id,
-          toolName: (payload.tool_name as string | null) ?? it.tool_name ?? null,
-          args: (payload.args as Record<string, unknown> | null) ?? null,
-          decisions: (payload.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
-          risk: payload.risk as string | undefined,
-          reason: payload.reason as string | undefined,
-          itemLabel: (payload.item_label as string | undefined) ?? undefined,
-          path: (payload.path as string | undefined) ?? undefined,
-        })
-      } else {
+        pendingInterrupts.value = [
+          ...pendingInterrupts.value,
+          {
+            interruptId: it.id,
+            toolName: (payload.tool_name as string | null) ?? it.tool_name ?? null,
+            args: (payload.args as Record<string, unknown> | null) ?? null,
+            decisions: (payload.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
+            risk: payload.risk as string | undefined,
+            reason: payload.reason as string | undefined,
+            itemLabel: (payload.item_label as string | undefined) ?? undefined,
+            path: (payload.path as string | undefined) ?? undefined,
+          },
+        ]
+        existingIds.add(it.id)
+      } else if (!pendingConsult.value || pendingConsult.value.interruptId !== it.id) {
+        // 咨询卡片只有一个，只在不存在或 id 不同时覆盖
         pendingConsult.value = {
           interruptId: it.id,
           question: String(payload.question ?? ''),
@@ -455,7 +467,6 @@ export const useAgentStore = defineStore('agent', () => {
         }
       }
     }
-    if (approvals.length) pendingInterrupts.value = approvals
   }
 
   async function selectSession(sessionId: string): Promise<void> {
@@ -555,15 +566,6 @@ export const useAgentStore = defineStore('agent', () => {
       errorCode.value = null
       return
     }
-    // 全局单飞本地预检（后端 run_manager 兜底）：已有其它会话在思考 → 直接提示，不发请求
-    if (
-      runningSessionIds.value.size > 0 &&
-      !runningSessionIds.value.has(currentSessionId.value)
-    ) {
-      error.value = GLOBAL_BUSY_HINT
-      errorCode.value = null
-      return
-    }
     clearError()
     // 乐观回显——发出的用户消息立即出现在会话里（run 收尾刷新后替换）
     // 记下发送时刻；并带上「当前正在编辑/阅读的章」——
@@ -579,8 +581,13 @@ export const useAgentStore = defineStore('agent', () => {
       })
       // 全局单飞拦截：AI 的提示回复已落消息树 → 撤乐观回显并刷新消息即可看到
       if (!result.run_id) {
-        pendingUserMessage.value = null
-        void refreshMessages()
+        try {
+          await refreshMessages()
+        } catch {
+          /* 刷新失败也清除 pending，避免用户消息永远卡在"发送中" */
+        } finally {
+          pendingUserMessage.value = null
+        }
         return
       }
       currentRunId = result.run_id
@@ -846,6 +853,7 @@ export const useAgentStore = defineStore('agent', () => {
   /**
    * 批量提交审批决策：`decisions` 与 `pendingInterrupts` 一一对应（缺省 approve）。
    * 顺序 resolve 各中断；首个成功后续跑流，其余 resolve 在 resume 重放时按已决行生效。
+   * ★ 失败的中断保留在 pendingInterrupts 中，用户可重新处理。
    */
   async function resolveInterrupts(
     decisions: ('approve' | 'approve_session' | 'edit' | 'reject' | 'respond')[],
@@ -853,17 +861,20 @@ export const useAgentStore = defineStore('agent', () => {
   ): Promise<void> {
     const queue = [...pendingInterrupts.value]
     if (!queue.length) return
-    pendingInterrupts.value = []
+    const resolvedIds: string[] = []
     let firstError: unknown = null
     for (let i = 0; i < queue.length; i++) {
       const decision = decisions[i] ?? 'approve'
       const payload = payloads?.[i]
       try {
         await agentApi.resolveInterrupt(queue[i].interruptId, { decision, ...payload })
+        resolvedIds.push(queue[i].interruptId)
       } catch (err) {
         firstError = firstError ?? err
       }
     }
+    // 只移除已成功 resolve 的中断，失败的保留在列表中供用户重新处理
+    pendingInterrupts.value = pendingInterrupts.value.filter((p) => !resolvedIds.includes(p.interruptId))
     if (firstError) {
       setError(firstError)
       return
@@ -887,13 +898,14 @@ export const useAgentStore = defineStore('agent', () => {
   async function resolveConsult(decision: 'option' | 'text', value: string): Promise<void> {
     if (!pendingConsult.value) return
     const id = pendingConsult.value.interruptId
-    pendingConsult.value = null
     try {
       await agentApi.resolveInterrupt(id, {
         decision,
         choice: decision === 'option' ? value : undefined,
         text: decision === 'text' ? value : undefined,
       })
+      // 成功后才清空卡片
+      pendingConsult.value = null
       if (currentRunId) {
         running.value = true
         runPaused.value = false
@@ -901,6 +913,7 @@ export const useAgentStore = defineStore('agent', () => {
         startStream(currentRunId, sseClient?.currentSeq ?? undefined)
       }
     } catch (err) {
+      // 失败时保留卡片，用户可重新提交
       setError(err)
     }
   }

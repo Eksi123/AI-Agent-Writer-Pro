@@ -284,25 +284,21 @@ const displayMessages = computed<DisplayMessage[]>(() => {
  * 该轮到下一个 user 消息之间的 assistant / tool 消息都视为思考过程，
  * 只保留**最后一条有正文的 assistant 消息**作为本轮回复（并去掉它身上的工具卡片）。
  * 找不到有正文的 assistant（异常轮）时原样保留，避免渲染空气泡。
- */
-/**
- * 每轮问答只展示**最终回复**——中间思考、工具调用卡片一律折叠到下方「思考与工具调用过程」区。
  *
- * **运行中隐藏当前 turn 的中间过程**：run 未结束时，persisted 里的 assistant/tool 消息
- * 可能是中间处理文本或工具调用结果，并非最终回复；此时由下方 live 流式区承载进度。
- * 但当 run 处于 awaiting_approval / awaiting_consult 状态时，审批/咨询卡片会独立渲染，
- * 中间过程仍需隐藏以避免与卡片重复展示。run 结束后正常展示最终回复。
+ * ★ 运行中只隐藏**最后一轮**（当前正在处理的轮次）的中间过程；
+ *   历史轮次的 user 消息和最终回复始终保留。
  */
 function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessage[] {
   const out: DisplayMessage[] = []
   let turn: DisplayMessage[] = []
-  const flush = (skipNonUserIfRunning: boolean): void => {
+  const flush = (isLastTurn: boolean): void => {
     if (!turn.length) return
-    // 运行中：不展示当前 turn 的任何非 user 消息（中间过程由 live 区承载）
-    if (skipNonUserIfRunning && turn.some((m) => m.role !== 'user')) {
+    // 运行中且是最后一轮：隐藏中间过程（不输出 assistant/tool 消息）
+    if (isRunning && isLastTurn && turn.some((m) => m.role !== 'user')) {
       turn = []
       return
     }
+    // 找最后一条有正文的 assistant 消息作为本轮回复
     let finalIdx = -1
     for (let i = turn.length - 1; i >= 0; i--) {
       if (turn[i].role === 'assistant' && turn[i].content.trim()) {
@@ -314,19 +310,20 @@ function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessa
     turn = []
   }
   for (const m of list) {
-    // 引导消息（kind=steer）**不分割轮次**：原位插入展示，其前后的中间过程仍属同一轮，
-    // 避免引导把一轮问答拆成两轮（中间思考文本被当成「最终回复」展示）。
+    // 引导消息（kind=steer）不分割轮次，原位插入展示
     if (m.kind === 'steer') {
       out.push(m)
       continue
     }
     if (m.role === 'user') {
-      flush(isRunning)
-      out.push(m)
+      // 遇到 user 消息：先 flush 上一轮，再输出 user 消息
+      flush(false)  // ← 历史轮次总是输出最终回复
+      out.push(m)   // ← user 消息总是显示
     } else {
       turn.push(m)
     }
   }
+  // 最后一轮：根据运行状态决定是否隐藏
   flush(isRunning)
   return out
 }
@@ -722,6 +719,17 @@ function formatToolCall(tc: { name: string; args?: Record<string, unknown> }): s
     return `${tc.name}(${args.length > 200 ? `${args.slice(0, 200)}…` : args})`
   } catch {
     return tc.name
+  }
+}
+
+/** 工具调用参数：截断过长内容，保持过程区简洁 */
+function formatToolArgs(args: Record<string, unknown>): string {
+  try {
+    const s = JSON.stringify(args)
+    if (s.length <= 80) return s
+    return `${s.slice(0, 80)}…`
+  } catch {
+    return ''
   }
 }
 
@@ -1199,7 +1207,8 @@ watch(
 
         <!-- 「模型思考和工具调用」过程框（AI 思考处理的中间过程）：
              仅运行中展示；出现审批/询问卡片（同属中间过程）时整框隐藏，
-             用户处理完卡片续跑后重新出现；run 结束即隐藏，全程不暴露最终回复 -->
+             用户处理完卡片续跑后重新出现；run 结束即隐藏，全程不暴露最终回复。
+             框内直接显示内容（无横向滚动条），用图标区分模型思考 / 工具调用 -->
         <div v-if="agent.running && !cardPending" class="process-box">
           <button type="button" class="process-toggle" @click="processOpen = !processOpen">
             <span class="caret">{{ processOpen ? '▾' : '▸' }}</span>
@@ -1207,10 +1216,19 @@ watch(
           </button>
           <div v-if="processOpen" class="process-body scroll-y">
             <template v-for="s in agent.streaming" :key="s.messageId">
-              <div v-for="(tc, i) in s.toolCalls" :key="`${s.messageId}-t${i}`" class="tool-card">
-                <code>{{ formatToolCall(tc) }}</code>
+              <!-- 模型思考文本 -->
+              <div v-if="s.content && !s.toolCalls.length" class="process-item process-thinking">
+                <span class="process-icon">💭</span>
+                <span class="process-text">{{ s.content }}</span>
               </div>
-              <div v-if="s.content && !s.toolCalls.length" class="process-text">{{ s.content }}</div>
+              <!-- 工具调用 -->
+              <div v-for="(tc, i) in s.toolCalls" :key="`${s.messageId}-t${i}`" class="process-item process-tool">
+                <span class="process-icon">🔧</span>
+                <span class="process-tool-name">{{ tc.name }}</span>
+                <span v-if="tc.args && Object.keys(tc.args).length" class="process-tool-args">
+                  {{ formatToolArgs(tc.args) }}
+                </span>
+              </div>
             </template>
           </div>
         </div>
@@ -1574,19 +1592,56 @@ watch(
 }
 
 .process-body {
-  max-height: 180px;
+  max-height: 300px;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
-.process-text {
+.process-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   font-size: 12px;
   line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.process-icon {
+  flex: none;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.process-thinking {
   color: var(--el-text-color-secondary);
+}
+
+.process-thinking .process-text {
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.process-tool {
+  color: var(--el-text-color-primary);
+}
+
+.process-tool-name {
+  font-family: var(--el-font-family-mono, monospace);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.process-tool-args {
+  color: var(--el-text-color-secondary);
+  font-family: var(--el-font-family-mono, monospace);
+  font-size: 11px;
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 /* [停止] 已移到底部发送按键，状态条里的 .status-stop 随之删除 */

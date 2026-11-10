@@ -45,10 +45,9 @@ function questionOf(it: PendingInterrupt): string {
   return it.reason || it.itemLabel || ''
 }
 
-/** 选项行：批准类决策（回复补充走末位输入行，编辑后批准走文字链接） */
-const OPTION_DECISIONS: { value: Decision; labelKey: 'approve' | 'approveSession' | 'reject' }[] = [
+/** 选项行：统一为 批准 / 拒绝 / 回复补充（移除「本次会话允许」，简化用户决策） */
+const OPTION_DECISIONS: { value: Decision; labelKey: 'approve' | 'reject' }[] = [
   { value: 'approve', labelKey: 'approve' },
-  { value: 'approve_session', labelKey: 'approveSession' },
   { value: 'reject', labelKey: 'reject' },
 ]
 const optionsOf = computed(() =>
@@ -110,12 +109,37 @@ async function submitAll(): Promise<void> {
     submitting.value = false
   }
 }
+
+/** 一键批准所有审批（全部设为 approve 并立即提交） */
+async function approveAll(): Promise<void> {
+  if (submitting.value) return
+  submitting.value = true
+  try {
+    const decisions: Decision[] = props.interrupts.map(() => 'approve')
+    const payloads = props.interrupts.map(() => undefined)
+    await agent.resolveInterrupts(decisions, payloads)
+  } catch (err) {
+    ElMessage.error(String(err))
+  } finally {
+    submitting.value = false
+  }
+}
 </script>
 
 <template>
   <div class="approval-card">
     <div class="card-head">
       <el-tag type="warning" size="small">{{ t('agent.approvalTitle') }}</el-tag>
+      <el-button
+        v-if="total > 1"
+        type="warning"
+        size="small"
+        plain
+        :loading="submitting"
+        @click="approveAll"
+      >
+        {{ t('agent.approveAll') }}
+      </el-button>
     </div>
 
     <div class="q-block">
@@ -140,6 +164,11 @@ async function submitAll(): Promise<void> {
           </span>
           <span v-if="currentAnswer?.selected === opt.value" class="opt-check">✓</span>
         </button>
+
+        <!-- 无选项按钮时显示提示（如后端只允许 respond） -->
+        <div v-if="!optionsOf.length && (current?.decisions ?? []).includes('respond')" class="opt-hint">
+          <span class="muted">{{ t('agent.approvalRespondHint') }}</span>
+        </div>
 
         <div v-if="(current?.decisions ?? []).includes('respond')" class="opt-row custom-row">
           <span class="opt-no">{{ optionsOf.length + 1 }}</span>
@@ -240,6 +269,10 @@ async function submitAll(): Promise<void> {
 .opt-row.active {
   background: var(--el-color-warning);
   color: var(--el-color-white);
+}
+
+.opt-row.active:hover:not(:disabled) {
+  background: var(--el-color-warning);
 }
 
 .opt-row:disabled {

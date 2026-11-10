@@ -270,9 +270,15 @@ def build_export(
     out_root = exports_root()
     out_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-    zip_path = out_root / f"{safe_filename(title)}-{fmt}-{stamp}.zip"
 
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    # EPUB 格式直接输出 .epub 文件（本质是 ZIP，但扩展名必须是 .epub 才能被阅读器识别）
+    # 其他格式用 .zip 包装（含正文 + 大纲 + manifest）
+    if fmt == "epub":
+        out_path = out_root / f"{safe_filename(title)}-{stamp}.epub"
+    else:
+        out_path = out_root / f"{safe_filename(title)}-{fmt}-{stamp}.zip"
+
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         if fmt == "markdown":
             _write_markdown(zf, title, vols)
         elif fmt == "txt":
@@ -297,7 +303,7 @@ def build_export(
         )
 
     report(100)
-    return zip_path
+    return out_path
 
 
 def _manifest_json(title: str, fmt: str, vols: list[ExportVolume], has_outline: bool) -> str:

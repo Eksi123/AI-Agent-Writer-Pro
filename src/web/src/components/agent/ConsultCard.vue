@@ -38,6 +38,9 @@ const currentAnswer = computed(() => answers.value[page.value])
 
 function answeredAt(i: number): boolean {
   const a = answers.value[i]
+  const q = questions.value[i]
+  // 无选项且全局不允许文本输入的问题视为自动回答（用户无法操作）
+  if (q && (!q.options || q.options.length === 0) && !props.consult.allowText) return true
   return !!a && (a.selected.length > 0 || a.text.trim() !== '')
 }
 const answeredCount = computed(() => questions.value.filter((_q, i) => answeredAt(i)).length)
@@ -309,6 +312,10 @@ async function submitText(): Promise<void> {
 .opt-row.active {
   background: var(--el-color-primary);
   color: var(--el-color-white);
+}
+
+.opt-row.active:hover:not(:disabled) {
+  background: var(--el-color-primary);
 }
 
 .opt-row.active .muted {

@@ -3,10 +3,11 @@
 模块: app.cli
 文件名: cli.py
 作者: xionggaoqing
-时间: 2026-10-27
+时间: 2026-11-10
 说明: 命令行入口：`writer dev | migrate | rebuild-index | doctor`（手册「三、(1)」）。
 
-        uv run writer dev             # = uvicorn app.main:app --reload
+        uv run writer dev             # 开发模式：后端（reload）+ 前端（Vite HMR）双进程
+        uv run writer dev --backend-only  # 只启动后端
         uv run writer migrate         # = alembic upgrade head
         uv run writer rebuild-index   # 全量重建 story_fts / project_index
 """
@@ -18,7 +19,6 @@ import asyncio
 import sys
 from typing import Any
 
-import uvicorn
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
@@ -35,20 +35,32 @@ from app.services.exporters import pdf_available
 
 
 def _cmd_dev(args: argparse.Namespace) -> int:
-    """起 uvicorn（默认 127.0.0.1:8000）。"""
+    """开发模式：后端（reload）+ 前端（Vite HMR）双进程。
 
-
+    默认同时启动前后端；`--backend-only` 只启动后端。
+    """
     settings = get_settings()
     host = args.host or settings.app_host
     port = args.port or settings.app_port
-    uvicorn.run(
-        "app.main:app",
-        host=host,
-        port=port,
-        reload=not args.no_reload,
-        log_level=settings.log_level.lower(),
-    )
-    return 0
+
+    if args.backend_only:
+        # 只启动后端
+        import uvicorn
+        uvicorn.run(
+            "app.main:app",
+            host=host,
+            port=port,
+            reload=True,
+            log_level=settings.log_level.lower(),
+        )
+        return 0
+
+    # 启动前后端双进程
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_main_entry", PROJECT_ROOT / "main.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.run_dev(port, open_browser=not args.no_browser)
 
 
 def _cmd_migrate(_args: argparse.Namespace) -> int:
@@ -134,10 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_dev = sub.add_parser("dev", help="启动开发服务器（uvicorn --reload）")
-    p_dev.add_argument("--host", default=None)
-    p_dev.add_argument("--port", type=int, default=None)
-    p_dev.add_argument("--no-reload", action="store_true", help="禁用热重载")
+    p_dev = sub.add_parser("dev", help="启动开发服务器（后端 + 前端双进程）")
+    p_dev.add_argument("--host", default=None, help="后端监听地址（默认 127.0.0.1）")
+    p_dev.add_argument("--port", type=int, default=None, help="后端端口（默认 8000）")
+    p_dev.add_argument("--backend-only", action="store_true", help="只启动后端（不启动前端 Vite）")
+    p_dev.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     p_dev.set_defaults(func=_cmd_dev)
 
     p_mig = sub.add_parser("migrate", help="执行 alembic upgrade head")

@@ -8,7 +8,11 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883.svg)](https://vuejs.org/)
 
-> 面向开发 / 维护者的架构与实现细节见 [`Project-Develop.md`](./Project-Develop.md)。
+> 面向开发 / 维护者的完整技术细节见 [`docs/Project-Develop.md`](./docs/Project-Develop.md)。
+> 另有按主题提取的独立文档：
+> - [项目整体设计](./docs/Project-Overall-Design.md) — 大纲、架构、运行流程、前后端交互
+> - [Agent 核心设计](./docs/Agent-Core-Design.md) — 主体设计、工具、Harness、接口交互
+> - [缺陷复盘](./docs/Defect-Review.md) — 前后端与 Agent 设计中可能出现的漏洞与对策
 
 ---
 
@@ -250,7 +254,7 @@ ai-agent-writer-pro/
 ├─ Dockerfile / docker-compose.yml   多阶段镜像与编排
 ├─ src/
 │  ├─ app/                  后端（Python / FastAPI）
-│  │  ├─ api/               路由层：15 个模块 / 91 个端点，只做协议转换，不写业务
+│  │  ├─ api/               路由层：15 个模块 / 95 个端点，只做协议转换，不写业务
 │  │  ├─ services/          业务编排层：17 个模块（项目/卷章/正文/大纲/检索/导出/回收站/天气…）
 │  │  ├─ agent/             AI Agent（本项目技术核心），7 个顶层目录：
 │  │  │                     loop 运行核心（装配/运行/LLM调用/提示词/上下文） / subagents 子代理 /
@@ -262,7 +266,7 @@ ai-agent-writer-pro/
 │     ├─ views/ components/ 三栏工作台 + 通用设置 + AI 设置；回收站 / 导出 / 审批卡片等组件
 │     ├─ stores/            Pinia：project / editor / reader / agent / settings
 │     ├─ api/ i18n/ styles/ 类型化接口封装与 SSE 客户端、中文文案集中管理、主题变量
-├─ tests/                   pytest 22 个文件 / 510 用例（httpx 直连 ASGI + 假模型）
+├─ tests/                   pytest 23 个文件 / 510 用例（httpx 直连 ASGI + 假模型）
 └─ data/                    运行时数据（见 3.3）
 ```
 

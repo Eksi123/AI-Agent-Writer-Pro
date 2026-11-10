@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.db.models.agent
 文件名: agent.py
@@ -95,7 +95,7 @@ class AgentRun(Base):
     __table_args__ = (Index("ix_agent_runs_session", "session_id", "started_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(36), nullable=True, default="")
     project_id: Mapped[str] = mapped_column(String(36), nullable=False)
     #: pending|running|awaiting_approval|awaiting_consult|cancelling|cancelled|completed|failed
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
