@@ -236,6 +236,8 @@ const displayMessages = computed<DisplayMessage[]>(() => {
     .filter((m) => !isInternalMessage(m))
     // 本 run 本地持有的 steer 行由本地副本渲染（位置/编辑态），此处排除
     .filter((m) => !(m.kind === 'steer' && localSteerIds.has(m.id)))
+    // notice 消息（中间状态提示）不渲染为普通气泡，由专门的 notice 区域展示
+    .filter((m) => m.kind !== 'notice')
     .map((m) => ({
       key: m.id,
       // tool 消息保留独立角色——collapseTurns 视其为中间过程，
@@ -274,9 +276,21 @@ const displayMessages = computed<DisplayMessage[]>(() => {
       })
     }
   }
+  // 去重：相同内容的 user 消息只保留第一条（防止后端重复持久化或网络重试）
+  const seenUserContent = new Set<string>()
+  const deduped: DisplayMessage[] = []
+  for (const msg of shown) {
+    if (msg.role === 'user' && msg.kind !== 'steer') {
+      if (seenUserContent.has(msg.content)) {
+        continue // 跳过重复的 user 消息
+      }
+      seenUserContent.add(msg.content)
+    }
+    deduped.push(msg)
+  }
   // 中间思考/工具调用/子代理过程**永不展示在会话框中**（用户要求）；
   // 气泡里只保留每轮问答的最终总结回复。
-  return shown
+  return deduped
 })
 
 /**
@@ -287,6 +301,7 @@ const displayMessages = computed<DisplayMessage[]>(() => {
  *
  * ★ 运行中只隐藏**最后一轮**（当前正在处理的轮次）的中间过程；
  *   历史轮次的 user 消息和最终回复始终保留。
+ * ★ 审批暂停时（runPaused），隐藏所有轮次的中间过程，只保留 user 消息。
  */
 function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessage[] {
   const out: DisplayMessage[] = []
@@ -295,6 +310,11 @@ function collapseTurns(list: DisplayMessage[], isRunning: boolean): DisplayMessa
     if (!turn.length) return
     // 运行中且是最后一轮：隐藏中间过程（不输出 assistant/tool 消息）
     if (isRunning && isLastTurn && turn.some((m) => m.role !== 'user')) {
+      turn = []
+      return
+    }
+    // 审批暂停时：隐藏所有轮次的中间过程，只保留 user 消息
+    if (agent.runPaused && turn.some((m) => m.role !== 'user')) {
       turn = []
       return
     }

@@ -491,7 +491,6 @@ window.addEventListener('beforeunload', (e) => {
 
             <template v-else-if="editorStore.chapterId">
               <ConflictBanner />
-              <BackendOfflineBanner />
               <div class="editor-host">
                 <TiptapEditor
                   :chapter-id="editorStore.chapterId"
@@ -501,6 +500,9 @@ window.addEventListener('beforeunload', (e) => {
               </div>
             </template>
           </template>
+
+          <!-- 后端离线覆盖层（居中灰色图案，替代原来的红色横幅） -->
+          <BackendOfflineBanner />
 
           <!-- 章节正文加载窗口期（换章/刷新/热重载）→ 内容区居中动态蒙版，
                避免看到上一章内容或空内容。

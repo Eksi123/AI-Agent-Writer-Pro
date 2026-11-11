@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 模块: app.agent.tools.builtin.create_structure
 文件名: create_structure.py
@@ -194,7 +194,7 @@ async def create_volume(
     也不要用 mkdir 建 chapters/v* 目录——那样 id、sort_order 与时间戳都是错的。
 
     任一章创建失败会**整体回滚**（已建的章与本卷登记一并撤销），不会留下半截卷。
-    建完即可用 write_file 往 `chapters/v{卷id}/c{章id}.md` 写正文。
+    建完即可用 write_file 往 `/projects/{项目 id}/chapters/v{卷 id}/c{章 id}.md` 写正文。
 
     Args:
         title: 卷名（如「第一卷 谪凡间」）。**必须包含具体名称**，不允许纯序号（如「第一卷」会被拒绝）。
@@ -241,7 +241,7 @@ async def create_volume(
             "volume_id": vol_id,
             "volume_title": vol.get("title"),
             "chapters": created,
-            "hint": "正文请用 write_file 写入 chapters/v{volume_id}/c{chapter_id}.md",
+            "hint": f"正文请用 write_file 写入 /projects/{project_id}/chapters/v{vol_id}/c{{chapter_id}}.md",
         },
         ensure_ascii=False,
     )
@@ -302,7 +302,7 @@ async def create_chapter(
             "chapter_id": chapter_id,
             "title": ch.get("title"),
             "volume_id": vol_id,
-            "path": f"chapters/v{vol_id}/c{chapter_id}.md",
+            "path": f"/projects/{project_id}/chapters/v{vol_id}/c{chapter_id}.md",
             "hint": "正文请用 write_file 写入该路径。",
         },
         ensure_ascii=False,
@@ -547,3 +547,5 @@ __all__ = [
     "rename_chapter",
     "rename_volume",
 ]
+
+

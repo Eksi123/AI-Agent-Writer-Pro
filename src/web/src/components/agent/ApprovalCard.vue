@@ -110,19 +110,9 @@ async function submitAll(): Promise<void> {
   }
 }
 
-/** 一键批准所有审批（全部设为 approve 并立即提交） */
-async function approveAll(): Promise<void> {
-  if (submitting.value) return
-  submitting.value = true
-  try {
-    const decisions: Decision[] = props.interrupts.map(() => 'approve')
-    const payloads = props.interrupts.map(() => undefined)
-    await agent.resolveInterrupts(decisions, payloads)
-  } catch (err) {
-    ElMessage.error(String(err))
-  } finally {
-    submitting.value = false
-  }
+/** 一键预选批准所有审批（全部设为 approve，用户仍需点击「提交」确认） */
+function approveAll(): void {
+  answers.value = props.interrupts.map(() => ({ selected: 'approve' as Decision, text: '' }))
 }
 </script>
 
@@ -135,7 +125,6 @@ async function approveAll(): Promise<void> {
         type="warning"
         size="small"
         plain
-        :loading="submitting"
         @click="approveAll"
       >
         {{ t('agent.approveAll') }}
@@ -211,6 +200,7 @@ async function approveAll(): Promise<void> {
   display: flex;
   gap: 6px;
   align-items: center;
+  justify-content: space-between;
 }
 
 .muted {

@@ -148,7 +148,7 @@ async def list_skills(
     result: list[dict[str, Any]] = []
 
     rows = (
-        (await session.execute(select(SkillConfig).order_by(SkillConfig.created_at.asc()))).scalars().all()
+        (await session.execute(select(SkillConfig).order_by(SkillConfig.created_at.desc()))).scalars().all()
     )
     result.extend(_dto(r) for r in rows)
 
@@ -171,7 +171,7 @@ BUILTIN_TOOL_DTOS: list[dict[str, Any]] = [
     {"tool": "web_search", "label": "web_search", "description": "联网搜索（Wikipedia + DuckDuckGo 免 Key 双源）"},
     {"tool": "outline_grep", "label": "outline_grep", "description": "按需摘录大纲（精确摘录某章简介 + 关键词检索，渐进式披露省 token）"},
     {"tool": "ask_user", "label": "ask_user", "description": "多问题卡片向用户提问并等待回答（暂停 run，前端弹卡片）"},
-    # ---- 结构工具（只挂主 Agent，子代理不可用）----
+    # ---- 结构工具（子代理也可用）----
     {"tool": "create_volume", "label": "create_volume", "description": "新建卷（同时建好卷内各章，原子操作）"},
     {"tool": "create_chapter", "label": "create_chapter", "description": "在已有卷里新建一章"},
     {"tool": "rename_volume", "label": "rename_volume", "description": "改卷名（只改名字，不动顺序/正文）"},

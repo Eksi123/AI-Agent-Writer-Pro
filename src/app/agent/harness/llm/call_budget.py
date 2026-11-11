@@ -32,7 +32,9 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 #: 单 run 最多弹几次预算咨询（防反复打扰；超出后强制总结收尾）
-MAX_BUDGET_CONSULTS = 3
+#: 3 → 10：调用上限从 60 翻倍到 120，咨询次数同步放宽；
+#: 每次「继续思考」追加 20 次预算，10 次咨询 = 最多 200 次调用仍可控。
+MAX_BUDGET_CONSULTS = 10
 #: 每次「继续思考」追加的调用预算
 CONTINUE_GRANT = 20
 #: 送进摘要模型的历史渲染上限（字符）

@@ -21,10 +21,15 @@
     精炼结论（若也弹确认卡，用户要为同一次回顾点两次）。子代理读取的 token 成本
     天然有界——隔离上下文不进主对话，只有最终结论回传；具体范围由其 prompt 约束
     （摘要优先、正文按 offset/limit 节选）。
+
+    ★ 批量审批：同一 run 内短时间（200ms）的多个 read_file 请求合并为一张审批卡片，
+      用户一次批准即可读取所有文件，避免逐个点击。
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware
@@ -51,6 +56,9 @@ _READ_TOOLS = ("read_file", "grep", "glob")
 _OUTLINE_PREFIX = "/projects/{pid}/outline/"
 _CHAPTERS_PREFIX = "/projects/{pid}/chapters/"
 
+#: 批量审批收集窗口（秒）：同一 run 内 200ms 的多个 read 请求合并为一张卡片
+_BATCH_WINDOW_SEC = 0.2
+
 
 def _scope_of(virtual_path: str, project_id: str) -> str | None:
     """判定路径属于哪个受控读取域（None = 不受控，放行）。
@@ -75,6 +83,33 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
     def __init__(self, allowed_decisions: tuple[str, ...] = ("approve", "approve_session", "reject")) -> None:
         super().__init__()
         self.allowed_decisions = list(allowed_decisions)
+        #: run 级待审批队列：{run_id: [(tool_call_id, path, args, timestamp), ...]}
+        self._pending_reads: dict[str, list[tuple[str, str, dict, float]]] = {}
+        #: run 级批量审批锁（防止并发创建多个 interrupt）
+        self._batch_locks: dict[str, asyncio.Lock] = {}
+
+    async def _get_batch_lock(self, run_id: str) -> asyncio.Lock:
+        """获取 run 级批量审批锁（懒初始化）。"""
+        if run_id not in self._batch_locks:
+            self._batch_locks[run_id] = asyncio.Lock()
+        return self._batch_locks[run_id]
+
+    async def _collect_pending_reads(self, run_id: str, tool_call_id: str, path: str, args: dict) -> list[tuple[str, str, dict]]:
+        """收集短时间内的多个 read 请求，返回 (tool_call_id, path, args) 列表。"""
+        now = time.monotonic()
+        pending = self._pending_reads.setdefault(run_id, [])
+        pending.append((tool_call_id, path, args, now))
+
+        # 等待收集窗口，看是否有更多请求
+        await asyncio.sleep(_BATCH_WINDOW_SEC)
+
+        # 清理过期请求（超过 1 秒的视为独立请求）
+        cutoff = now - 1.0
+        self._pending_reads[run_id] = [(tc, p, a, t) for tc, p, a, t in pending if t > cutoff]
+
+        # 返回当前批次（所有在窗口内的请求）
+        result = [(tc, p, a) for tc, p, a, t in self._pending_reads[run_id] if t >= now - _BATCH_WINDOW_SEC]
+        return result
 
     async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
         tool_name = request.tool_call.get("name") or ""
@@ -111,41 +146,87 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
             await read_grants.grant(session_id, scope)
             return await handler(request)
 
-        # ④ 弹确认卡
+        # ④ 弹确认卡（批量审批）
         tool_call_id = request.tool_call.get("id") or ""
-        reason = f"AI 想读取{humanize_virtual_path(path)}"
-        existing = await find_decided(run_id, tool_call_id)
-        if existing is not None:
-            return await self._apply(existing, request, handler, tool_name, scope, session_id, reason)
 
-        payload = {
-            "kind": INTERRUPT_KIND,
-            "risk": "read_scope",
-            "reason": reason,
-            "tool_name": tool_name,
-            "args": _truncate_args(args),
-            "tool_call_id": tool_call_id,
-            "decisions": self.allowed_decisions,
-        }
-        interrupt_id = await create_interrupt(context, payload)
-        emit = getattr(context, "emit", None)
-        if emit is not None:
-            await emit.publish(
-                "interrupt.request",
-                {
-                    "interrupt_id": interrupt_id,
-                    "tool_name": tool_name,
-                    "args": payload["args"],
-                    "decisions": self.allowed_decisions,
+        # 使用 run 级锁防止并发创建多个 interrupt
+        lock = await self._get_batch_lock(run_id)
+        async with lock:
+            # 收集短时间内的多个 read 请求
+            pending_reads = await self._collect_pending_reads(run_id, tool_call_id, path, args)
+
+            # 检查是否已有决定（中断恢复重放）
+            existing = await find_decided(run_id, tool_call_id)
+            if existing is not None:
+                return await self._apply(existing, request, handler, tool_name, scope, session_id, path)
+
+            # 构建批量审批 payload
+            if len(pending_reads) == 1:
+                # 单个请求：保持原有逻辑
+                reason = f"AI 想读取{humanize_virtual_path(path)}"
+                payload = {
+                    "kind": INTERRUPT_KIND,
                     "risk": "read_scope",
                     "reason": reason,
-                },
-            )
-        await set_run_status(context, "awaiting_approval")
+                    "tool_name": tool_name,
+                    "args": _truncate_args(args),
+                    "tool_call_id": tool_call_id,
+                    "decisions": self.allowed_decisions,
+                    "batch_size": 1,
+                }
+            else:
+                # 批量请求：合并为一张卡片
+                paths_text = "、".join([humanize_virtual_path(p) for _, p, _ in pending_reads])
+                reason = f"AI 想读取以下 {len(pending_reads)} 个文件：{paths_text}"
+                payload = {
+                    "kind": INTERRUPT_KIND,
+                    "risk": "read_scope",
+                    "reason": reason,
+                    "tool_name": tool_name,
+                    "args": _truncate_args(args),  # 保留第一个请求的参数
+                    "tool_call_id": tool_call_id,
+                    "decisions": self.allowed_decisions,
+                    "batch_size": len(pending_reads),
+                    "batch_paths": [p for _, p, _ in pending_reads],
+                    "batch_tool_call_ids": [tc for tc, _, _ in pending_reads],
+                }
 
-        decision = interrupt(payload)
-        record = await record_decision(run_id, tool_call_id, interrupt_id, decision)
-        return await self._apply(record, request, handler, tool_name, scope, session_id, reason)
+            interrupt_id = await create_interrupt(context, payload)
+            emit = getattr(context, "emit", None)
+            if emit is not None:
+                await emit.publish(
+                    "interrupt.request",
+                    {
+                        "interrupt_id": interrupt_id,
+                        "tool_name": tool_name,
+                        "args": payload["args"],
+                        "decisions": self.allowed_decisions,
+                        "risk": "read_scope",
+                        "reason": reason,
+                        "batch_size": payload.get("batch_size", 1),
+                    },
+                )
+            await set_run_status(context, "awaiting_approval")
+
+            decision = interrupt(payload)
+            record = await record_decision(run_id, tool_call_id, interrupt_id, decision)
+
+            # 批量审批：如果是 approve_session，需要为所有路径授权
+            if decision == "approve_session" and "batch_paths" in payload:
+                for batch_path in payload["batch_paths"]:
+                    batch_scope = _scope_of(batch_path, project_id)
+                    if batch_scope:
+                        await read_grants.grant(session_id, batch_scope)
+
+            # 清理已处理的待审批队列
+            if run_id in self._pending_reads:
+                batch_tool_call_ids = set(payload.get("batch_tool_call_ids", [tool_call_id]))
+                self._pending_reads[run_id] = [
+                    (tc, p, a, t) for tc, p, a, t in self._pending_reads[run_id]
+                    if tc not in batch_tool_call_ids
+                ]
+
+        return await self._apply(record, request, handler, tool_name, scope, session_id, path)
 
     async def _apply(
         self,
@@ -155,7 +236,7 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
         tool_name: str,
         scope: str,
         session_id: str,
-        reason: str,
+        path: str,
     ) -> Any:
         decision = record.get("decision") or "approve"
         tool_call_id = request.tool_call.get("id") or ""
@@ -168,7 +249,7 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
             return await handler(request)
         return ToolMessage(
             content=(
-                f"用户未允许读取该内容（{reason}）。请改用 outline_grep 工具获取大纲摘录，"
+                f"用户未允许读取该内容（AI 想读取{humanize_virtual_path(path)}）。请改用 outline_grep 工具获取大纲摘录，"
                 "或直接在回答里询问用户是否需要读取相关章节。"
             ),
             tool_call_id=tool_call_id,

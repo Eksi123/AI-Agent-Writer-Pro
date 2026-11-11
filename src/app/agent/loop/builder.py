@@ -82,7 +82,8 @@ INTERRUPT_ON: dict[str, Any] = {}
 #: 单次 run 的 LLM 调用软上限（硬上限另经 config recursion_limit）。
 #: 40 → 60：整篇大纲分卷写入等长任务 40 次不够（实测 28 次调用 + 收尾守护已逼近），
 #: 浪费型循环另有 WastefulLoopGuard 熔断，不靠压低上限兜底。
-DEFAULT_MODEL_CALL_LIMIT = 60
+#: 60 → 120：多章正文生成 + 子代理委派步数多，60 易触顶；超限后有 consult 询问用户。
+DEFAULT_MODEL_CALL_LIMIT = 120
 
 #: 系统提示里梗概的注入上限（每轮模型调用都重发，长梗概改由 AI 按需读 novel.yaml）
 _SYNOPSIS_LIMIT = 120
@@ -98,7 +99,7 @@ async def load_subagent_specs(session: AsyncSession) -> list[dict[str, Any]]:
     return await load_user_specs(session)
 
 
-#: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search），
+#: 子代理可选的内置工具。键为 UI 展示名（read/write/edit/list/grep/glob/web_search/outline_grep/ask_user），
 #: 值为 deepagents FilesystemMiddleware 的工具名；`web_search` / `outline_grep` /
 #: `ask_user` / 结构工具走自研 registry（非文件工具，作为 extra 工具实例下发）。
 _FS_TOOL_ALIASES = {
@@ -152,9 +153,10 @@ def build_subagents_from_specs(
 ) -> list[Any]:
     """把子代理 spec 列表装配为 deepagents `SubAgent` 列表（model_ref 预解析为 ChatModel 实例）。
 
-    `spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search）。
+    `spec["tools"]` 为勾选的内置工具名（read/edit/list/grep/glob/web_search/outline_grep/ask_user/结构工具）。
     非空时把子代理的工具集收窄为这些工具——文件类工具经
-    `FilesystemMiddleware(tools=[...])` 限定，`web_search` 直接给工具实例。
+    `FilesystemMiddleware(tools=[...])` 限定，非文件工具（`web_search` / `outline_grep` / `ask_user` / 结构工具）
+    直接作为工具实例下发。
 
     `default_model`：子代理未配 model_ref（或解析失败）时回落主模型——
     deepagents `create_sub_agent` 要求 spec 必带 `model`，缺失会抛 ValueError。

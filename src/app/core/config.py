@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.core.config
 文件名: config.py
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     #: 子代理开关（测试可关闭以聚焦主循环）
     agent_subagents_enabled: bool = True
     #: 单次 run 的 LLM 调用软上限
-    agent_model_call_limit: int = 60
+    agent_model_call_limit: int = 120
     #: LangGraph 硬上限（recursion_limit）；提高：多卷章节生成/子代理委派步数多，60 易触顶
     agent_recursion_limit: int = 150
     #: 流程 S2 单章生成目标字数

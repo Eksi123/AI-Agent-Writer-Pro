@@ -30,8 +30,10 @@ const mode = computed({
   set: (v) => reader.setMode(v),
 })
 
-/** 后端未连通时给出提示（FTS5 降级 / 服务未启动） */
+/** 后端未连通时给出提示（FTS5 降级）；后端离线由 BackendOfflineBanner 居中图案处理，不再在此显示 */
 const backendHint = computed(() => {
+  // 后端离线错误已由 BackendOfflineBanner 居中灰色图案处理，此处不再重复显示
+  if (settings.error && (settings.error.includes('50001') || settings.error.includes('后端未连接') || settings.error.includes('uvicorn'))) return ''
   if (settings.error) return settings.error
   if (settings.health && !settings.fts5Available) return t('health.fts5Degraded')
   return ''

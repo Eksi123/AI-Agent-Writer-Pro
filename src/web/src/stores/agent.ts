@@ -433,13 +433,22 @@ export const useAgentStore = defineStore('agent', () => {
 
   /** 由未决中断清单恢复审批/咨询卡片（进入会话与暂停态 run.end 共用）。
    * ★ 与现有 pendingInterrupts 合并去重，避免覆盖 SSE 新推送的中断。
+   * ★ 按内容去重：相同 reason + itemLabel 的中断只保留第一个（防止后端重复创建）。
    */
   function restorePendingCards(items: AgentInterruptDto[]): void {
     const existingIds = new Set(pendingInterrupts.value.map((p) => p.interruptId))
+    const existingContent = new Set(
+      pendingInterrupts.value.map((p) => `${p.reason || ''}|${p.itemLabel || ''}`)
+    )
     for (const it of items) {
       // 已存在的中断跳过（SSE 可能已推送）
       if (existingIds.has(it.id)) continue
       const payload = (typeof it.payload === 'object' && it.payload !== null ? it.payload : {}) as Record<string, unknown>
+      const reason = (payload.reason as string | undefined) ?? it.reason
+      const itemLabel = (payload.item_label as string | undefined) ?? it.itemLabel
+      const contentKey = `${reason || ''}|${itemLabel || ''}`
+      // 内容相同的中断跳过（防止后端重复创建）
+      if (existingContent.has(contentKey)) continue
       if (it.type === 'approval') {
         pendingInterrupts.value = [
           ...pendingInterrupts.value,
@@ -449,12 +458,13 @@ export const useAgentStore = defineStore('agent', () => {
             args: (payload.args as Record<string, unknown> | null) ?? null,
             decisions: (payload.decisions as string[]) ?? ['approve', 'edit', 'reject', 'respond'],
             risk: payload.risk as string | undefined,
-            reason: payload.reason as string | undefined,
-            itemLabel: (payload.item_label as string | undefined) ?? undefined,
+            reason,
+            itemLabel,
             path: (payload.path as string | undefined) ?? undefined,
           },
         ]
         existingIds.add(it.id)
+        existingContent.add(contentKey)
       } else if (!pendingConsult.value || pendingConsult.value.interruptId !== it.id) {
         // 咨询卡片只有一个，只在不存在或 id 不同时覆盖
         pendingConsult.value = {
@@ -500,9 +510,18 @@ export const useAgentStore = defineStore('agent', () => {
         running.value = true
         runPaused.value = lr.status === 'awaiting_approval' || lr.status === 'awaiting_consult'
         markSessionRunning(sessionId)
+        // ★ 先清空再恢复，防止已处理的中断卡片残留
+        pendingInterrupts.value = []
+        pendingConsult.value = null
         restorePendingCards(lr.pending_interrupts ?? [])
         // 重连事件流：缓冲仍在则续传，已丢则 onBufferLost 回落重拉消息树
         startStream(lr.run_id)
+      } else {
+        // run 已结束或不存在：清除所有卡片和运行态
+        pendingInterrupts.value = []
+        pendingConsult.value = null
+        runPaused.value = false
+        running.value = false
       }
     } catch (err) {
       setError(err)
@@ -852,8 +871,9 @@ export const useAgentStore = defineStore('agent', () => {
 
   /**
    * 批量提交审批决策：`decisions` 与 `pendingInterrupts` 一一对应（缺省 approve）。
-   * 顺序 resolve 各中断；首个成功后续跑流，其余 resolve 在 resume 重放时按已决行生效。
+   * ★ 只 resolve 第一个中断，后端 resume 时会按已决行处理其余中断（避免 run 结束后重复调用报错）。
    * ★ 失败的中断保留在 pendingInterrupts 中，用户可重新处理。
+   * ★ run 已结束时静默处理，不显示错误（用户重新发送消息即可）。
    */
   async function resolveInterrupts(
     decisions: ('approve' | 'approve_session' | 'edit' | 'reject' | 'respond')[],
@@ -861,24 +881,29 @@ export const useAgentStore = defineStore('agent', () => {
   ): Promise<void> {
     const queue = [...pendingInterrupts.value]
     if (!queue.length) return
-    const resolvedIds: string[] = []
-    let firstError: unknown = null
-    for (let i = 0; i < queue.length; i++) {
-      const decision = decisions[i] ?? 'approve'
-      const payload = payloads?.[i]
-      try {
-        await agentApi.resolveInterrupt(queue[i].interruptId, { decision, ...payload })
-        resolvedIds.push(queue[i].interruptId)
-      } catch (err) {
-        firstError = firstError ?? err
+
+    // 只 resolve 第一个中断，其余由后端 resume 时处理
+    const firstDecision = decisions[0] ?? 'approve'
+    const firstPayload = payloads?.[0]
+    try {
+      const result = await agentApi.resolveInterrupt(queue[0].interruptId, { decision: firstDecision, ...firstPayload })
+      // run 已结束：静默处理，不显示错误（result 结构：{ code, message, data: { run_ended, ... } }）
+      if (result?.data?.run_ended) {
+        pendingInterrupts.value = []
+        running.value = false
+        runPaused.value = false
+        if (currentSessionId.value) markSessionIdle(currentSessionId.value)
+        return
       }
-    }
-    // 只移除已成功 resolve 的中断，失败的保留在列表中供用户重新处理
-    pendingInterrupts.value = pendingInterrupts.value.filter((p) => !resolvedIds.includes(p.interruptId))
-    if (firstError) {
-      setError(firstError)
+    } catch (err) {
+      // 第一个就失败了，保留所有中断供用户重新处理
+      setError(err)
       return
     }
+
+    // 第一个成功后，移除所有中断（后端会处理其余已决中断）
+    pendingInterrupts.value = []
+
     // resume 会重开流；重新订阅（seq 续增）
     if (currentRunId) {
       running.value = true
@@ -899,11 +924,19 @@ export const useAgentStore = defineStore('agent', () => {
     if (!pendingConsult.value) return
     const id = pendingConsult.value.interruptId
     try {
-      await agentApi.resolveInterrupt(id, {
+      const result = await agentApi.resolveInterrupt(id, {
         decision,
         choice: decision === 'option' ? value : undefined,
         text: decision === 'text' ? value : undefined,
       })
+      // run 已结束：静默处理
+      if (result?.data?.run_ended) {
+        pendingConsult.value = null
+        running.value = false
+        runPaused.value = false
+        if (currentSessionId.value) markSessionIdle(currentSessionId.value)
+        return
+      }
       // 成功后才清空卡片
       pendingConsult.value = null
       if (currentRunId) {

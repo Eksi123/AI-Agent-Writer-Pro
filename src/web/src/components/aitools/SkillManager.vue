@@ -19,9 +19,9 @@ import { t } from '@/i18n'
 const loading = ref(false)
 const skills = ref<SkillDto[]>([])
 
-/** 内置工具在前、自建技能在后 */
+/** 自建技能在前、内置工具在后 */
 const sortedSkills = computed(() =>
-  [...skills.value].sort((a, b) => Number(b.is_builtin) - Number(a.is_builtin)),
+  [...skills.value].sort((a, b) => Number(a.is_builtin) - Number(b.is_builtin)),
 )
 
 const dialogVisible = ref(false)

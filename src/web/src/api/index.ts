@@ -543,7 +543,7 @@ export const agentApi = {
       choice?: string
       text?: string
     },
-  ) => post<{ interrupt_id: string; run_id: string; resumed: boolean }>(
+  ) => post<{ interrupt_id: string; run_id: string; resumed: boolean; run_ended?: boolean; run_status?: string }>(
     `/agent/interrupts/${interruptId}/resolve`,
     payload,
   ),

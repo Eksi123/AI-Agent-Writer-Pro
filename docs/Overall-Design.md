@@ -135,7 +135,7 @@ AI Agent Writer Pro
 | `api/ → agent/`      | ✅ **仅运行入口**       | 只 `api/agent.py` 持有 `run_manager` + `sse_bus`（起 run / 订阅流）；`api/chapters.py` 持 `rewrite`（服务层直连 LLM 的选区改写） |
 | `agent/ → services/` | ✅ 允许方向                   | workflows / knowledge / loop / more/mcp 用业务服务                                                                                         |
 | `services/ → agent/` | ⚠️ **两处文档化例外** | ① `services/agent.py` → `agent.tracing.messages`（消息树读写）② `services/search.py` → `agent.loop.knowledge`（章节摘要生成）  |
-| `core/ → agent/`     | ✅ 仅惰性访问器               | `core/catalog.py` 提供函数级惰性读取内置子代理目录                                                                                         |
+| `core/ → agent/`     | ✅ 仅惰性访问器               | `core/catalog.py` 提供函数级惰性读取内置子代理目录                                                                                       |
 
 ---
 
@@ -186,23 +186,23 @@ src/web/src/
 
 统一前缀 `/api/v1`，**95 个端点**，分 15 组：
 
-| 组            | 端点数 | 代表路径                                                                                                                                                                                       |
-| ------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 组            | 端点数 | 代表路径                                                                                                                                                                                                                                  |
+| ------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`     | 19     | `GET/POST /agent/sessions`、`/{sid}/messages`(202)、`/{sid}/branch`、`/{sid}/context`、`/runs/{id}`、`/runs/{id}/stream`(SSE)、`/runs/{id}/cancel`、`/runs/{id}/steer`(CRUD)、`/interrupts/{id}/resolve`、`/usage`(3) |
-| `novels`    | 15     | `GET/POST /novels`、`PATCH/DELETE /novels/{id}`、`/duplicate`、`/export`、`/index/rebuild`、`/reading-progress`、`/workspace-summary`、export-tasks(CRUD)                              |
-| `llm`       | 12     | `/llm/providers` CRUD + `/test`、`/llm/models` CRUD + `/llm/overview`、`/config/reload`                                                                                              |
-| `volumes`   | 9      | `/novels/{id}/volumes`、`/volumes/renumber`、`/volumes/{vid}/chapters`、`/chapters/{cid}`                                                                                                   |
-| `mcp`       | 6      | `/mcp-servers` CRUD + `/probe` + `/confirm`                                                                                                                                              |
-| `chapters`  | 5      | `GET/PUT /{cid}/content`（乐观锁）、`/locks`、`/revisions`、`/restore`                                                                                                                       |
-| `skills`    | 5      | `/skills` CRUD + `/resync`                                                                                                                                                                 |
-| `subagents` | 5      | `/subagents` CRUD + `/reset`                                                                                                                                                               |
-| `recycle`   | 4      | 回收站：`GET /recycle`、`GET /recycle/{id}`、`POST /recycle/{id}/chapters/{cid}/restore`、`DELETE /recycle/{id}/chapters/{cid}`                                                        |
-| `story`     | 4      | `/search`、`/summaries/rebuild`、`/audit`、`/export-preflight`                                                                                                                             |
-| `outline`   | 3      | `GET/PUT /outline`、`/outline/validate`                                                                                                                                                     |
-| `settings`  | 3      | `GET/PUT /settings`、`POST /settings/reset`                                                                                                                                                 |
-| `widgets`   | 3      | `/widgets/city`、`/pet-state`、`/weather`                                                                                                                                                   |
-| `audit`     | 1      | `GET /audit-logs`（只读）                                                                                                                                                                    |
-| `health`    | 1      | `GET /health`                                                                                                                                                                                |
+| `novels`    | 15     | `GET/POST /novels`、`PATCH/DELETE /novels/{id}`、`/duplicate`、`/export`、`/index/rebuild`、`/reading-progress`、`/workspace-summary`、export-tasks(CRUD)                                                                   |
+| `llm`       | 12     | `/llm/providers` CRUD + `/test`、`/llm/models` CRUD + `/llm/overview`、`/config/reload`                                                                                                                                         |
+| `volumes`   | 9      | `/novels/{id}/volumes`、`/volumes/renumber`、`/volumes/{vid}/chapters`、`/chapters/{cid}`                                                                                                                                         |
+| `mcp`       | 6      | `/mcp-servers` CRUD + `/probe` + `/confirm`                                                                                                                                                                                         |
+| `chapters`  | 5      | `GET/PUT /{cid}/content`（乐观锁）、`/locks`、`/revisions`、`/restore`                                                                                                                                                            |
+| `skills`    | 5      | `/skills` CRUD + `/resync`                                                                                                                                                                                                            |
+| `subagents` | 5      | `/subagents` CRUD + `/reset`                                                                                                                                                                                                          |
+| `recycle`   | 4      | 回收站：`GET /recycle`、`GET /recycle/{id}`、`POST /recycle/{id}/chapters/{cid}/restore`、`DELETE /recycle/{id}/chapters/{cid}`                                                                                                   |
+| `story`     | 4      | `/search`、`/summaries/rebuild`、`/audit`、`/export-preflight`                                                                                                                                                                    |
+| `outline`   | 3      | `GET/PUT /outline`、`/outline/validate`                                                                                                                                                                                               |
+| `settings`  | 3      | `GET/PUT /settings`、`POST /settings/reset`                                                                                                                                                                                           |
+| `widgets`   | 3      | `/widgets/city`、`/pet-state`、`/weather`                                                                                                                                                                                           |
+| `audit`     | 1      | `GET /audit-logs`（只读）                                                                                                                                                                                                               |
+| `health`    | 1      | `GET /health`                                                                                                                                                                                                                           |
 
 ### 4.2 通用约定
 
@@ -254,13 +254,13 @@ GET  /runs/{id}/stream  →  订阅这个 run 的事件流
 
 **Pinia 五 store 分工**：
 
-| store        | 职责                                                                                                                                                                                                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `project`  | 项目列表 / 当前项目 / 卷章树 / 展平章序列 / 卷 CRUD                                                                                                                                                          |
-| `editor`   | 打开章的 draft + base_version / dirty / 自动保存 / 409 冲突态 / 修订快照列表与回滚 / **回退编辑栈**（上限 5 条）                                                                                              |
-| `reader`   | 模式（read/edit）/ 目录抽屉开关 / 当前章或大纲节点 / 夜间模式                                                                                                                                                 |
-| `agent`    | 会话列表与当前会话 / 消息 + 流式增量合并 / SSE 客户端 / 运行·取消·追加引导·流程生成 / 待审批 interrupt 与 consult / todos / 流程状态 / fileChanged / 用量                                                     |
-| `settings` | user_settings 加载与保存 / health 自检                                                                                                                                                                                                                                         |
+| store        | 职责                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `project`  | 项目列表 / 当前项目 / 卷章树 / 展平章序列 / 卷 CRUD                                                                                                          |
+| `editor`   | 打开章的 draft + base_version / dirty / 自动保存 / 409 冲突态 / 修订快照列表与回滚 / **回退编辑栈**（上限 5 条）                                       |
+| `reader`   | 模式（read/edit）/ 目录抽屉开关 / 当前章或大纲节点 / 夜间模式                                                                                                |
+| `agent`    | 会话列表与当前会话 / 消息 + 流式增量合并 / SSE 客户端 / 运行·取消·追加引导·流程生成 / 待审批 interrupt 与 consult / todos / 流程状态 / fileChanged / 用量 |
+| `settings` | user_settings 加载与保存 / health 自检                                                                                                                       |
 
 **通信约定**：
 

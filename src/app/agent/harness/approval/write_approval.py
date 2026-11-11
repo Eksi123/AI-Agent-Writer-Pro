@@ -189,7 +189,7 @@ def humanize_delete_reason(virtual_path: str) -> str:
     return f"删除{humanize_virtual_path(virtual_path)}，删除后不可恢复"
 
 
-def classify_risk(tool_name: str, args: dict[str, Any]) -> tuple[str | None, str]:
+def classify_risk(project_id: str, tool_name: str, args: dict[str, Any]) -> tuple[str | None, str]:
     """判定是否高危。**只有删除卷章**（`delete_volume` / `delete_chapter`）。
 
     本应用是 AI 写小说，编辑大纲 / 生成卷章正文 / 整章覆盖都属常规操作，
@@ -197,22 +197,29 @@ def classify_risk(tool_name: str, args: dict[str, Any]) -> tuple[str | None, str
     提示风险操作，由用户三选一：批准 / 拒绝 / 补充要求。
 
     卷/章的标识从工具参数里取（`volume` / `chapter`），用于生成人话文案。
+    优先用事实源标题（volumes.yaml / frontmatter），ID 解析失败时回退为原始值。
 
     Returns:
         (risk_kind, reason)；`risk_kind` 为 None 表示放行。
     """
     if tool_name == "delete_volume":
         volume = str(args.get("volume") or "").strip()
-        reason = f"删除卷「{volume}」及其下全部章节，删除后不可恢复" if volume else "删除卷及其下全部章节，删除后不可恢复"
+        vol_title = _vol_title(project_id, volume) if volume and project_id else volume
+        display = vol_title or volume or "某一卷"
+        reason = f"删除卷「{display}」及其下全部章节，删除后不可恢复"
         return "delete", reason
 
     if tool_name == "delete_chapter":
         chapter = str(args.get("chapter") or "").strip()
         volume = str(args.get("volume") or "").strip()
-        if volume:
-            reason = f"删除卷「{volume}」中的章「{chapter}」，删除后不可恢复" if chapter else f"删除卷「{volume}」中的某一章，删除后不可恢复"
+        vol_title = _vol_title(project_id, volume) if volume and project_id else volume
+        ch_title = _ch_title(project_id, volume, chapter) if chapter and volume and project_id else chapter
+        vol_display = vol_title or volume
+        ch_display = ch_title or chapter
+        if vol_display:
+            reason = f"删除卷「{vol_display}」中的章「{ch_display}」，删除后不可恢复" if ch_display else f"删除卷「{vol_display}」中的某一章，删除后不可恢复"
         else:
-            reason = f"删除章「{chapter}」，删除后不可恢复" if chapter else "删除章节，删除后不可恢复"
+            reason = f"删除章「{ch_display}」，删除后不可恢复" if ch_display else "删除章节，删除后不可恢复"
         return "delete", reason
 
     return None, ""
@@ -247,11 +254,13 @@ class WriteApprovalMiddleware(AgentMiddleware):
         args = dict(request.tool_call.get("args") or {})
         tool_call_id = request.tool_call.get("id") or ""
 
-        risk_kind, reason = classify_risk(tool_name, args)
+        context = getattr(request.runtime, "context", None)
+        project_id = str(getattr(context, "project_id", "") or "")
+
+        risk_kind, reason = classify_risk(project_id, tool_name, args)
         if risk_kind is None:
             return await handler(request)
 
-        context = getattr(request.runtime, "context", None)
         run_id = getattr(context, "run_id", "") or ""
 
         # 已有决定（中断恢复重放）→ 直接执行，不重复中断
@@ -261,7 +270,7 @@ class WriteApprovalMiddleware(AgentMiddleware):
 
         # 结构工具（delete_volume/delete_chapter）没有虚拟路径参数，用工具名+参数构造人话
         path = normalize_virtual_path(str(args.get("file_path") or args.get("path") or ""))
-        item_label = self._humanize_structure_tool(tool_name, args) if not path else humanize_virtual_path(path)
+        item_label = self._humanize_structure_tool(project_id, tool_name, args) if not path else humanize_virtual_path(path)
 
         payload = {
             "kind": INTERRUPT_KIND,
@@ -301,17 +310,44 @@ class WriteApprovalMiddleware(AgentMiddleware):
         record = await self._record_decision(run_id, tool_call_id, interrupt_id, decision)
         return await self._apply(record, request, handler, tool_name, args)
 
-    def _humanize_structure_tool(self, tool_name: str, args: dict[str, Any]) -> str:
+    def _resolve_vol_title(self, project_id: str, volume: str) -> str:
+        """把卷 id 或卷名解析为卷名（优先用事实源标题）。"""
+        if not volume:
+            return ""
+        # 先尝试作为 ID 解析
+        title = _vol_title(project_id, volume)
+        if title:
+            return title
+        # 否则当作卷名直接使用
+        return volume
+
+    def _resolve_ch_title(self, project_id: str, vol_id: str, chapter: str) -> str:
+        """把章 id 或章名解析为章名（优先用事实源标题）。"""
+        if not chapter:
+            return ""
+        # 先尝试作为 ID 解析（需要卷 ID）
+        if vol_id:
+            title = _ch_title(project_id, vol_id, chapter)
+            if title:
+                return title
+        # 否则当作章名直接使用
+        return chapter
+
+    def _humanize_structure_tool(self, project_id: str, tool_name: str, args: dict[str, Any]) -> str:
         """结构工具的人话标签（审批卡展示用）。"""
         if tool_name == "delete_volume":
             volume = str(args.get("volume") or "").strip()
-            return f"卷「{volume}」" if volume else "某一卷"
+            vol_title = self._resolve_vol_title(project_id, volume)
+            return f"卷「{vol_title}」" if vol_title else "某一卷"
         if tool_name == "delete_chapter":
             chapter = str(args.get("chapter") or "").strip()
             volume = str(args.get("volume") or "").strip()
-            if volume:
-                return f"卷「{volume}」中的章「{chapter}」" if chapter else f"卷「{volume}」中的某一章"
-            return f"章「{chapter}」" if chapter else "某一章"
+            # 先解析卷，获取卷 ID 用于解析章
+            vol_title = self._resolve_vol_title(project_id, volume)
+            ch_title = self._resolve_ch_title(project_id, volume, chapter)
+            if vol_title:
+                return f"卷「{vol_title}」中的章「{ch_title}」" if ch_title else f"卷「{vol_title}」中的某一章"
+            return f"章「{ch_title}」" if ch_title else "某一章"
         return tool_name
 
     # ---- 决定应用 ----

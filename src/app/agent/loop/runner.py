@@ -578,9 +578,14 @@ async def _execute_run(
                     final_status = "cancelled"
 
     except asyncio.CancelledError:
+        # ★ 规范化取消：asyncio.CancelledError 只可能是用户主动停止（cancel API 置 flag 后 task.cancel()）
+        # 或进程退出。统一当「用户主动停止」处理，不抛异常，优雅收尾。
         final_status = "cancelled"
-        error_text = "运行已取消"
-        raise
+        error_text = None
+        logger.info("agent_run_cancelled", run_id=run_id)
+        await _adopt_pending_steers(session_id, run_id)
+        await _append_notice(session_id, run_id, notice_text_for("cancelled"))
+        await sse_bus.publish(run_id, session_id, "run.notice", {"content": notice_text_for("cancelled"), "kind": "cancelled"})
     except GraphRecursionError as exc:
       # 步数触顶不再当「服务端内部错误」——优雅收尾：
         # 落一条 assistant 说明消息 + 正常 completed，避免用户看到 50001 灰卡。

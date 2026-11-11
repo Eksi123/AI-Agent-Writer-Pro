@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.subagents
 文件名: subagents.py
@@ -132,7 +132,7 @@ async def list_subagents(session: AsyncSession) -> list[dict[str, Any]]:
         (
             await session.execute(
                 select(SubagentConfig).order_by(
-                    SubagentConfig.is_builtin.desc(), SubagentConfig.created_at.asc()
+                    SubagentConfig.is_builtin.asc(), SubagentConfig.created_at.desc()
                 )
             )
         )

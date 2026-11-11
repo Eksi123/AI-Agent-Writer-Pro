@@ -21,8 +21,8 @@ SPEC: dict[str, Any] = {
     "label": "Recaller",
     "description": "回顾者：提取前情提要、人物状态与伏笔线索，只回传摘要。要回顾已写内容时委派。",
     "skills": [],
-    #: 只读回顾：摘要/正文检索 + 大纲按需摘录，不给写工具
-    "tools": ["read_file", "grep", "glob", "outline_grep"],
+    #: 只读回顾：摘要/正文检索 + 大纲按需摘录 + ask_user 不确定时询问用户，不给写工具
+    "tools": ["read_file", "grep", "glob", "outline_grep", "ask_user"],
     "workflows": [],
     "mode": "isolated",
 }

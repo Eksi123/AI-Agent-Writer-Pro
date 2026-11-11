@@ -81,8 +81,14 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
     `run.tokens_in` 是收尾时整体赋值（非累加），逐 run 求和不会重复计数。
 
     ★ 删除会话时 run 记录保留（session_id 清空），仍计入项目级 token 统计。
+    ★ session_count 与 list_sessions 返回的条数一致（同查询条件），避免前端
+      「N 个会话」标题与实际展示的会话列表条数不一致。
     """
-    # 统计所有会话（包括已删除会话的孤儿 run）
+    # 用与 list_sessions 相同的查询条件统计会话数
+    stmt = select(func.count(AgentSession.id)).where(AgentSession.project_id == project_id)
+    session_count = (await db.execute(stmt)).scalar() or 0
+
+    # 获取所有会话 ID 用于查询 run
     sessions = (
         (await db.execute(select(AgentSession).where(AgentSession.project_id == project_id))).scalars().all()
     )
@@ -127,7 +133,7 @@ async def project_usage(db: AsyncSession, project_id: str) -> dict[str, Any]:
 
     return {
         "project_id": project_id,
-        "session_count": len(session_ids),
+        "session_count": session_count,
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "tokens_total": tokens_in + tokens_out,

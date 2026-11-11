@@ -22,9 +22,11 @@ SPEC: dict[str, Any] = {
     "description": "撰写修改：按大纲章简介生成/续写正文，也做润色校对；负责建卷/建章/改名等结构操作。要生成或打磨正文时委派。",
     "skills": [],
     #: 默认内置工具（按职能）：写正文必须能读大纲/前章并落盘章节文件；
+    #: outline_grep 按需摘录大纲简介（省 token），ask_user 不确定时询问用户；
     #: 结构工具（create/rename）用于建卷/建章/改名
     "tools": [
         "read_file", "write_file", "edit_file", "ls", "grep", "glob",
+        "outline_grep", "ask_user",
         "create_volume", "create_chapter", "rename_volume", "rename_chapter",
     ],
     #: workflows 绑定：四阶段固定流程的 S2 生成阶段由 writer 执行

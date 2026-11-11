@@ -21,8 +21,8 @@ SPEC: dict[str, Any] = {
     "label": "Reviewer",
     "description": "审查者：核查大纲结构、时间线/设定/伏笔一致性与正文匹配度。要检查质量时委派。",
     "skills": [],
-    #: 默认内置工具（按职能）：只读审查——检索证据不需要写工具
-    "tools": ["read_file", "ls", "grep", "glob"],
+    #: 默认内置工具（按职能）：只读审查 + outline_grep 摘录大纲 + ask_user 不确定时询问用户
+    "tools": ["read_file", "ls", "grep", "glob", "outline_grep", "ask_user"],
     #: workflows 绑定：流程 S1/S3 校验 + 全书一致性审查同域
     "workflows": ["writing_steps", "book_consistency"],
     "mode": "isolated",

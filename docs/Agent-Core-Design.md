@@ -91,18 +91,18 @@ agent/
 
 `build_agent()` 调用 `create_deep_agent()` 装配完整 Agent，核心参数：
 
-| 参数              | 本项目的值                                                                     |
-| ----------------- | ------------------------------------------------------------------------------ |
-| `model`         | 用户配置的模型（可多级降级，`resolve_models()` 预解析 ChatModel 实例）       |
-| `backend`       | `CompositeBackend`：3 条虚拟路径路由                                         |
-| `permissions`   | 8 条有序规则，兜底 `deny /**`                                                |
-| `tools`         | `web_search` / `outline_grep` / `ask_user` / 6 个结构工具 + 天气 MCP        |
-| `skills`        | `["/skills/user/"]` + 会话精选 `/skills/session-{sid}/`                      |
-| `subagents`     | 5 个内置子代理（planner/writer/reviewer/web-searcher/recaller）              |
-| `middleware`    | 17 层固定顺序（详见 2.3）                                                      |
-| `interrupt_on`  | `{}`（置空，风险确认由 WriteApprovalMiddleware 按参数判定）                   |
-| `checkpointer`  | `AsyncSqliteSaver`（独立库 `agent_state.db`）                               |
-| `system_prompt` | Jinja2 渲染的项目元信息 + 铁律                                               |
+| 参数              | 本项目的值                                                                 |
+| ----------------- | -------------------------------------------------------------------------- |
+| `model`         | 用户配置的模型（可多级降级，`resolve_models()` 预解析 ChatModel 实例）   |
+| `backend`       | `CompositeBackend`：3 条虚拟路径路由                                     |
+| `permissions`   | 8 条有序规则，兜底 `deny /**`                                            |
+| `tools`         | `web_search` / `outline_grep` / `ask_user` / 6 个结构工具 + 天气 MCP |
+| `skills`        | `["/skills/user/"]` + 会话精选 `/skills/session-{sid}/`                |
+| `subagents`     | 5 个内置子代理（planner/writer/reviewer/web-searcher/recaller）            |
+| `middleware`    | 17 层固定顺序（详见 2.3）                                                  |
+| `interrupt_on`  | `{}`（置空，风险确认由 WriteApprovalMiddleware 按参数判定）              |
+| `checkpointer`  | `AsyncSqliteSaver`（独立库 `agent_state.db`）                          |
+| `system_prompt` | Jinja2 渲染的项目元信息 + 铁律                                             |
 
 ### 2.3 中间件栈（17 层固定顺序）
 
@@ -128,11 +128,13 @@ agent/
 ```
 
 此外还有 3 个辅助中间件按需装配：
+
 - `ContextOverflowGuardMiddleware`：设定 Context Length > 模型真实窗口时的兜底
 - `ContextWindowSyncMiddleware`：上下文窗口配置实时同步（压缩阈值动态跟随）
 - `SafeDeleteMiddleware`：把 Agent 的 delete 从永久物理删除改为可恢复删除（走回收站）
 
 **分组逻辑**：
+
 - ②③ 是**韧性层**（模型与成本）
 - ④⑤⑥⑦⑧⑨⑩ 是**上下文与行为治理层**
 - ⓪①⑪⑫⑬⑭⑮ 是**安全与协作层**
@@ -172,12 +174,12 @@ agent/
 
 审批支持**四种决策**：
 
-| 决策        | 语义                                                 |
-| ----------- | ---------------------------------------------------- |
-| `approve` | 原样执行                                             |
+| 决策        | 语义                                                       |
+| ----------- | ---------------------------------------------------------- |
+| `approve` | 原样执行                                                   |
 | `edit`    | **改参数后执行**（如把「覆盖全章」改成「只改这段」） |
-| `reject`  | 不执行，告诉模型「用户拒绝了」                       |
-| `respond` | 不执行，把用户的补充说明回给模型                     |
+| `reject`  | 不执行，告诉模型「用户拒绝了」                             |
+| `respond` | 不执行，把用户的补充说明回给模型                           |
 
 **Resume 失败关闭（fail-closed）**：本次决定对不上任何挂起中断时，若库里还有另一张未决卡
 正对应某个挂起中断，则绝不把这个决定投递给它——保持挂起，用户仍会看到那张真正待批的卡。
@@ -201,23 +203,24 @@ deepagents 提供 HarnessProfile 机制按模型定制调教方案。**本项目
 Agent 对小说**正文**的操作一律通过 deepagents 内置文件工具完成。
 
 **有意收窄的例外**：卷/章的**结构操作**（建/改名/删除）必须是工具，因为：
+
 - 建卷需要处理 `volumes.yaml` 的 id 分配、sort_order 顺延，Agent 用文件工具手搓必然出错；
 - 改名需要 DB + 文件 + 大纲三处同步，只改 frontmatter 会导致目录树与正文标题不一致；
 - 删除需要回收站归档、修订快照清理、卷内重编号，直接 unlink 会绕过一切保护。
 
 ### 3.2 自定义工具清单（9 个）
 
-| 工具                 | 模块                              | 职责                                                                                   | 权限分配                             |
-| -------------------- | --------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------ |
-| `web_search`       | `tools/builtin/web_search.py`   | 免费双源检索（Wikipedia API + DuckDuckGo）                                             | 全部代理可用                         |
-| `outline_grep`     | `tools/builtin/outline_grep.py` | 按需摘录大纲（精确定位章简介/衔接要点，回落 FTS 关键词检索，上限 1200 字）             | 全部代理可用                         |
-| `ask_user`         | `tools/builtin/ask_user.py`     | 多问题卡片询问用户（落 consult 中断 + `consult.request`，resume 续跑）                | 全部代理可用                         |
-| `create_volume`    | `tools/builtin/create_structure.py` | 新建卷（薄封装 `services/volumes.py`，校验 + 审计 + 索引刷新）                      | 主 Agent + Writer                    |
-| `create_chapter`   | `tools/builtin/create_structure.py` | 新建章节                                                                             | 主 Agent + Writer                    |
-| `rename_volume`    | `tools/builtin/create_structure.py` | 卷重命名（**只改名字**，不改 sort_order）                                              | 主 Agent + Writer                    |
-| `rename_chapter`   | `tools/builtin/create_structure.py` | 章节重命名                                                                           | 主 Agent + Writer                    |
-| `delete_volume`    | `tools/builtin/create_structure.py` | 删除卷（走回收站归档 + 级联清理）                                                    | 仅主 Agent（影响全局，需审批）     |
-| `delete_chapter`   | `tools/builtin/create_structure.py` | 删除章节（走回收站归档）                                                             | 仅主 Agent                           |
+| 工具               | 模块                                  | 职责                                                                       | 权限分配                       |
+| ------------------ | ------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
+| `web_search`     | `tools/builtin/web_search.py`       | 免费双源检索（Wikipedia API + DuckDuckGo）                                 | 全部代理可用                   |
+| `outline_grep`   | `tools/builtin/outline_grep.py`     | 按需摘录大纲（精确定位章简介/衔接要点，回落 FTS 关键词检索，上限 1200 字） | 全部代理可用                   |
+| `ask_user`       | `tools/builtin/ask_user.py`         | 多问题卡片询问用户（落 consult 中断 + `consult.request`，resume 续跑）   | 全部代理可用                   |
+| `create_volume`  | `tools/builtin/create_structure.py` | 新建卷（薄封装 `services/volumes.py`，校验 + 审计 + 索引刷新）           | 主 Agent + Writer              |
+| `create_chapter` | `tools/builtin/create_structure.py` | 新建章节                                                                   | 主 Agent + Writer              |
+| `rename_volume`  | `tools/builtin/create_structure.py` | 卷重命名（**只改名字**，不改 sort_order）                            | 主 Agent + Writer              |
+| `rename_chapter` | `tools/builtin/create_structure.py` | 章节重命名                                                                 | 主 Agent + Writer              |
+| `delete_volume`  | `tools/builtin/create_structure.py` | 删除卷（走回收站归档 + 级联清理）                                          | 仅主 Agent（影响全局，需审批） |
+| `delete_chapter` | `tools/builtin/create_structure.py` | 删除章节（走回收站归档）                                                   | 仅主 Agent                     |
 
 **文件类工具**（ls/read_file/write_file/edit_file/delete/glob/grep）不在本仓库落文件——
 由 deepagents `FilesystemMiddleware` 按 backend + permissions 在运行时生成。
@@ -225,6 +228,7 @@ Agent 对小说**正文**的操作一律通过 deepagents 内置文件工具完�
 ### 3.3 `outline_grep` 设计要点
 
 按需获取原则：AI 不整篇 `read_file` 大纲，而是先精确摘录目标章小节：
+
 - `chapter_title`（可带 `volume_title`）→ 精确定位该章「简介 + 衔接要点」；
 - `query` → 关键词检索大纲命中片段；
 - 摘录上限 1200 字，远小于整篇大纲（动辄数千至上万字），显著降低单次 run 的输入 token。
@@ -232,6 +236,7 @@ Agent 对小说**正文**的操作一律通过 deepagents 内置文件工具完�
 ### 3.4 `ask_user` 设计要点
 
 AI 思考处理的中间过程需要用户决策（范围确认/方案选择/补充信息）时调用：
+
 - 落 `agent_interrupts(type=consult, kind=ask_user)` 行 + 发 SSE `consult.request`；
 - 前端渲染多问题卡片（单选/多选选项 + 自定义答案输入、翻页、末题右下角「提交」）；
 - resume 重放时按 `tool_call_id` 命中已决行：不建行、不发事件、不改状态。
@@ -278,6 +283,7 @@ Agent 看到的不是 `E:\git\...\data\workspaces\{uuid}\chapters\...`，而是
 `WriteApprovalMiddleware`：
 
 `classify_risk()` 三类高危：
+
 1. `write_file` 目标是**已存在的非空章节文件**且新旧内容不同 → 整章覆盖；
 2. `edit_file` 的 `old_string`/`new_string` 超 800 字符 → 大范围改写；
 3. `delete` 任何项目内文件/目录 → 不可逆。
@@ -297,6 +303,7 @@ Agent 看到的不是 `E:\git\...\data\workspaces\{uuid}\chapters\...`，而是
 ### 4.5 ReadScopeGuard（读取授权守卫）
 
 大纲 / 章节正文的读取 token 成本高，默认不主动注入上下文。AI 真要读时按四档放行：
+
 1. 会话已授权 → 放行；
 2. 本 run 是写作意图 → 放行；
 3. 用户消息显式提及读取 → 放行并记会话授权；
@@ -307,6 +314,7 @@ Agent 看到的不是 `E:\git\...\data\workspaces\{uuid}\chapters\...`，而是
 ### 4.6 SafeDelete（可恢复删除）
 
 把 Agent 的 `delete` 工具从**永久物理删除**改为与 REST 删除同语义的可恢复删除：
+
 - 章节文件 → 调 `volumes.delete_chapter`，走回收站归档；
 - 项目内其它路径 → 整体搬进 `data/trash/agent-deleted/{ts}/`；
 - 服务层失败则返回错误 ToolMessage（**fail-closed**，绝不退化成物理删除）。
@@ -318,13 +326,13 @@ Agent 写章正文时加锁（`content_locks.acquire`）+ 广播 `content.lock`�
 
 ### 4.8 LLM 容错与成本治理（`harness/llm/`）
 
-| 模块              | 职责                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| `resilience.py` | ModelRetry（退避重试 2 次）+ ModelSwitchOnFailure（当前模型**连续失败 3 次**才切换备用模型）    |
-| `call_budget.py`| ModelCallBudget（默认 60 次/次委派 20 次）：超限先总结已完成工作再 consult 询问继续/结束        |
-| `budget.py`     | token 预算计数 + `budget_report`（供前端 `context.compact` 事件）                              |
-| `wasteful_loop.py`| 浪费型循环分级熔断：SOFT=3 次注入纠正 / HARD=5 次注入换方向 / 工具层硬阻断                    |
-| `prompt_cache.py` | 显式前缀缓存断点（DashScope/Anthropic 折扣计费，最多 2 个断点）                                |
+| 模块                 | 职责                                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| `resilience.py`    | ModelRetry（退避重试 2 次）+ ModelSwitchOnFailure（当前模型**连续失败 3 次**才切换备用模型） |
+| `call_budget.py`   | ModelCallBudget（默认 60 次/次委派 20 次）：超限先总结已完成工作再 consult 询问继续/结束           |
+| `budget.py`        | token 预算计数 + `budget_report`（供前端 `context.compact` 事件）                              |
+| `wasteful_loop.py` | 浪费型循环分级熔断：SOFT=3 次注入纠正 / HARD=5 次注入换方向 / 工具层硬阻断                         |
+| `prompt_cache.py`  | 显式前缀缓存断点（DashScope/Anthropic 折扣计费，最多 2 个断点）                                    |
 
 ---
 
@@ -332,13 +340,13 @@ Agent 写章正文时加锁（`content_locks.acquire`）+ 广播 `content.lock`�
 
 ### 5.1 内置子代理（5 个）
 
-| 子代理           | UI 展示名    | 工种                                                                                         | 默认工具                                              | workflows 绑定                            |
-| ---------------- | ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------- |
-| `planner`      | Planner      | 策划大纲（三级大纲/分卷节奏/伏笔布局）                                                       | read/write/edit/ls/grep/glob                          | chapter-workflow（S0/S1）               |
-| `writer`       | Writer       | 撰写修改**全流程**（生成正文 + 润色校对）                                                    | read/write/edit/ls/grep/glob + 结构工具               | chapter-workflow（S2）                  |
-| `reviewer`     | Reviewer     | 大纲与内容**检查者**（连贯性 + 大纲结构 + 简介匹配度）                                       | read/ls/grep/glob（**只读**）                       | chapter-workflow + book-consistency-audit |
-| `web-searcher` | Web_Searcher | 资料检索                                                                                     | web_search                                            | —                                        |
-| `recaller`     | Recaller     | 记忆召回（在隔离上下文里读摘要/正文再回传精炼结论）                                           | read/ls/grep/glob                                     | —                                        |
+| 子代理           | UI 展示名    | 工种                                                         | 默认工具                                | workflows 绑定                            |
+| ---------------- | ------------ | ------------------------------------------------------------ | --------------------------------------- | ----------------------------------------- |
+| `planner`      | Planner      | 策划大纲（三级大纲/分卷节奏/伏笔布局）                       | read/write/edit/ls/grep/glob            | chapter-workflow（S0/S1）                 |
+| `writer`       | Writer       | 撰写修改**全流程**（生成正文 + 润色校对）              | read/write/edit/ls/grep/glob + 结构工具 | chapter-workflow（S2）                    |
+| `reviewer`     | Reviewer     | 大纲与内容**检查者**（连贯性 + 大纲结构 + 简介匹配度） | read/ls/grep/glob（**只读**）     | chapter-workflow + book-consistency-audit |
+| `web-searcher` | Web_Searcher | 资料检索                                                     | web_search                              | —                                        |
+| `recaller`     | Recaller     | 记忆召回（在隔离上下文里读摘要/正文再回传精炼结论）          | read/ls/grep/glob                       | —                                        |
 
 每个子代理一个目录（`spec.py` + `prompt.md`），提示词独立文件便于版本化与「恢复默认」。
 
@@ -383,16 +391,17 @@ S3 后置校验   →  写出来的东西符合简介吗？
 
 **执行主体切分**（核心设计）：
 
-| 阶段         | 谁来执行                                         | 为什么                                                           |
-| ------------ | ------------------------------------------------ | ---------------------------------------------------------------- |
-| S0 / S1 / S3 | **服务层直连 ChatModel + JSON 结构化输出** | 这是是非题，要可预测、可单测、成本低                             |
-| S2           | **deep agent 循环**                        | 需要读写文件、调 writer 子代理                                   |
+| 阶段         | 谁来执行                                         | 为什么                               |
+| ------------ | ------------------------------------------------ | ------------------------------------ |
+| S0 / S1 / S3 | **服务层直连 ChatModel + JSON 结构化输出** | 这是是非题，要可预测、可单测、成本低 |
+| S2           | **deep agent 循环**                        | 需要读写文件、调 writer 子代理       |
 
 「能用确定性代码解决的事，绝不交给概率系统」——这条原则贯穿全项目。
 
 ### 6.2 咨询兜底
 
 每道流程都能**发咨询卡片让人拍板**：
+
 - S0 缺简介：「让 AI 代写大纲」或「我去补」
 - S1 不合理：修改建议 + 「强制跳过」（需显式确认并落审计）
 - S3 不匹配：`POSTCHECK_MAX_RETRY=2` + 仍不匹配 → 咨询卡片
@@ -401,9 +410,9 @@ S3 后置校验   →  写出来的东西符合简介吗？
 
 ### 6.3 其他固定流程
 
-| 流程                          | 模块                                | 说明                                                                                   |
-| ----------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------- |
-| **全书一致性审查**（A1→A3） | `workflows/book_consistency/audit.py` | 按卷分批直连 LLM，报告落 `outline/consistency-audit.md`。reviewer 子代理绑定           |
+| 流程                               | 模块                                    | 说明                                                                                  |
+| ---------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------- |
+| **全书一致性审查**（A1→A3） | `workflows/book_consistency/audit.py` | 按卷分批直连 LLM，报告落 `outline/consistency-audit.md`。reviewer 子代理绑定        |
 | **导出成书预检**（E1→E4）   | `workflows/novel_export/preflight.py` | 纯规则不调 LLM（结构/内容/格式三级 checklist）。不阻断导出，返回 checklist 供用户过目 |
 
 ---
@@ -416,20 +425,20 @@ S3 后置校验   →  写出来的东西符合简介吗？
 
 ### 7.2 分层策略
 
-| 手段                       | 做法                                                                                                              |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **前情提要替代原文** | 每章定稿后生成结构化摘要，后续章节只带摘要                                                                         |
-| **跨卷锚点**         | 每卷第 1 章自动补上一卷末章锚点；第一卷用大纲附录的人物/世界观设定                                                 |
-| **按需精选**         | 会话级「已读章节」Chips（上限 8 章防膨胀）                                                                         |
-| **预算监控**         | 可用量 = `max_context − reserve_for_output`，超了发 `context.compact`                                             |
-| **摘要压缩**         | 触发时把驱逐消息卸载到 `/conversation_history/`                                                                    |
-| **增量化**           | checkpoint 用 `DeltaChannel(snapshot_frequency=50)` 存增量                                                        |
-| **隔离**             | 子代理独立上下文（`mode=isolated`）                                                                                 |
-| **硬上限**           | `ModelCallBudget(60)` 软上限 + `recursion_limit(60)` 硬上限                                                       |
-| **浪费熔断**         | `WastefulLoopGuard`：同路径反复读/写 ≥ 5 次硬阻断                                                                 |
-| **显式缓存**         | `PromptCache`：在稳定内容（system + 用户消息）上打断点，跨 run/run 内复用折扣                                     |
-| **上下文守卫**       | `ContextGuard` + `ContextOverflowGuard`：两层保险（确定性定位 + 超限兜底）                                        |
-| **配对修复**         | `PairingRepair`：多并行 tool call 偶发错位时原地修复，避免模型反复重读附件                                         |
+| 手段                       | 做法                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| **前情提要替代原文** | 每章定稿后生成结构化摘要，后续章节只带摘要                                      |
+| **跨卷锚点**         | 每卷第 1 章自动补上一卷末章锚点；第一卷用大纲附录的人物/世界观设定              |
+| **按需精选**         | 会话级「已读章节」Chips（上限 8 章防膨胀）                                      |
+| **预算监控**         | 可用量 = `max_context − reserve_for_output`，超了发 `context.compact`      |
+| **摘要压缩**         | 触发时把驱逐消息卸载到 `/conversation_history/`                               |
+| **增量化**           | checkpoint 用 `DeltaChannel(snapshot_frequency=50)` 存增量                    |
+| **隔离**             | 子代理独立上下文（`mode=isolated`）                                           |
+| **硬上限**           | `ModelCallBudget(60)` 软上限 + `recursion_limit(60)` 硬上限                 |
+| **浪费熔断**         | `WastefulLoopGuard`：同路径反复读/写 ≥ 5 次硬阻断                            |
+| **显式缓存**         | `PromptCache`：在稳定内容（system + 用户消息）上打断点，跨 run/run 内复用折扣 |
+| **上下文守卫**       | `ContextGuard` + `ContextOverflowGuard`：两层保险（确定性定位 + 超限兜底）  |
+| **配对修复**         | `PairingRepair`：多并行 tool call 偶发错位时原地修复，避免模型反复重读附件    |
 
 **设计哲学**：上下文是最贵的资源，每一段进入提示词的文字都要有明确理由。
 
@@ -515,6 +524,7 @@ Agent 工具调用
 ### 8.5 Agent 与可观测（Langfuse）
 
 三条链路：
+
 1. **自动埋点为主**：`langfuse.langchain.CallbackHandler` 自动产出 trace/span/generation；
 2. **手动补充**：流程 S0/S1/S3 等服务层直连 LLM 调用用 `observation()` 包裹；
 3. **评分回写**：run 结束写 `run_tokens` / `project_words` / `fallback_used` 三项 score。
