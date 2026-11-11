@@ -139,6 +139,24 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
             return await handler(request)
         # ② 写作意图 run
         if run_manager.read_intent_of(run_id):
+            # 渐进披露硬约束：写作意图 run 内禁止 read_file 整篇大纲（无分页参数），
+            # 引导改用 outline_grep 摘录；用户显式要求读整篇时不受此限。
+            if (
+                scope == "outline"
+                and tool_name == "read_file"
+                and args.get("offset") is None
+                and args.get("limit") is None
+                and not mentions_explicit_read(run_manager.user_text_of(run_id))
+            ):
+                return ToolMessage(
+                    content=(
+                        "系统约束：写作流程中不允许 read_file 整篇读取大纲（上下文成本过高）。"
+                        "请改用 outline_grep 工具按卷名/章名/关键词摘录所需小节；"
+                        "确需整篇时请用 offset/limit 分段读取。"
+                    ),
+                    tool_call_id=request.tool_call.get("id") or "",
+                    name=tool_name,
+                )
             return await handler(request)
         # ③ 用户消息显式提及读取 → 放行并记会话授权
         user_text = run_manager.user_text_of(run_id)

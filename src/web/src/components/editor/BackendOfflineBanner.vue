@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * 后端连接失败提示：当后端不可用时，在页面中间展示灰色服务异常图案。
- * 
+ * 后端连接失败提示：当后端不可用时，在主内容区展示灰色服务异常图案。
+ *
  * 显示条件：agentStore.error 存在且错误码为 INTERNAL_ERROR（50001）
- * 样式：全屏居中灰色图案 + 文字说明，不遮挡左侧项目栏
+ * 样式：内容区居中灰色图案 + 文字说明，纯色背景，不遮挡左侧项目栏
  */
 import { computed } from 'vue'
 import { useAgentStore } from '@/stores/agent'
@@ -17,14 +17,10 @@ const isBackendOffline = computed(() => {
   if (!err) return false
   return err.includes('50001') || err.includes('后端未连接') || err.includes('uvicorn')
 })
-
-function dismiss(): void {
-  agentStore.clearError()
-}
 </script>
 
 <template>
-  <div v-if="isBackendOffline" class="backend-offline-overlay" @click="dismiss">
+  <div v-if="isBackendOffline" class="backend-offline-block">
     <div class="offline-content">
       <!-- 灰色断连图标 -->
       <svg class="offline-icon" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -44,24 +40,18 @@ function dismiss(): void {
         <circle cx="60" cy="10" r="3" fill="#d0d0d0" />
       </svg>
       <p class="offline-title">{{ t('health.backendOffline') }}</p>
-      <p class="offline-hint">
-        请稍后重试；若持续失败，请查看 data/logs/error-*.jsonl 日志或重启后端服务。
-      </p>
     </div>
   </div>
 </template>
 
 <style scoped>
-.backend-offline-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 50;
+.backend-offline-block {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--bg) 85%, transparent);
-  backdrop-filter: blur(1px);
-  cursor: pointer;
+  flex: 1;
+  background: var(--bg);
+  user-select: none;
 }
 
 .offline-content {
@@ -69,7 +59,6 @@ function dismiss(): void {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  user-select: none;
 }
 
 .offline-icon {
@@ -83,15 +72,5 @@ function dismiss(): void {
   font-weight: 500;
   color: var(--text-muted);
   margin: 0;
-}
-
-.offline-hint {
-  font-size: 13px;
-  color: var(--text-muted);
-  opacity: 0.7;
-  margin: 0;
-  text-align: center;
-  max-width: 360px;
-  line-height: 1.5;
 }
 </style>

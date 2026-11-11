@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 # from app.agent.loop.runner import run_manager  # 延迟到端点函数内导入（~20s）
-
 # agent 的**运行入口**：API 层直接持有 run_manager（起 run / 恢复 / 取消）与 sse_bus（订阅流）。
 # 这两个是「运行 Agent」的驱动面，不是取数——数据访问（会话列表/消息树/工具日志/分支切换）
 # 已全部下沉到 `services.agent`，故本模块不再直连 agent 的取数函数，
@@ -502,8 +501,8 @@ async def resolve_interrupt(
     )
     await session.commit()
 
-    # 如果 run 已结束，不启动 resume 任务
-    if result.get("run_ended"):
+    # run 已结束或同决策重复提交：不启动 resume 任务
+    if result.get("run_ended") or result.get("duplicate"):
         return {
             "code": 0,
             "message": "accepted",
@@ -511,7 +510,7 @@ async def resolve_interrupt(
                 "interrupt_id": interrupt_id,
                 "run_id": result["run_id"],
                 "resumed": False,
-                "run_ended": True,
+                "run_ended": bool(result.get("run_ended")),
                 "run_status": result.get("run_status"),
             },
         }

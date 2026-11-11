@@ -168,9 +168,11 @@ class TestReadScopePathMatching:
         assert _scope_of("/projects//outline/a.md", "") is None
 
 
-def _read_request(tool: str, path: str, *, context: Any) -> Any:
+def _read_request(tool: str, path: str, *, context: Any, args_extra: dict | None = None) -> Any:
+    args = {"file_path": path}
+    args.update(args_extra or {})
     return SimpleNamespace(
-        tool_call={"name": tool, "args": {"file_path": path}, "id": "call_read"},
+        tool_call={"name": tool, "args": args, "id": "call_read"},
         runtime=SimpleNamespace(context=context),
     )
 
@@ -227,6 +229,9 @@ class TestReadScopeGuardTiers:
         run_manager._cleanup("r1")
 
     async def test_tier2_writing_intent_allows(self):
+        """写作意图 run：章节正文与分页大纲放行；整篇大纲被系统约束拦截并引导 outline_grep。"""
+        from langchain_core.messages import ToolMessage
+
         from app.agent.loop.runner import run_manager
 
         mw = ReadScopeGuardMiddleware()
@@ -238,9 +243,22 @@ class TestReadScopeGuardTiers:
 
         run_manager.note_user_message("r1", "请按大纲生成第一章正文")
         assert run_manager.read_intent_of("r1") is True
-        request = _read_request("read_file", "/projects/p1/outline/a.md", context=_context())
-        assert await mw.awrap_tool_call(request, handler) == "content"
-        assert handled == ["yes"]
+        # 章节正文：放行
+        req_ch = _read_request("read_file", "/projects/p1/chapters/v1/c1.md", context=_context())
+        assert await mw.awrap_tool_call(req_ch, handler) == "content"
+        # 分页读大纲：放行
+        req_part = _read_request(
+            "read_file", "/projects/p1/outline/a.md", context=_context(),
+            args_extra={"offset": 0, "limit": 40},
+        )
+        assert await mw.awrap_tool_call(req_part, handler) == "content"
+        assert handled == ["yes", "yes"]
+        # 整篇读大纲：系统约束拦截，引导改用 outline_grep
+        req_full = _read_request("read_file", "/projects/p1/outline/a.md", context=_context())
+        out = await mw.awrap_tool_call(req_full, handler)
+        assert isinstance(out, ToolMessage)
+        assert "outline_grep" in str(out.content)
+        assert len(handled) == 2
         run_manager._cleanup("r1")
 
     async def test_tier3_explicit_read_grants_session(self):

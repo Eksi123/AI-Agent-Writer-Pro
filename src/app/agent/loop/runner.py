@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from typing import Any
 
@@ -37,6 +36,7 @@ from app.agent.loop.lifecycle import (
     resume_input_for,
     run_state_conflict,
 )
+from app.agent.loop.netprobe import classify_failure, notice_text_for, probe_provider
 from app.agent.loop.resolve import (
     attach_langfuse,
     make_outline_ctx_provider,
@@ -45,7 +45,6 @@ from app.agent.loop.resolve import (
     resolve_models,
     session_context_of,
 )
-from app.agent.loop.netprobe import classify_failure, notice_text_for, probe_provider
 from app.agent.loop.streaming import StreamResult, interrupt_status, stream_graph
 from app.agent.tracing.messages.message_sync import MessageSyncer
 from app.agent.tracing.messages.tree import add_message, history_messages_for_seed
@@ -55,7 +54,7 @@ from app.agent.workflows.writing_steps.runner import execute_chapter_workflow
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession, Message
+from app.db.models import AgentRun, AgentSession, Message
 from app.db.session import session_scope
 from app.services import agent as agent_service
 
@@ -88,6 +87,17 @@ class RunManager:
         #: run 级用户消息原文与「写作意图」标记（读取授权守卫判定用）
         self._user_texts: dict[str, str] = {}
         self._read_intents: dict[str, bool] = {}
+        #: 暂停标记：run 进入 awaiting_approval/awaiting_consult 时任务会结束，
+        #: 但 run 并未终止——resume 会续跑同一 run。run 级上下文（用户消息/写作意图/
+        #: 隐藏上下文/引导队列）必须跨暂停保留，否则续跑后读取豁免与润色提示词丢失。
+        self._paused: dict[str, bool] = {}
+
+    def set_paused(self, run_id: str, paused: bool) -> None:
+        """finalize 收尾时登记暂停态；_cleanup 据此跳过 run 级上下文清理。"""
+        if paused:
+            self._paused[run_id] = True
+        else:
+            self._paused.pop(run_id, None)
 
     def running_ids(self) -> list[str]:
         return [rid for rid, t in self._tasks.items() if not t.done()]
@@ -149,13 +159,19 @@ class RunManager:
 
     # ---- run 级用户消息 / 写作意图（读取授权守卫用）----
 
-    def note_user_message(self, run_id: str, text: str) -> None:
-        """记录本 run 的用户消息原文与写作意图标记（start 时调用）。"""
+    def note_user_message(self, run_id: str, text: str, hidden_context: str = "") -> None:
+        """记录本 run 的用户消息原文与写作意图标记（start 时调用）。
+
+        读取意图 = 写作意图命中 **或** 携带选区润色隐藏上下文（润色必然要读
+        目标章节正文，不应逐次弹读取确认卡）。
+        """
         self._user_texts[run_id] = text or ""
         try:
             from app.agent.workflows.writing_steps.intent import has_workflow_intent
 
-            self._read_intents[run_id] = bool(has_workflow_intent(text or ""))
+            self._read_intents[run_id] = bool(has_workflow_intent(text or "")) or (
+                "选中待润色文本" in (hidden_context or "")
+            )
         except Exception as exc:  # pragma: no cover - 意图判定失败不阻断
             logger.warning("read_intent_detect_failed", run_id=run_id, error=str(exc))
             self._read_intents[run_id] = False
@@ -229,7 +245,7 @@ class RunManager:
 
             run_id = new_id()
             self.set_hidden_context(run_id, hidden_context)
-            self.note_user_message(run_id, content)
+            self.note_user_message(run_id, content, hidden_context=hidden_context)
             db.add(
                 AgentRun(
                     id=run_id,
@@ -266,6 +282,8 @@ class RunManager:
             run.status = "running"
             project_id, session_id = run.project_id, run.session_id
             model_ref = run.model_ref
+        # 续跑开始：清除暂停标记（本轮收尾若再暂停会重新登记）
+        self.set_paused(run_id, False)
 
         # 重开流：finished=False，seq 续增，缓冲保留（客户端可无缝续传）
         await sse_bus.reopen(run_id, session_id)
@@ -371,6 +389,11 @@ class RunManager:
         task.add_done_callback(lambda _t: self._cleanup(run_id))
 
     def _cleanup(self, run_id: str) -> None:
+        # 暂停态（审批/咨询）任务结束但 run 未终止：只释放任务登记，
+        # 保留 run 级上下文供 resume 续跑（用户消息/写作意图/隐藏上下文/引导）。
+        if self._paused.get(run_id):
+            self._tasks.pop(run_id, None)
+            return
         self._tasks.pop(run_id, None)
         self._cancel_flags.pop(run_id, None)
         self._locks.pop(run_id, None)
@@ -379,6 +402,7 @@ class RunManager:
         self._steer_queues.pop(run_id, None)
         self._user_texts.pop(run_id, None)
         self._read_intents.pop(run_id, None)
+        self._paused.pop(run_id, None)
         # 第一层注入槽位登记随 run 释放（ContextGuard 第二层保险用）
         from app.agent.loop.middleware.recap import clear_injected_slots
 

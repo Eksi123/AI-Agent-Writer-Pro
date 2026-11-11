@@ -478,8 +478,13 @@ window.addEventListener('beforeunload', (e) => {
             </span>
           </div>
 
+          <!-- 后端离线提示（纯色背景块，替代原来的覆盖层） -->
+          <template v-if="agentStore.error && (agentStore.error.includes('50001') || agentStore.error.includes('后端未连接') || agentStore.error.includes('uvicorn'))">
+            <BackendOfflineBanner />
+          </template>
+
           <!-- 阅读模式 -->
-          <template v-if="reader.mode === 'read'">
+          <template v-else-if="reader.mode === 'read'">
             <OutlineReader v-if="reader.activeOutline || !reader.activeChapterId" />
             <ChapterReader v-else :chapter-id="reader.activeChapterId" />
           </template>
@@ -500,9 +505,6 @@ window.addEventListener('beforeunload', (e) => {
               </div>
             </template>
           </template>
-
-          <!-- 后端离线覆盖层（居中灰色图案，替代原来的红色横幅） -->
-          <BackendOfflineBanner />
 
           <!-- 章节正文加载窗口期（换章/刷新/热重载）→ 内容区居中动态蒙版，
                避免看到上一章内容或空内容。

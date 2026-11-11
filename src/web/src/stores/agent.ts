@@ -444,8 +444,9 @@ export const useAgentStore = defineStore('agent', () => {
       // 已存在的中断跳过（SSE 可能已推送）
       if (existingIds.has(it.id)) continue
       const payload = (typeof it.payload === 'object' && it.payload !== null ? it.payload : {}) as Record<string, unknown>
-      const reason = (payload.reason as string | undefined) ?? it.reason
-      const itemLabel = (payload.item_label as string | undefined) ?? it.itemLabel
+      const reason = payload.reason as string | undefined
+      const itemLabel =
+        (payload.item_label as string | undefined) ?? (payload.itemLabel as string | undefined)
       const contentKey = `${reason || ''}|${itemLabel || ''}`
       // 内容相同的中断跳过（防止后端重复创建）
       if (existingContent.has(contentKey)) continue
@@ -887,8 +888,8 @@ export const useAgentStore = defineStore('agent', () => {
     const firstPayload = payloads?.[0]
     try {
       const result = await agentApi.resolveInterrupt(queue[0].interruptId, { decision: firstDecision, ...firstPayload })
-      // run 已结束：静默处理，不显示错误（result 结构：{ code, message, data: { run_ended, ... } }）
-      if (result?.data?.run_ended) {
+      // run 已结束：静默处理，不显示错误（post 已解包，result 即 data：{ run_ended, ... }）
+      if (result?.run_ended) {
         pendingInterrupts.value = []
         running.value = false
         runPaused.value = false
@@ -929,8 +930,8 @@ export const useAgentStore = defineStore('agent', () => {
         choice: decision === 'option' ? value : undefined,
         text: decision === 'text' ? value : undefined,
       })
-      // run 已结束：静默处理
-      if (result?.data?.run_ended) {
+      // run 已结束：静默处理（post 已解包，result 即 data）
+      if (result?.run_ended) {
         pendingConsult.value = null
         running.value = false
         runPaused.value = false

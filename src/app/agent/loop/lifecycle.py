@@ -236,6 +236,12 @@ async def finalize(
 
     paused = status in ("awaiting_approval", "awaiting_consult")
 
+    # 暂停态登记：暂停时后台任务结束但 run 未终止，runner._cleanup 据此
+    # 保留 run 级上下文（用户消息/写作意图/隐藏上下文），供 resume 续跑。
+    from app.agent.loop.runner import run_manager
+
+    run_manager.set_paused(run_id, paused)
+
     async with session_scope() as db:
         run = await db.get(AgentRun, run_id)
         if run is not None:

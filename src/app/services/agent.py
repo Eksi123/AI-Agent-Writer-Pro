@@ -525,6 +525,26 @@ async def resolve_interrupt(
     if row is None:
         raise NotFoundError(f"中断不存在：{interrupt_id}")
     if row.decision is not None:
+        # 幂等处理：如果决策相同，视为重复提交，返回成功而不是抛错
+        if row.decision == decision:
+            run = await session.get(AgentRun, row.run_id)
+            if run is None:
+                raise NotFoundError(f"run 不存在：{row.run_id}")
+            if run.status in _TERMINAL_RUN_STATUS:
+                return {
+                    "run_id": run.id,
+                    "resume_value": None,
+                    "run_ended": True,
+                    "run_status": run.status,
+                }
+            # run 仍在运行：重复提交同一决策——首次 resolve 已驱动续跑，
+            # 此处只确认受理，不再二次 resume（否则同一 run 被并发续跑两次）。
+            return {
+                "run_id": run.id,
+                "resume_value": None,
+                "run_ended": False,
+                "duplicate": True,
+            }
         raise ApiError(
             f"该中断已处理（{row.decision}）",
             code=ErrorCode.RUN_STATE_CONFLICT,
