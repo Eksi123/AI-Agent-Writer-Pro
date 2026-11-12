@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.workflows.writing_steps.runner
 文件名: runner.py
@@ -54,8 +54,10 @@ from app.agent.workflows.writing_steps.state import ConsultRequired, WorkflowSta
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.base import new_id, utcnow
-from app.db.models import AgentInterrupt, AgentRun, AgentSession
+from app.db.models import AgentInterrupt, AgentRun, AgentSession, Novel
 from app.db.session import session_scope
+from app.services.outline import parse_outline
+from app.services.workspace import WorkspaceGuard
 
 logger = get_logger(__name__)
 
@@ -175,45 +177,61 @@ async def execute_chapter_workflow(
                 break
 
             if state.stage == "S0" and state.outcome == "agent_write_outline":
-                # 让 Agent 代写大纲小节（一次 agent 流），完成后重查 S0
-                draft_prompt = build_outline_draft_prompt(state)
-                syncer = MessageSyncer(session_id=session_id)
-                is_draft_resume = gen_command is not None
-                if is_draft_resume:
-                    # 代写流内触发过中断（写入审批/调用预算）→ 用 resume 续跑同一 graph
-                    draft_input: Any = gen_command
-                    gen_command = None
+                # 检查是否是用户自定义内容（custom_outline_intro）还是 Agent 代写
+                custom_text = ""
+                for item in reversed(state.history):
+                    if item.get("event") == "custom_outline_intro":
+                        custom_text = str(item.get("instruction") or "")
+                        break
+
+                if custom_text:
+                    # 用户自定义内容：直接写入大纲文件，然后重查 S0
+                    await _write_custom_intro(runner, state, custom_text)
+                    state.outcome = ""
+                    state.stage = "S0"
+                    async with session_scope() as db:
+                        await _persist_workflow_state(db, run_id, state)
+                    continue
                 else:
-                    draft_input = {"messages": [("user", draft_prompt)]}
-                sresult = await stream_graph(
-                    graph=graph,
-                    config=config,
-                    context=context,
-                    stream_input=draft_input,
-                    run_id=run_id,
-                    session_id=session_id,
-                    emitter=emitter,
-                    cancel_flag=cancel_flag,
-                    syncer=syncer,
-                    resumed=is_draft_resume,
-                )
-                tokens_in += sresult.tokens_in
-                tokens_out += sresult.tokens_out
-                cached_in += sresult.cached_in
-                recursion_used += sresult.recursion_used
-                fallback_count += sresult.fallback_count
-                if sresult.cancelled:
-                    final_status = "cancelled"
-                    break
-                if sresult.interrupted:
-                    final_status = await interrupt_status(run_id)
-                    break
-                # 大纲已代写 → 重查 S0
-                state.outcome = ""
-                state.stage = "S0"
-                async with session_scope() as db:
-                    await _persist_workflow_state(db, run_id, state)
-                continue
+                    # Agent 代写大纲小节（一次 agent 流），完成后重查 S0
+                    draft_prompt = build_outline_draft_prompt(state)
+                    syncer = MessageSyncer(session_id=session_id)
+                    is_draft_resume = gen_command is not None
+                    if is_draft_resume:
+                        # 代写流内触发过中断（写入审批/调用预算）→ 用 resume 续跑同一 graph
+                        draft_input: Any = gen_command
+                        gen_command = None
+                    else:
+                        draft_input = {"messages": [("user", draft_prompt)]}
+                    sresult = await stream_graph(
+                        graph=graph,
+                        config=config,
+                        context=context,
+                        stream_input=draft_input,
+                        run_id=run_id,
+                        session_id=session_id,
+                        emitter=emitter,
+                        cancel_flag=cancel_flag,
+                        syncer=syncer,
+                        resumed=is_draft_resume,
+                    )
+                    tokens_in += sresult.tokens_in
+                    tokens_out += sresult.tokens_out
+                    cached_in += sresult.cached_in
+                    recursion_used += sresult.recursion_used
+                    fallback_count += sresult.fallback_count
+                    if sresult.cancelled:
+                        final_status = "cancelled"
+                        break
+                    if sresult.interrupted:
+                        final_status = await interrupt_status(run_id)
+                        break
+                    # 大纲已代写 → 重查 S0
+                    state.outcome = ""
+                    state.stage = "S0"
+                    async with session_scope() as db:
+                        await _persist_workflow_state(db, run_id, state)
+                    continue
 
             if state.stage == "S2":
                 # S2：agent 流式生成正文
@@ -356,6 +374,74 @@ async def _persist_workflow_consult(run_id: str, session_id: str, state: Any, co
             "question": consult.payload.get("question", ""),
             "options": consult.payload.get("options", []),
             "allow_text": consult.payload.get("allow_text", True),
+            "text_placeholder": consult.payload.get("text_placeholder", ""),
             "workflow_stage": state.stage,
         },
+    )
+
+
+async def _write_custom_intro(runner: WorkflowRunner, state: WorkflowState, custom_text: str) -> None:
+    """把用户自定义的简介内容写入大纲文件，然后重查 S0。
+
+    在目标章的 H2 标题后插入 `- 简介：{custom_text}` 行。
+    """
+    assert state.target is not None
+    target = state.target
+    guard = WorkspaceGuard(target.project_id)
+
+    async with session_scope() as db:
+        novel = await db.get(Novel, target.project_id)
+    if novel is None:
+        logger.warning("custom_intro_novel_not_found", project_id=target.project_id)
+        return
+
+    outline_rel = novel.outline_file
+    if not outline_rel or not guard.exists(outline_rel):
+        logger.warning("custom_intro_outline_missing", outline=outline_rel)
+        return
+
+    outline_text = guard.read(outline_rel)
+    lines = outline_text.split("\n")
+
+    # 找到目标章的 H2 行（归一化匹配）
+    from app.services.outline import normalize_title
+
+    vn = normalize_title(target.volume_title)
+    cn = normalize_title(target.chapter_title)
+
+    # 先定位卷 H1，再在卷内找章 H2
+    in_target_vol = False
+    insert_idx = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # H1 匹配
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            h1_title = stripped[2:].strip()
+            in_target_vol = normalize_title(h1_title) == vn
+            continue
+        # H2 匹配（在目标卷内）
+        if in_target_vol and stripped.startswith("## "):
+            h2_title = stripped[3:].strip()
+            if normalize_title(h2_title) == cn:
+                insert_idx = i + 1
+                break
+
+    if insert_idx < 0:
+        logger.warning(
+            "custom_intro_chapter_not_found",
+            volume=target.volume_title,
+            chapter=target.chapter_title,
+        )
+        return
+
+    # 在 H2 后插入简介行
+    intro_line = f"- 简介：{custom_text.strip()}"
+    lines.insert(insert_idx, intro_line)
+    new_outline = "\n".join(lines)
+    guard.write(outline_rel, new_outline)
+    logger.info(
+        "custom_intro_written",
+        project_id=target.project_id,
+        outline=outline_rel,
+        line=insert_idx,
     )

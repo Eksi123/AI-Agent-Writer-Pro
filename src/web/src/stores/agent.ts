@@ -57,6 +57,8 @@ export interface PendingConsult {
   options: { value: string; label: string }[] | string[]
   allowText: boolean
   workflowStage?: string
+  /** 输入框占位提示文字（如「在此输入章节简介内容，提交后继续生成」） */
+  textPlaceholder?: string
   /** ask_user 多问题清单（缺省 = 单问旧契约） */
   questions?: AskUserQuestion[]
 }
@@ -474,6 +476,7 @@ export const useAgentStore = defineStore('agent', () => {
           options: (payload.options as PendingConsult['options']) ?? [],
           allowText: Boolean(payload.allow_text ?? true),
           workflowStage: payload.workflow_stage as string | undefined,
+          textPlaceholder: payload.text_placeholder as string | undefined,
           questions: (payload.questions as PendingConsult['questions']) ?? undefined,
         }
       }
@@ -815,6 +818,7 @@ export const useAgentStore = defineStore('agent', () => {
           options: (data.options as PendingConsult['options']) ?? [],
           allowText: Boolean(data.allow_text ?? true),
           workflowStage: data.workflow_stage as string | undefined,
+          textPlaceholder: data.text_placeholder as string | undefined,
           questions: (data.questions as PendingConsult['questions']) ?? undefined,
         }
         break

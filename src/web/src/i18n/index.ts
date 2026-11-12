@@ -430,6 +430,7 @@ export const zh = {
     consultText: '输入',
     consultSendOption: '提交选择',
     consultSendText: '提交说明',
+    consultHint: '选择选项或输入说明后提交',
     /** ask_user 多问题卡片 */
     askUserTitle: 'AI 想询问你',
     askUserCustom: '输入自定义答案',

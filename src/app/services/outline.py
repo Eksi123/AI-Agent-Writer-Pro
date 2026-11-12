@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.services.outline
 文件名: outline.py
@@ -63,26 +63,80 @@ OUTLINE_TEMPLATE = """\
 # 解析
 # ---------------------------------------------------------------------------
 
-_H1 = re.compile(r"^#(?!#)\s+(.*)$")
-_H2 = re.compile(r"^##(?!#)\s+(.*)$")
+#: H1：允许尾部 #（如 `# Title #`），允许无空格（`#Title`），捕获标题文本
+_H1 = re.compile(r"^#{1}(?!#)\s*(.*?)(?:\s+#+)?\s*$")
+#: H2：同上
+_H2 = re.compile(r"^#{2}(?!#)\s*(.*?)(?:\s+#+)?\s*$")
+#: 附录标题匹配：去掉 markdown 格式后以「附录」开头
 _APPENDIX = re.compile(r"^附录")
 
-_INTRO_LINE = re.compile(r"^\s*[-*+]\s*简介\s*[:：]\s*(.*)$")
-_LINK_LINE = re.compile(r"^\s*[-*+]\s*衔接要点\s*[:：]\s*(.*)$")
+#: 简介行：宽容匹配多种格式
+#: - 列表符号：`-` `*` `+` `•`（全角圆点）`·`（中间点）或无符号
+#: - 数字列表：`1.` `1)` `1）` `(1)` `①` 等
+#: - 关键词：`简介`，支持 `**简介**` `_简介_` `***简介***` 等 markdown 格式
+#: - 分隔符：`：` `:` `-` `—` 或直接空格，允许多个分隔符
+#: - 空内容也匹配（`- 简介：` 捕获空串）
+#: - 示例：`- 简介：xxx` `• **简介**：xxx` `1. 简介：xxx` `简介 xxx` `- 简介：`
+_INTRO_LINE = re.compile(
+    r"^\s*"
+    r"(?:"
+    r"[-*+•·]\s*"                          # 符号列表
+    r"|\d+[.)]\s*"                        # 数字列表 1. 1)
+    r"|\d+）\s*"                           # 中文数字列表 1）
+    r"|\(\d+\)\s*"                      # 括号数字 (1)
+    r"|[①-⑳]\s*"                          # 带圈数字
+    r")?"
+    r"\*{0,3}_?简介_?\*{0,3}"             # 关键词（支持粗/斜/粗斜体）
+    r"\s*"
+    r"(?:[:：\-—]\s*)*"                    # 分隔符（可选，允许多个）
+    r"(.*)$"                                 # 内容（可为空）
+)
+#: 衔接要点行：同上，额外支持短别名「衔接」「过渡」「承上启下」
+_LINK_LINE = re.compile(
+    r"^\s*"
+    r"(?:"
+    r"[-*+•·]\s*"
+    r"|\d+[.)]\s*"
+    r"|\d+）\s*"
+    r"|\(\d+\)\s*"
+    r"|[①-⑳]\s*"
+    r")?"
+    r"\*{0,3}_?(?:衔接要点|衔接|过渡|承上启下)_?\*{0,3}"
+    r"\s*"
+    r"(?:[:：\-—]\s*)*"
+    r"(.*)$"
+)
 
 _CN_NUM = "零一二三四五六七八九十百千万两〇壹贰叁肆伍陆柒捌玖拾佰仟"
-_ORDINAL_PREFIX = re.compile(rf"^第\s*[{_CN_NUM}\d]+\s*[卷章回节篇部集话話]\s*")
-_PUNCT = re.compile(r"[·、,，.。:：\-—_~!！?？'\"“”‘’()（）\[\]【】]")
+#: 序数前缀：支持 `第X卷` `X、` `X.` `X卷` `X 标题` 等多种格式（`第` 可选）
+#: 最后一项 `[{_CN_NUM}\d]{1,2}\s+` 匹配短数字+空格（如 `2 蟠桃会` `二 蟠桃会`），
+#: 限定 1-2 位避免误删标题中的年份等数字（如 `2024 年`）。
+_ORDINAL_PREFIX = re.compile(
+    rf"^(?:第\s*)?[{_CN_NUM}\d]+\s*(?:[卷章回节篇部集话話]|[、.])\s*"
+    rf"|^[{_CN_NUM}\d]{{1,2}}\s+"
+)
+_PUNCT = re.compile(r"[·、,，.。:：\-—_~!！?？'\"\u201c\u201d\u2018\u2019()（）\[\]【】{}｛｝]")
+#: 去除 markdown 格式标记：`**bold**` `*italic*` `_italic_` `~~strike~~` `__bold__`
+_MD_FORMAT = re.compile(r"\*{1,3}|_{1,2}|~{2}")
+#: 去除尾部括号标注：`（上）` `(上)` `【上】` `[上]`（含 ASCII 括号）
+_TRAILING_ANNOT = re.compile(r"[\[（【(][^\]）】)]*[\]）】)]\s*$")
 
 
 def normalize_title(name: str) -> str:
     """归一化卷/章名用于比较（手册「四」）：
 
-    去首尾空白 → 全角空格转半角 → 压缩连续空白 → 去序数词前缀 → 去标点。
+    去首尾空白 → 全角空格转半角 → 去尾部括号标注 → 去 markdown 格式 →
+    去序数词前缀（需在去空白之前，否则 `2 标题` 的空格丢失后无法匹配） →
+    压缩连续空白 → 去标点。
     """
     s = name.replace("\u3000", " ").strip()
-    s = re.sub(r"\s+", "", s)
+    # 去尾部括号标注：（上）(上)【上】[上]
+    s = _TRAILING_ANNOT.sub("", s)
+    # 去 markdown 格式：**bold** *italic* _italic_ ~~strike~~
+    s = _MD_FORMAT.sub("", s)
+    # 去序数前缀（必须在去空白之前）
     s = _ORDINAL_PREFIX.sub("", s)
+    s = re.sub(r"\s+", "", s)
     s = _PUNCT.sub("", s)
     return s.strip()
 
@@ -148,12 +202,28 @@ class OutlineParseResult:
         return next((v for v in self.volumes if v.normalized == vn), None)
 
 
+def _clean_title(raw: str) -> str:
+    """清理标题行：去首尾空白、去尾部 #、去 markdown 格式。"""
+    s = raw.strip()
+    # 去尾部 #（如 `Title #` 或 `Title ##`）
+    s = re.sub(r"\s+#+\s*$", "", s)
+    # 去 markdown 格式：**bold** *italic* _italic_ ~~strike~~
+    s = _MD_FORMAT.sub("", s)
+    return s.strip()
+
+
 def parse_outline(text: str) -> OutlineParseResult:
     """解析大纲单文件。全程只读、不写文件、不自动插入占位小节。"""
     result = OutlineParseResult()
+    # 去 BOM
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    # 统一换行符
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
 
     in_code_fence = False
+    fence_depth = 0  # 支持嵌套代码围栏
     current_vol: VolumeSection | None = None
     current_ch: ChapterSection | None = None
     current_app: AppendixSection | None = None
@@ -162,9 +232,15 @@ def parse_outline(text: str) -> OutlineParseResult:
     for idx, raw in enumerate(lines, start=1):
         stripped = raw.strip()
 
-        # 代码围栏内的 # 不作标题解析
-        if stripped.startswith("```"):
-            in_code_fence = not in_code_fence
+        # 代码围栏内的 # 不作标题解析（支持 ``` 和 ~~~，支持带语言标记如 ```python）
+        fence_match = re.match(r"^\s*(`{3,}|~{3,})", stripped)
+        if fence_match:
+            fence_char = fence_match.group(1)[0]
+            if not in_code_fence:
+                in_code_fence = True
+                _fence_char = fence_char
+            elif fence_char == _fence_char:
+                in_code_fence = False
             if current_app is not None:
                 current_app.lines.append(raw)
             continue
@@ -176,14 +252,16 @@ def parse_outline(text: str) -> OutlineParseResult:
         m1 = _H1.match(raw)
         if m1:
             h1_seen = True
-            title = m1.group(1).strip()
+            title = _clean_title(m1.group(1))
             current_ch = None
             current_app = None
             if not title:
                 result.warnings.append(f"L{idx}: H1 标题为空")
                 current_vol = None
                 continue
-            if _APPENDIX.match(title):
+            # 附录检测：去掉 markdown 格式后以「附录」开头
+            clean_for_check = _MD_FORMAT.sub("", title).strip()
+            if _APPENDIX.match(clean_for_check):
                 current_vol = None
                 current_app = AppendixSection(title=title, line_no=idx)
                 result.appendices.append(current_app)
@@ -196,7 +274,7 @@ def parse_outline(text: str) -> OutlineParseResult:
 
         m2 = _H2.match(raw)
         if m2:
-            title = m2.group(1).strip()
+            title = _clean_title(m2.group(1))
             if current_app is not None:
                 # 附录节下的 H2 视为附录子条目，不参与章匹配
                 current_app.lines.append(raw)

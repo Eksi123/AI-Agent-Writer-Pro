@@ -142,21 +142,26 @@ def _apply_resume(state: WorkflowState, decision: dict[str, Any]) -> None:
     text = str(decision.get("text") or decision.get("message") or "")
 
     if kind == CONSULT_OUTLINE_MISSING:
-        if choice == "cancel":
+        if choice == "pause":
             state.stage = "failed"
-            state.outcome = "cancelled_at_g0"
-        elif choice == "user_edited" and not text:
+            state.outcome = "paused_by_user"
+        elif choice == "read_outline":
+            # 读取完整大纲后重新检查
             state.record("S0", "consult_resolved", choice=choice)
             state.stage = "S0"
             state.outcome = ""
-        else:
-            # agent_write 或自由文本 → 让 Agent 代写大纲小节（可带用户指示）
-            state.record("S0", "consult_resolved", choice=choice or "text", text=text[:200])
+        elif text:
+            # 用户在输入框填写了章节简介内容 → 直接写入大纲并重新检查
+            state.record("S0", "consult_resolved", choice="custom_text", text=text[:200])
             state.stage = "S0"
             state.history.append(
-                {"stage": "S0", "event": "agent_write_outline", "instruction": text[:500]}
+                {"stage": "S0", "event": "custom_outline_intro", "instruction": text[:500]}
             )
             state.outcome = "agent_write_outline"
+        else:
+            # 无选择无文本，默认暂停
+            state.stage = "failed"
+            state.outcome = "paused_by_user"
 
     elif kind == CONSULT_PRECHECK:
         if choice == "cancel":
@@ -222,11 +227,11 @@ async def _wf_outline(runner: WorkflowRunner) -> None:
                 ),
                 "missing_kind": "section",
                 "options": [
-                    {"value": "agent_write", "label": "让 Agent 代写大纲小节"},
-                    {"value": "user_edited", "label": "我自己去「大纲」节点补，补好了再检查"},
-                    {"value": "cancel", "label": "取消本次生成"},
+                    {"value": "read_outline", "label": "读取完整大纲"},
+                    {"value": "pause", "label": "暂停本次生成"},
                 ],
                 "allow_text": True,
+                "text_placeholder": "在此输入章节简介内容，提交后继续生成",
                 "workflow_stage": "S0",
             },
         )
@@ -240,15 +245,15 @@ async def _wf_outline(runner: WorkflowRunner) -> None:
             {
                 "question": (
                     f"大纲小节「{target.volume_title} · {target.chapter_title}」（第 {section.line_no} 行）"
-                    "存在，但「- 简介：」为空。\n请填写本章剧情要点后再生成。"
+                    "存在，但简介内容为空。\n请填写本章剧情要点后再生成。"
                 ),
                 "missing_kind": "intro",
                 "options": [
-                    {"value": "agent_write", "label": "让 Agent 代写章简介"},
-                    {"value": "user_edited", "label": "我自己填写，填好了再检查"},
-                    {"value": "cancel", "label": "取消本次生成"},
+                    {"value": "read_outline", "label": "读取完整大纲"},
+                    {"value": "pause", "label": "暂停本次生成"},
                 ],
                 "allow_text": True,
+                "text_placeholder": "在此输入章节简介内容，提交后继续生成",
                 "workflow_stage": "S0",
             },
         )

@@ -96,22 +96,36 @@ async function submitAll(): Promise<void> {
   }
 }
 
-/** ---- 单问形态（旧契约） ---- */
+/** ---- 单问形态（流程咨询 / 调用预算等） ---- */
 const normalizedOptions = computed(() =>
   (props.consult.options ?? []).map((opt) =>
     typeof opt === 'string' ? { value: opt, label: opt } : { value: String(opt.value), label: String(opt.label ?? opt.value) },
   ),
 )
 
-async function choose(value: string): Promise<void> {
+/** 当前选中的选项值（用于高亮显示） */
+const selectedValue = ref('')
+
+function onFreeTextInput(value: string): void {
+  freeText.value = value
+  if (value.trim()) selectedValue.value = '' // 输入文本时清空选项选中
+}
+
+async function submitChoice(): Promise<void> {
+  if (!selectedValue.value) return
   submitting.value = true
   try {
-    await agent.resolveConsult('option', value)
+    await agent.resolveConsult('option', selectedValue.value)
   } catch (err) {
     ElMessage.error(String(err))
   } finally {
     submitting.value = false
   }
+}
+
+async function choose(value: string): Promise<void> {
+  selectedValue.value = selectedValue.value === value ? '' : value
+  if (selectedValue.value) freeText.value = '' // 选选项时清空自由文本
 }
 
 async function submitText(): Promise<void> {
@@ -186,33 +200,69 @@ async function submitText(): Promise<void> {
       </div>
     </template>
 
-    <!-- 单问卡片（旧契约） -->
+    <!-- 单问卡片（流程咨询 / 调用预算等） -->
     <template v-else>
       <div class="card-head">
         <el-tag type="primary" size="small">{{ t('agent.consultTitle') }}</el-tag>
         <el-tag v-if="consult.workflowStage" size="small" type="info">{{ consult.workflowStage }}</el-tag>
       </div>
 
-      <div class="question">{{ consult.question }}</div>
+      <div class="q-block">
+        <div class="q-title">
+          <span class="q-text">{{ consult.question }}</span>
+        </div>
 
-      <div class="options">
-        <el-button
-          v-for="opt in normalizedOptions"
-          :key="opt.value"
-          size="small"
-          :loading="submitting"
-          @click="choose(opt.value)"
-        >
-          {{ opt.label }}
-        </el-button>
-        <el-button v-if="consult.allowText" size="small" text @click="textMode = !textMode">
-          {{ t('agent.consultText') }}…
-        </el-button>
+        <div class="opt-list">
+          <button
+            v-for="(opt, oi) in normalizedOptions"
+            :key="opt.value"
+            type="button"
+            class="opt-row"
+            :class="{ active: selectedValue === opt.value }"
+            :disabled="submitting"
+            @click="choose(opt.value)"
+          >
+            <span class="opt-no">{{ oi + 1 }}</span>
+            <span class="opt-body">
+              <span class="opt-label">{{ opt.label }}</span>
+            </span>
+            <span v-if="selectedValue === opt.value" class="opt-check">✓</span>
+          </button>
+
+          <!-- 自由输入行 -->
+          <div v-if="consult.allowText" class="opt-row custom-row">
+            <span class="opt-no">{{ normalizedOptions.length + 1 }}</span>
+            <input
+              class="custom-input"
+              :value="freeText"
+              :placeholder="consult.textPlaceholder || t('agent.consultText') + '…'"
+              :disabled="submitting"
+              @input="onFreeTextInput(($event.target as HTMLInputElement).value)"
+            />
+          </div>
+        </div>
       </div>
 
-      <div v-if="textMode && consult.allowText" class="free-text">
-        <el-input v-model="freeText" type="textarea" :rows="3" />
-        <el-button type="primary" size="small" :loading="submitting" @click="submitText">
+      <div class="card-foot">
+        <div class="pager">
+          <span class="muted">{{ t('agent.consultHint') }}</span>
+        </div>
+        <el-button
+          v-if="selectedValue"
+          type="primary"
+          size="small"
+          :loading="submitting"
+          @click="submitChoice"
+        >
+          {{ t('agent.consultSendOption') }}
+        </el-button>
+        <el-button
+          v-else-if="freeText.trim()"
+          type="primary"
+          size="small"
+          :loading="submitting"
+          @click="submitText"
+        >
           {{ t('agent.consultSendText') }}
         </el-button>
       </div>
@@ -235,29 +285,155 @@ async function submitText(): Promise<void> {
   display: flex;
   gap: 6px;
   align-items: center;
+  justify-content: space-between;
 }
 
 .muted {
   color: var(--el-text-color-secondary);
 }
 
-.question {
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-
-.options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.free-text {
+/* ---- 与审批卡片同排版的问答区 ---- */
+.q-block {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.q-title {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.q-no {
+  flex: none;
+}
+
+.q-text {
+  white-space: pre-wrap;
+}
+
+.opt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.opt-row {
+  display: flex;
+  gap: 8px;
   align-items: flex-start;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.opt-row:hover:not(:disabled) {
+  background: var(--el-fill-color-light);
+}
+
+.opt-row.active {
+  background: var(--el-color-primary);
+  color: var(--el-color-white);
+}
+
+.opt-row.active:hover:not(:disabled) {
+  background: var(--el-color-primary);
+}
+
+.opt-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.opt-no {
+  flex: none;
+  min-width: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.opt-label {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.opt-check {
+  flex: none;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.custom-row {
+  cursor: default;
+}
+
+.custom-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-bottom: 1px solid var(--el-border-color);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 0;
+  outline: none;
+}
+
+.custom-input:focus {
+  border-bottom-color: var(--el-color-primary);
+}
+
+.custom-input:disabled {
+  opacity: 0.7;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pager-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---- 多问题卡片 ---- */
