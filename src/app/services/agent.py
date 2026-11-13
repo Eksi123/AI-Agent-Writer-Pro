@@ -391,10 +391,23 @@ async def load_message_tree(session: AsyncSession, session_id: str) -> dict[str,
                 .scalars()
                 .all()
             )
+            # 如果 run 状态是 awaiting_consult/awaiting_approval，但没有未决策的中断，
+            # 说明所有中断都已决策，run 应该继续执行。此时把状态改为 running，
+            # 避免前端误以为还有未决策的中断，从而错误地恢复卡片。
+            status = run_row.status
+            if status in ("awaiting_consult", "awaiting_approval") and not pending:
+                status = "running"
+            # 获取当前 SSE 缓冲区的最新 seq，供前端重连时作为 last_event_id，
+            # 避免补发旧事件导致已决策的卡片重新弹出。
+            current_seq = 0
+            if status not in _TERMINAL_RUN_STATUS:
+                from app.agent.tracing.sse.events import sse_bus
+                current_seq = sse_bus.get_seq(run_row.id)
             tree["latest_run"] = {
                 "run_id": run_row.id,
-                "status": run_row.status,
+                "status": status,
                 "pending_interrupts": [_interrupt_dto(i) for i in pending],
+                "current_seq": current_seq,
             }
     return tree
 

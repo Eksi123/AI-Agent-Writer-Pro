@@ -36,7 +36,6 @@ import { t } from '@/i18n'
 import { recordRecentChapter } from '@/utils/recent'
 import { formatChapterTitle, formatVolumeTitle } from '@/utils/titles'
 import { saveOutlineNow } from '@/utils/unsavedGuard'
-import { countWords } from '@/utils/words'
 import type { Novel } from '@/types'
 
 const router = useRouter()
@@ -139,7 +138,7 @@ const editLocation = computed(() => {
   const found = project.findChapter(id)
   if (!found) return ''
   const chIdx = found.volume.chapters.findIndex((c) => c.id === id)
-  return `${formatChapterTitle(found.chapter.title, found.chapter.sort_order, chIdx)} ${countWords(editorStore.draft)}字`
+  return formatChapterTitle(found.chapter.title, found.chapter.sort_order, chIdx)
 })
 
 /**

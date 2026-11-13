@@ -374,6 +374,8 @@ export interface MessageTree {
     run_id: string
     status: AgentRunStatus
     pending_interrupts: AgentInterruptDto[]
+    /** 当前 SSE 缓冲区的最新 seq，供前端重连时作为 last_event_id */
+    current_seq?: number
   } | null
 }
 

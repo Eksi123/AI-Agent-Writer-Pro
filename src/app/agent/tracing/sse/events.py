@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 模块: app.agent.tracing.sse.events
 文件名: events.py
@@ -120,6 +120,13 @@ class SseBus:
 
     def forget(self, run_id: str) -> None:
         self._streams.pop(run_id, None)
+
+    def get_seq(self, run_id: str) -> int:
+        """返回指定 run 当前最新事件的 seq（供前端重连时作为 last_event_id，避免补发旧事件）。"""
+        stream = self._streams.get(run_id)
+        if stream is None:
+            return 0
+        return stream.seq
 
     # ---- 发布 ----
 

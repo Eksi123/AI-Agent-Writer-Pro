@@ -137,6 +137,8 @@ function chLabel(title: string, sortOrder: number, index: number): string {
   cursor: pointer;
   box-shadow: var(--shadow);
   transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .toc-toggle:hover {

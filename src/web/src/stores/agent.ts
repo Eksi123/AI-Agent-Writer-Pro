@@ -518,8 +518,8 @@ export const useAgentStore = defineStore('agent', () => {
         pendingInterrupts.value = []
         pendingConsult.value = null
         restorePendingCards(lr.pending_interrupts ?? [])
-        // 重连事件流：缓冲仍在则续传，已丢则 onBufferLost 回落重拉消息树
-        startStream(lr.run_id)
+        // 重连事件流：带上 current_seq 作为 last_event_id，避免补发旧事件导致已决策的卡片重新弹出
+        startStream(lr.run_id, lr.current_seq ?? 0)
       } else {
         // run 已结束或不存在：清除所有卡片和运行态
         pendingInterrupts.value = []
@@ -811,9 +811,15 @@ export const useAgentStore = defineStore('agent', () => {
         }
         break
       }
-      case 'consult.request':
+      case 'consult.request': {
+        // 防止 SSE 重连时补发历史事件导致已决策的卡片重新弹出：
+        // 如果当前已有咨询卡片，且 interruptId 相同，不覆盖
+        const newInterruptId = String(data.interrupt_id ?? '')
+        if (pendingConsult.value && pendingConsult.value.interruptId === newInterruptId) {
+          break
+        }
         pendingConsult.value = {
-          interruptId: String(data.interrupt_id ?? ''),
+          interruptId: newInterruptId,
           question: String(data.question ?? ''),
           options: (data.options as PendingConsult['options']) ?? [],
           allowText: Boolean(data.allow_text ?? true),
@@ -822,6 +828,7 @@ export const useAgentStore = defineStore('agent', () => {
           questions: (data.questions as PendingConsult['questions']) ?? undefined,
         }
         break
+      }
       case 'error':
         setRawError(String(data.message ?? '运行出错'), Number(data.code ?? 0) || null)
         break
@@ -847,6 +854,9 @@ export const useAgentStore = defineStore('agent', () => {
         // run 结束（含暂停态 awaiting_*）→ 解除列表「AI思考执行中……」标记
         if (!runPaused.value) {
           if (currentSessionId.value) markSessionIdle(currentSessionId.value)
+          // ★ run 真正结束（非暂停态）时清空所有卡片，避免残留
+          pendingInterrupts.value = []
+          pendingConsult.value = null
         }
         // 暂停态且仍有未决中断（多中断只决了其一）→ 恢复剩余卡片供继续处理
         if (

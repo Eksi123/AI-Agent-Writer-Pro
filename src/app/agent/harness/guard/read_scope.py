@@ -134,6 +134,19 @@ class ReadScopeGuardMiddleware(AgentMiddleware):
         from app.agent.loop.runner import run_manager
         from app.services.read_grant import read_grants
 
+        # 调试日志：记录读取守卫检查
+        logger.info(
+            "read_scope_check",
+            run_id=run_id,
+            session_id=session_id,
+            project_id=project_id,
+            scope=scope,
+            tool_name=tool_name,
+            path=path,
+            has_read_intent=run_manager.read_intent_of(run_id),
+            user_text=run_manager.user_text_of(run_id)[:100] if run_manager.user_text_of(run_id) else "",
+        )
+
         # ① 会话已授权
         if read_grants.is_granted(session_id, scope):
             return await handler(request)

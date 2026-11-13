@@ -323,6 +323,21 @@ class RunManager:
             sess = await db.get(AgentSession, session_id)
             if sess is not None and sess.status == "running":
                 sess.status = "idle"
+            # ★ 取消时清理未决中断（暂停态时任务已结束，但中断行仍存在）
+            # 否则前端每次进入会话都会看到已失效的卡片
+            from app.db.models import AgentInterrupt
+            from sqlalchemy import select
+
+            orphan_interrupts = (
+                await db.execute(
+                    select(AgentInterrupt)
+                    .where(AgentInterrupt.run_id == run_id, AgentInterrupt.decision.is_(None))
+                )
+            ).scalars().all()
+            for intr in orphan_interrupts:
+                intr.decision = "cancelled"
+                intr.response_json = '{"note":"run_cancelled"}'
+                intr.decided_at = utcnow()
         # 主动停止 → 未消费引导收养进活跃路径 + 落一条 Agent 默认收尾回复
         await _adopt_pending_steers(session_id, run_id)
         await _append_notice(session_id, run_id, notice_text_for("cancelled"))
